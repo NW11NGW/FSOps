@@ -1,0 +1,14 @@
+<Project>
+
+  <!-- x64-only: SimConnect's native DLL only ships as x64, so every project in the
+       solution must target x64 or the Sim project fails to load it at runtime. -->
+  <PropertyGroup>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>

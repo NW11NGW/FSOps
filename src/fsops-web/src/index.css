@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /*
+   * Design tokens live here, once. Every color in the app should resolve
+   * back to one of these variables — no hardcoded hex values in components.
+   * Values are raw "H S% L%" triplets so Tailwind can apply alpha via
+   * hsl(var(--x) / <alpha-value>).
+   */
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --surface: 0 0% 100%;
+    --surface-elevated: 0 0% 100%;
+
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 199 89% 40%;
+
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 40%;
+
+    --accent: 199 89% 40%;
+    --accent-foreground: 210 40% 98%;
+
+    --success: 152 55% 32%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 32 92% 42%;
+    --warning-foreground: 210 40% 98%;
+
+    --danger: 0 72% 45%;
+    --danger-foreground: 210 40% 98%;
+
+    --shadow-color: 222 47% 11%;
+
+    /* shadcn-style aliases, kept in sync with the tokens above */
+    --card: var(--surface);
+    --card-foreground: var(--foreground);
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--foreground);
+    --primary: var(--accent);
+    --primary-foreground: var(--accent-foreground);
+    --secondary: var(--muted);
+    --secondary-foreground: var(--foreground);
+    --destructive: var(--danger);
+    --destructive-foreground: var(--danger-foreground);
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+
+    --surface: 222 41% 9%;
+    --surface-elevated: 222 38% 13%;
+
+    --border: 217 33% 18%;
+    --input: 217 33% 18%;
+    --ring: 199 89% 48%;
+
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 199 89% 48%;
+    --accent-foreground: 210 40% 98%;
+
+    --success: 152 60% 42%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 24 10% 10%;
+
+    --danger: 0 72% 55%;
+    --danger-foreground: 210 40% 98%;
+
+    --shadow-color: 222 60% 2%;
+
+    --card: var(--surface);
+    --card-foreground: var(--foreground);
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--foreground);
+    --primary: var(--accent);
+    --primary-foreground: var(--accent-foreground);
+    --secondary: var(--muted);
+    --secondary-foreground: var(--foreground);
+    --destructive: var(--danger);
+    --destructive-foreground: var(--danger-foreground);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  html:not(.dark) {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Visible, consistent focus rings everywhere — keyboard nav must never go dark. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+}
