@@ -10,13 +10,14 @@ This guide walks through installing the prerequisites, building FSOps, and runni
 - [3. Build the backend](#3-build-the-backend)
 - [4. Build the frontend](#4-build-the-frontend)
 - [5. Run FSOps](#5-run-fsops)
-- [6. Connect to MSFS](#6-connect-to-msfs)
+- [6. Found your airline](#6-found-your-airline)
+- [7. Connect to MSFS](#7-connect-to-msfs)
 - [What's not available yet](#whats-not-available-yet)
 - [Next steps](#next-steps)
 
 ## Before you start
 
-FSOps is early in development. This guide covers building and running the current application shell — enough to confirm the backend and UI are talking to each other. It is **not yet** a guide to flying tracked flights or running an airline; those features are still being built.
+FSOps is early in development. This guide covers building and running FSOps, founding your airline through the setup wizard, and connecting to the simulator. It is **not yet** a guide to flying tracked flights — that feature is still being built.
 
 ## 1. Install the prerequisites
 
@@ -81,9 +82,23 @@ Once it's running, open your browser and go to:
 http://localhost:5977
 ```
 
-You should see the FSOps app shell load, with a live connection indicator confirming the browser and backend are talking over SignalR. Leave the terminal window open — closing it stops the server.
+The first time FSOps runs, it needs to import world airport and runway data into its local database before the app is usable — this happens automatically and takes roughly half a minute. Once that finishes, you'll land in the airline setup wizard described below. Leave the terminal window open — closing it stops the server.
 
-## 6. Connect to MSFS
+## 6. Found your airline
+
+FSOps opens straight into a full-screen setup wizard whenever no airline exists yet for your machine — on first run, and again any time you delete your airline from the settings danger zone (see the [user guide](user-guide.md#settings)). The wizard has seven steps:
+
+1. **Welcome** — a short introduction to the wizard.
+2. **Identity** — your airline's name (2-40 characters) and a 2-3 letter ICAO code (e.g. `FSO`).
+3. **Home base** — search for and pick the airport your airline will be based at. It needs scheduled service or a runway of at least 5,000 ft.
+4. **Strategy** — choose International, Domestic, Low-cost, or Premium. This shapes suggested fares and, later, demand modelling — see the [user guide](user-guide.md#creating-your-airline) for what each one means.
+5. **Aircraft** — pick an accent colour (a preset swatch or a custom hex value) used throughout the UI, and a starter aircraft family: Airbus A320 or Boeing 737-800.
+6. **Currency** — your display currency and your preferred distance, altitude, and weight units, time display, and clock format.
+7. **Review** — optionally add a startup loan (amount, term, and annual rate, with a live monthly payment estimate), review everything you've chosen, and select **Found your airline** to create it.
+
+Creating your airline also buys your starter aircraft, hires you as your first pilot, and records your starting capital (and any loan proceeds) in your airline's financial ledger — you'll land in the main app with a fleet of one and cash in the bank.
+
+## 7. Connect to MSFS
 
 FSOps talks to Microsoft Flight Simulator through SimConnect, Microsoft's official interface for external apps to read and write simulator state. To connect:
 
@@ -95,10 +110,8 @@ If FSOps can't reach the simulator, see [troubleshooting](troubleshooting.md#msf
 
 ## What's not available yet
 
-The current build proves out the plumbing — server, UI, and live connection. The following are still being built and are **not** available yet:
+Founding an airline and planning routes both work today (see the [User Guide](user-guide.md)). The following are still being built and are **not** available yet:
 
-- Creating an airline (name, home base, strategy)
-- Building a route network
 - Planning and flying tracked flights
 - Landing quality scoring and post-flight report cards
 - The economy simulation (ticket pricing, fuel, maintenance, loans, leases)

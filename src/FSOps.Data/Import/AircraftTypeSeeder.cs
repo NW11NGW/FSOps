@@ -27,42 +27,42 @@ public static class AircraftTypeSeeder
             {
                 Id = Guid.NewGuid(), IcaoType = "A319", Family = "A320", Manufacturer = "Airbus",
                 Name = "Airbus A319", PaxCapacity = 140, RangeNm = 3700, CruiseTasKts = 447,
-                FuelBurnKgPerHour = 2400, MinRunwayFt = 5000, PurchasePrice = 92_000_000m,
+                FuelBurnKgPerHour = 2400, MinRunwayFt = 5000, ServiceCeilingFt = 41000, PurchasePrice = 92_000_000m,
                 MonthlyLeaseRate = 350_000m, MatchPatterns = A320FamilyPatterns,
             },
             new()
             {
                 Id = Guid.NewGuid(), IcaoType = "A320", Family = "A320", Manufacturer = "Airbus",
                 Name = "Airbus A320", PaxCapacity = 180, RangeNm = 3300, CruiseTasKts = 447,
-                FuelBurnKgPerHour = 2500, MinRunwayFt = 5500, PurchasePrice = 101_000_000m,
+                FuelBurnKgPerHour = 2500, MinRunwayFt = 5500, ServiceCeilingFt = 39000, PurchasePrice = 101_000_000m,
                 MonthlyLeaseRate = 380_000m, MatchPatterns = A320FamilyPatterns,
             },
             new()
             {
                 Id = Guid.NewGuid(), IcaoType = "A321", Family = "A320", Manufacturer = "Airbus",
                 Name = "Airbus A321", PaxCapacity = 220, RangeNm = 3200, CruiseTasKts = 447,
-                FuelBurnKgPerHour = 2700, MinRunwayFt = 6000, PurchasePrice = 118_000_000m,
+                FuelBurnKgPerHour = 2700, MinRunwayFt = 6000, ServiceCeilingFt = 39000, PurchasePrice = 118_000_000m,
                 MonthlyLeaseRate = 420_000m, MatchPatterns = A320FamilyPatterns,
             },
             new()
             {
                 Id = Guid.NewGuid(), IcaoType = "B737", Family = "B737", Manufacturer = "Boeing",
                 Name = "Boeing 737-700", PaxCapacity = 140, RangeNm = 3850, CruiseTasKts = 453,
-                FuelBurnKgPerHour = 2350, MinRunwayFt = 5000, PurchasePrice = 89_000_000m,
+                FuelBurnKgPerHour = 2350, MinRunwayFt = 5000, ServiceCeilingFt = 41000, PurchasePrice = 89_000_000m,
                 MonthlyLeaseRate = 340_000m, MatchPatterns = B737FamilyPatterns,
             },
             new()
             {
                 Id = Guid.NewGuid(), IcaoType = "B738", Family = "B737", Manufacturer = "Boeing",
                 Name = "Boeing 737-800", PaxCapacity = 189, RangeNm = 3115, CruiseTasKts = 453,
-                FuelBurnKgPerHour = 2600, MinRunwayFt = 5500, PurchasePrice = 106_000_000m,
+                FuelBurnKgPerHour = 2600, MinRunwayFt = 5500, ServiceCeilingFt = 41000, PurchasePrice = 106_000_000m,
                 MonthlyLeaseRate = 390_000m, MatchPatterns = B737FamilyPatterns,
             },
             new()
             {
                 Id = Guid.NewGuid(), IcaoType = "B739", Family = "B737", Manufacturer = "Boeing",
                 Name = "Boeing 737-900", PaxCapacity = 220, RangeNm = 3200, CruiseTasKts = 453,
-                FuelBurnKgPerHour = 2750, MinRunwayFt = 6000, PurchasePrice = 110_000_000m,
+                FuelBurnKgPerHour = 2750, MinRunwayFt = 6000, ServiceCeilingFt = 41000, PurchasePrice = 110_000_000m,
                 MonthlyLeaseRate = 410_000m, MatchPatterns = B737FamilyPatterns,
             },
         };

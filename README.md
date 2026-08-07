@@ -6,18 +6,20 @@ FSOps is a Windows companion app for MSFS 2024. Found an airline, pick a home ba
 
 ## Status: in development
 
-FSOps is being built in the open, in public view, one feature at a time. The current build is an early application shell: a .NET backend that serves the web UI and holds a live connection over SignalR. Airline creation, route building, flight tracking, and the economy simulation are not available yet — see the [user guide](docs/guides/user-guide.md) for what's built and what's coming.
+FSOps is being built in the open, in public view, one feature at a time. Founding an airline, planning routes on a live map, and adjusting settings all work today. Flight tracking, the economy simulation, virtual pilots, fleet purchasing, maintenance, and statistics dashboards are not available yet — see the [user guide](docs/guides/user-guide.md) for what's built and what's coming.
 
 ## Headline features
 
-- **Found your airline** — name it, choose a home base airport, and pick a strategy: international, domestic, low-cost, or premium.
-- **Build your route network** — plan the city pairs your airline will fly and grow the network as you go.
-- **Live flight tracking** — FSOps watches your flight through SimConnect in real time, with an interactive map and automatic flight-phase detection.
-- **Landing quality scoring** — every landing is graded on touchdown rate, G-force, and centerline accuracy, with a post-flight report card comparing planned vs actual block time.
-- **A deep economy simulation** — passenger demand, ticket pricing, fuel and fees, maintenance, loans, and leases all drive your airline's finances.
-- **Virtual pilots** — hire pilots who fly your scheduled routes on the real-world clock, even while FSOps is closed.
-- **In-game panel** — see live airline stats without leaving MSFS.
-- **Statistics dashboards** — track your airline's performance over time.
+- **Found your airline** — a full-screen setup wizard walks you through naming your airline, picking a home base airport and strategy (international, domestic, low-cost, or premium), an accent colour and starter aircraft, your currency and units, and an optional startup loan.
+- **Plan your route network** — search the airport database, pick a departure and arrival, and see a live plan: great-circle distance and bearing on an interactive map, block time and cruise altitude, a full fuel breakdown, and a suggested fare you can override before creating the route.
+- **Settings that stay out of your way** — currency, distance/altitude/weight units, time display, theme and accent colour are all adjustable; changing currency only changes how numbers are displayed, never your actual balance.
+- **A real airport database** — world airport and runway data imports automatically on first launch, backing route search, runway-length checks, and range validation against your fleet.
+- **Live flight tracking** *(coming in a later update)* — FSOps watches your flight through SimConnect in real time, with automatic flight-phase detection.
+- **Landing quality scoring** *(coming in a later update)* — every landing graded on touchdown rate, G-force, and centerline accuracy, with a post-flight report card comparing planned vs actual block time.
+- **A deep economy simulation** *(coming in a later update)* — passenger demand, ticket pricing, fuel and fees, maintenance, loans, and leases all driving your airline's finances.
+- **Virtual pilots** *(coming in a later update)* — hire pilots who fly your scheduled routes on the real-world clock, even while FSOps is closed.
+- **In-game panel** *(coming in a later update)* — see live airline stats without leaving MSFS.
+- **Statistics dashboards** *(coming in a later update)* — track your airline's performance over time.
 
 ## Quick start
 
@@ -44,13 +46,19 @@ The UI runs locally in your browser at `http://localhost:5977` — there's no se
 ```
 FSOps/
 ├── src/
-│   ├── FSOps.Core/      # Domain model and economy logic
-│   ├── FSOps.Data/      # EF Core + SQLite persistence
+│   ├── FSOps.Core/      # Domain model, money/planning/finance logic (no framework deps)
+│   │   ├── Airlines/    #   Airline creation defaults, registration generation
+│   │   ├── Airports/    #   Airport search ranking, size categorisation
+│   │   ├── Entities/    #   Domain entities (Airline, Route, FleetAircraft, LedgerTransaction, ...)
+│   │   ├── Finance/     #   Loan calculations
+│   │   ├── Money/       #   Currency catalogue and base-unit formatting
+│   │   └── Planning/    #   Route preview: distance, bearing, block time, fuel, fare
+│   ├── FSOps.Data/      # EF Core + SQLite persistence, world data import
 │   ├── FSOps.Sim/       # SimConnect adapter for talking to MSFS
-│   ├── FSOps.Server/    # API, SignalR hubs, and serves the built web UI
+│   ├── FSOps.Server/    # API endpoints, SignalR hubs, and serves the built web UI
 │   └── fsops-web/       # React + TypeScript + Vite + Tailwind + shadcn/ui frontend
 ├── tests/
-│   └── FSOps.Core.Tests/  # xUnit tests for domain and economy logic
+│   └── FSOps.Core.Tests/  # xUnit tests for domain and planning logic
 ├── docs/
 │   ├── architecture.md
 │   └── guides/

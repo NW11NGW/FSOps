@@ -79,6 +79,9 @@ apiV1.MapGet("/health", () => Results.Ok(new
 
 apiV1.MapAirportEndpoints();
 apiV1.MapWorldDataEndpoints();
+apiV1.MapAirlineEndpoints();
+apiV1.MapRouteEndpoints();
+apiV1.MapSettingsEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");
 

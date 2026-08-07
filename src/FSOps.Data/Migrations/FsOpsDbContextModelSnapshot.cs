@@ -66,6 +66,9 @@ namespace FSOps.Data.Migrations
                     b.Property<int>("RangeNm")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("ServiceCeilingFt")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("IcaoType");
@@ -694,6 +697,56 @@ namespace FSOps.Data.Migrations
                     b.HasIndex("RouteId");
 
                     b.ToTable("Schedules");
+                });
+
+            modelBuilder.Entity("FSOps.Core.Entities.UserSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AltitudeUnit")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CommunityFolderPath")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DistanceUnit")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SimBriefPilotId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Theme")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeDisplay")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Use24HourClock")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("WeightUnit")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId")
+                        .IsUnique();
+
+                    b.ToTable("UserSettings");
                 });
 
             modelBuilder.Entity("FSOps.Core.Entities.Runway", b =>

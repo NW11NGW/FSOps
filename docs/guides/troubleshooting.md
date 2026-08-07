@@ -6,6 +6,11 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 
 - [The UI won't load / port 5977 is already in use](#the-ui-wont-load--port-5977-is-already-in-use)
 - [The UI shows "FSOps UI not built yet"](#the-ui-shows-fsops-ui-not-built-yet)
+- [The map shows no background tiles](#the-map-shows-no-background-tiles)
+- [The setup wizard keeps reappearing](#the-setup-wizard-keeps-reappearing)
+- [Route creation is refused](#route-creation-is-refused)
+- [My currency looks wrong](#my-currency-looks-wrong)
+- [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
 - [Where to find log files](#where-to-find-log-files)
@@ -42,6 +47,48 @@ cd ../..
 ```
 
 Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the browser tab. See [Getting Started](getting-started.md#4-build-the-frontend) for the full walkthrough.
+
+## The map shows no background tiles
+
+**Symptom:** The route-planning map is otherwise usable — route lines, the great-circle path, and airport markers all show up — but the background map tiles never load and you're left looking at a blank/grey canvas.
+
+**Cause:** The map's background tiles are fetched over the internet. Everything else on the map (route geometry, airport positions) comes from your local database and works fully offline.
+
+**Solution:** Check your internet connection. There's nothing to configure — once connectivity is back, reload the page and tiles will load normally. If you're intentionally offline, you can still plan and create routes; you just won't see the background imagery.
+
+## The setup wizard keeps reappearing
+
+**Symptom:** FSOps opens into the full-screen airline setup wizard every time you start it, even though you thought you'd already founded an airline.
+
+**Cause:** FSOps decides whether to show the wizard purely by asking the backend whether an airline currently exists for you (`GET /api/v1/airline`). The wizard appears whenever that comes back empty — either no airline has been created yet, or one was deleted (deliberately, via the settings [danger zone](user-guide.md#settings), or by having the database wiped — see [Where the database lives](#where-the-database-lives) below).
+
+**Solution:** If you meant to keep your airline, check whether the database file still exists and hasn't been reset. If it's genuinely gone, there's no way to recover it short of a backup (see [Where your data lives](user-guide.md#where-your-data-lives)) — otherwise, just go through the wizard again.
+
+## Route creation is refused
+
+**Symptom:** The plan panel shows a red "This route can't be created yet" message and the **Create route** button stays disabled.
+
+**Cause:** This happens for one of two reasons: departure and arrival are the same airport, or the route is beyond your aircraft's **practical operating range** — roughly **0.85×** its published range once fuel reserves are accounted for, not the raw catalogue figure. A route just over the raw range but under the 0.85× cutoff will still be refused.
+
+**Solution:** Pick a different airport pair, or add an aircraft with more range to your fleet (once fleet management is available — see the [user guide](user-guide.md#buying-vs-leasing-aircraft)). Amber advisory warnings (short runway, strategy mismatch) look similar but don't block creation — only the red message does.
+
+## My currency looks wrong
+
+**Symptom:** Fares, balances, or prices look off after changing currency in settings, or don't match what you expected.
+
+**Cause:** FSOps stores every amount internally in a single base currency unit and only converts it for display using your selected currency's fixed rate (see [Settings — Currency](user-guide.md#currency) and [Architecture](../architecture.md#money-is-stored-in-a-single-base-unit)). Rates are fixed at build time, not live exchange rates, so they won't match real-world rates exactly — and changing currency never changes your actual stored balance, only how it's displayed.
+
+**Solution:** If a number looks wrong, double check which currency is currently selected in settings. If it still looks wrong after that, it's worth reporting (see [How to report a problem](#how-to-report-a-problem)) — but a mismatch with real-world exchange rates is expected behaviour, not a bug.
+
+## Where the database lives
+
+FSOps stores its SQLite database at:
+
+```
+%LOCALAPPDATA%\FSOps\fsops.db
+```
+
+Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from the repository/install folder, so it survives rebuilding or reinstalling FSOps. **Deleting `fsops.db` resets FSOps completely** — your airline, fleet, routes, pilots, and financial history are all gone, and you'll see the setup wizard again next launch. See [Where your data lives](user-guide.md#where-your-data-lives) for how to back it up first.
 
 ## MSFS won't connect over SimConnect
 

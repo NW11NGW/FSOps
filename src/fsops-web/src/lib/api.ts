@@ -33,6 +33,7 @@ async function extractErrorMessage(response: Response): Promise<string> {
       const record = body as Record<string, unknown>
       if (typeof record.message === 'string') return record.message
       if (typeof record.title === 'string') return record.title
+      if (typeof record.error === 'string') return record.error
     }
   } catch {
     // response body wasn't JSON (or was empty) — fall back below
@@ -40,20 +41,31 @@ async function extractErrorMessage(response: Response): Promise<string> {
   return response.statusText || `Request failed with status ${response.status}`
 }
 
+interface RequestOptions {
+  params?: QueryParams
+  body?: unknown
+  init?: RequestInit
+}
+
 /**
- * Minimal typed fetch wrapper for the FSOps API. Every failure — network
- * errors, non-2xx responses, unparsable bodies — normalises into a thrown
- * ApiError so callers can branch on `.status` without worrying about fetch
- * quirks. AbortError is rethrown as-is so callers can distinguish a
- * cancelled request (e.g. a superseded debounced search) from a real
- * failure.
+ * Shared request core. Every failure — network errors, non-2xx responses,
+ * unparsable bodies — normalises into a thrown ApiError so callers can
+ * branch on `.status` without worrying about fetch quirks. AbortError is
+ * rethrown as-is so callers can distinguish a cancelled request (e.g. a
+ * superseded debounced search) from a real failure.
  */
-export async function get<T>(path: string, params?: QueryParams, init?: RequestInit): Promise<T> {
+async function request<T>(method: string, path: string, options?: RequestOptions): Promise<T> {
   let response: Response
   try {
-    response = await fetch(buildPath(path, params), {
-      ...init,
-      headers: { Accept: 'application/json', ...init?.headers },
+    response = await fetch(buildPath(path, options?.params), {
+      ...options?.init,
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...(options?.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...options?.init?.headers,
+      },
+      body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
     })
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === 'AbortError') throw cause
@@ -69,4 +81,20 @@ export async function get<T>(path: string, params?: QueryParams, init?: RequestI
   }
 
   return (await response.json()) as T
+}
+
+export function get<T>(path: string, params?: QueryParams, init?: RequestInit): Promise<T> {
+  return request<T>('GET', path, { params, init })
+}
+
+export function post<T = unknown>(path: string, body?: unknown, params?: QueryParams, init?: RequestInit): Promise<T> {
+  return request<T>('POST', path, { body, params, init })
+}
+
+export function put<T = unknown>(path: string, body?: unknown, params?: QueryParams, init?: RequestInit): Promise<T> {
+  return request<T>('PUT', path, { body, params, init })
+}
+
+export function del<T = unknown>(path: string, params?: QueryParams, init?: RequestInit): Promise<T> {
+  return request<T>('DELETE', path, { params, init })
 }

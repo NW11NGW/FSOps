@@ -28,6 +28,8 @@ public class AircraftType
 
     public int MinRunwayFt { get; set; }
 
+    public int ServiceCeilingFt { get; set; }
+
     public decimal PurchasePrice { get; set; }
 
     public decimal MonthlyLeaseRate { get; set; }

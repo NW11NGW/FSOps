@@ -1,17 +1,19 @@
-import { Settings as SettingsIcon } from 'lucide-react'
-
+import { AirlineSection } from '@/components/settings/AirlineSection'
+import { DataSection } from '@/components/settings/DataSection'
+import { DisplaySection } from '@/components/settings/DisplaySection'
+import { SimulatorSection } from '@/components/settings/SimulatorSection'
 import { PageHeader } from '@/components/shared/PageHeader'
-import { EmptyState } from '@/components/shared/EmptyState'
 
 export function Settings() {
   return (
     <div>
       <PageHeader title="Settings" description="Airline identity, preferences, and app configuration." />
-      <EmptyState
-        icon={SettingsIcon}
-        title="Nothing to configure yet"
-        description="Nothing here yet — this arrives in a later update."
-      />
+      <div className="space-y-6">
+        <DisplaySection />
+        <AirlineSection />
+        <SimulatorSection />
+        <DataSection />
+      </div>
     </div>
   )
 }

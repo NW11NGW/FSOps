@@ -9,6 +9,7 @@ import '@fontsource/inter/700.css'
 import './index.css'
 
 import App from './App.tsx'
+import { SettingsProvider } from './hooks/useSettings'
 
 const rootElement = document.getElementById('root')
 if (!rootElement) {
@@ -18,7 +19,9 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <SettingsProvider>
+        <App />
+      </SettingsProvider>
     </BrowserRouter>
   </StrictMode>,
 )

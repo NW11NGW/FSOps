@@ -40,6 +40,8 @@ public class FsOpsDbContext : DbContext
 
     public DbSet<EconomyState> EconomyStates => Set<EconomyState>();
 
+    public DbSet<UserSettings> UserSettings => Set<UserSettings>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(FsOpsDbContext).Assembly);

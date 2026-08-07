@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Clock3, DollarSign, Globe, PlaneTakeoff, Route, Users } from 'lucide-react'
 
@@ -8,6 +7,7 @@ import { PageHeader } from '@/components/shared/PageHeader'
 import { StatTile } from '@/components/shared/StatTile'
 import { WorldDataStatusBanner } from '@/components/shared/WorldDataStatusBanner'
 import { useServerClock } from '@/hooks/useServerClock'
+import { useSettings } from '@/hooks/useSettings'
 import { useWorldDataStatus } from '@/hooks/useWorldDataStatus'
 import type { LiveContext } from '@/types/live-context'
 
@@ -28,15 +28,14 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 })
 
 export function Dashboard() {
-  const { status, heartbeat } = useOutletContext<LiveContext>()
+  const { status, heartbeat, airlineSummary } = useOutletContext<LiveContext>()
   const serverNow = useServerClock(heartbeat)
-  const [kpisLoaded, setKpisLoaded] = useState(false)
   const worldData = useWorldDataStatus()
+  const { fmt } = useSettings()
 
-  useEffect(() => {
-    const timer = setTimeout(() => setKpisLoaded(true), 600)
-    return () => clearTimeout(timer)
-  }, [])
+  const summary = airlineSummary.data
+  const summaryLoading = airlineSummary.status === 'loading'
+  const summaryUnavailable = airlineSummary.status === 'error'
 
   const airportsValue =
     worldData.status === 'ready' && worldData.data
@@ -103,31 +102,55 @@ export function Dashboard() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:col-span-2">
           <StatTile
             label="Cash balance"
-            value="—"
+            value={summary ? fmt.money(summary.cashBalance) : summaryUnavailable ? '—' : undefined}
             icon={DollarSign}
-            trend={{ direction: 'flat', label: 'No airline yet' }}
-            loading={!kpisLoaded}
+            trend={summaryUnavailable ? { direction: 'flat', label: 'Unavailable' } : undefined}
+            loading={summaryLoading}
           />
           <StatTile
             label="Active routes"
-            value="0"
+            value={summary ? String(summary.routeCount) : summaryUnavailable ? '—' : undefined}
             icon={Route}
-            trend={{ direction: 'flat', label: 'No routes yet' }}
-            loading={!kpisLoaded}
+            trend={
+              summary
+                ? summary.routeCount === 0
+                  ? { direction: 'flat', label: 'No routes yet' }
+                  : undefined
+                : summaryUnavailable
+                  ? { direction: 'flat', label: 'Unavailable' }
+                  : undefined
+            }
+            loading={summaryLoading}
           />
           <StatTile
             label="Fleet size"
-            value="0 aircraft"
+            value={summary ? `${summary.fleetCount} aircraft` : summaryUnavailable ? '—' : undefined}
             icon={PlaneTakeoff}
-            trend={{ direction: 'flat', label: 'No aircraft yet' }}
-            loading={!kpisLoaded}
+            trend={
+              summary
+                ? summary.fleetCount === 0
+                  ? { direction: 'flat', label: 'No aircraft yet' }
+                  : undefined
+                : summaryUnavailable
+                  ? { direction: 'flat', label: 'Unavailable' }
+                  : undefined
+            }
+            loading={summaryLoading}
           />
           <StatTile
             label="Pilots"
-            value="0"
+            value={summary ? String(summary.pilotCount) : summaryUnavailable ? '—' : undefined}
             icon={Users}
-            trend={{ direction: 'flat', label: 'No pilots yet' }}
-            loading={!kpisLoaded}
+            trend={
+              summary
+                ? summary.pilotCount === 0
+                  ? { direction: 'flat', label: 'No pilots yet' }
+                  : undefined
+                : summaryUnavailable
+                  ? { direction: 'flat', label: 'Unavailable' }
+                  : undefined
+            }
+            loading={summaryLoading}
           />
           <StatTile
             label="Airports in database"
