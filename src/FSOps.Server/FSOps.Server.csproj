@@ -27,6 +27,16 @@
     </None>
   </ItemGroup>
 
+  <!-- The web UI is built into wwwroot by Vite. Copy it beside the built assembly so the
+       executable serves it whether it is launched directly, from the installed location, or
+       through dotnet run - the content root differs between those, but the output folder does not. -->
+  <ItemGroup>
+    <Content Update="wwwroot\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
