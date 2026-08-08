@@ -1,6 +1,8 @@
 export type FleetOwnership = 'Owned' | 'Leased'
 export type FleetStatus = 'Active' | 'InMaintenance' | 'InFlight'
 export type AircraftCondition = 'New' | 'Used'
+/** Coarse size/role grouping for the buy/lease dialog's filter chips - see AircraftTypeOption.category. */
+export type AircraftCategory = 'Narrowbody' | 'Widebody' | 'Regional'
 
 /** One fleet aircraft, enriched for the Fleet page - see GET /fleet. */
 export interface FleetAircraftSummary {
@@ -22,6 +24,12 @@ export interface FleetAircraftSummary {
   fuelOnBoardKg: number
   groundedUntilUtc: string | null
   groundedReason: string | null
+  /**
+   * True when this aircraft is kept free for the player to fly, and never offered to virtual
+   * pilots - see PUT /fleet/{id}/reservation. Player-controlled from the Fleet page; nothing else
+   * in the app re-forces this flag once set.
+   */
+  reservedForPlayer: boolean
   createdUtc: string
 }
 
@@ -36,6 +44,7 @@ export interface AircraftTypeOption {
   family: string
   manufacturer: string
   name: string
+  category: AircraftCategory
   paxCapacity: number
   rangeNm: number
   purchasePriceNew: number

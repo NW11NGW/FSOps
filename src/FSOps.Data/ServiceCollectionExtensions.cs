@@ -32,9 +32,11 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Seeds world airport/runway data and the starter aircraft catalogue if the database is
-    /// empty. Meant to be kicked off as a background task after the server starts listening -
-    /// it can take a while on first run, and WorldDataImportProgress lets the UI show it.
+    /// Seeds world airport/runway data if the database is empty, and reconciles the aircraft
+    /// catalogue against the current code definitions (insert-or-update by IcaoType, never
+    /// delete - see AircraftTypeSeeder's own doc) on every startup, not just the first. Meant to
+    /// be kicked off as a background task after the server starts listening - it can take a while
+    /// on first run, and WorldDataImportProgress lets the UI show it.
     /// </summary>
     public static async Task SeedWorldDataAsync(this IServiceProvider services, string seedDataDirectory, CancellationToken ct = default)
     {
@@ -48,7 +50,7 @@ public static class ServiceCollectionExtensions
             var importer = provider.GetRequiredService<WorldDataImporter>();
 
             await importer.ImportIfNeededAsync(db, seedDataDirectory, ct);
-            await AircraftTypeSeeder.SeedIfNeededAsync(db, ct);
+            await AircraftTypeSeeder.ReconcileAsync(db, ct);
         }
         catch (Exception ex)
         {

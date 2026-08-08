@@ -8,6 +8,13 @@ public class Flight
 
     public Guid RouteId { get; set; }
 
+    /// <summary>
+    /// For a virtual-pilot flight, the <see cref="PilotScheduleEntry"/> that produced this
+    /// occurrence - null for a player flight (started from the Fly screen, which has no schedule
+    /// entry at all). Deliberately not a foreign key with cascade behaviour: a completed flight is
+    /// historical fact and must keep showing which schedule entry generated it even after the
+    /// player edits or deletes that entry from the current week - see VirtualFlightResolverService.
+    /// </summary>
     public Guid? ScheduleId { get; set; }
 
     public Guid FleetAircraftId { get; set; }
@@ -95,6 +102,14 @@ public class Flight
     /// start (see the fuel-uplift rule in docs/PLAN.md), so it isn't gated by this flag.
     /// </summary>
     public bool RevenuePosted { get; set; }
+
+    /// <summary>
+    /// Human-readable reason this virtual-pilot occurrence could not fly - e.g. "G-OLAF is still at
+    /// EGPF from Tuesday" - set only for <see cref="FlightStatus.Skipped"/> and
+    /// <see cref="FlightStatus.Cancelled"/> flights. Null for every other status, including a
+    /// normal Completed flight. See docs/PLAN.md "Conflicts must be explained in words".
+    /// </summary>
+    public string? UnflyableReason { get; set; }
 
     public DateTimeOffset CreatedUtc { get; set; }
 

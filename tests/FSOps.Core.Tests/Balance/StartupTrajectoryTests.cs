@@ -165,28 +165,46 @@ public class StartupTrajectoryTests
         Assert.InRange(flightsToAffordDeposit, 7.0, 11.0);
     }
 
+    /// <summary>
+    /// Starting capital must get the airline airborne without letting it buy past the progression
+    /// loop. The load-bearing assertion is the second one: capital below the price of a used
+    /// airframe is what forces the player to actually fly before they can own anything.
+    ///
+    /// <para>This replaced an assertion demanding a "generously long runway" (>= 12 months, real
+    /// figure ~44). That was correct while Casual purchase prices were still realistic and therefore
+    /// unreachable - capital could only ever be runway. Once Casual purchases came down to ~93,100
+    /// new / ~51,200 used, the same 2,000,000 bought 39 used A320s before the first flight and the
+    /// earn-your-second-aircraft loop stopped existing. The user chose 60,000 (2026-08-08); runway
+    /// is now deliberately short, which is safe precisely because one leg a day is already net
+    /// positive - see <see cref="OneAircraft_OneLegADay_IsGenuinelyProfitable"/>. An airline that
+    /// flies nothing at all is *supposed* to struggle.</para>
+    /// </summary>
     [Fact]
-    public void StartingCapital_CoversTheLeaseDepositAndAGenerouslyLongRunwayEvenFlyingNothing()
+    public void StartingCapital_CoversTheDeposit_ButCannotBuyPastTheProgressionLoop()
     {
         var leaseDeposit = A320MonthlyLeaseRate * (decimal)Config.AirlineStartup.LeaseDepositMonths;
-        var cashAfterDeposit = Config.AirlineStartup.StartingCapital - leaseDeposit;
+        var startingCapital = Config.AirlineStartup.StartingCapital;
+        var cashAfterDeposit = startingCapital - leaseDeposit;
 
         Assert.True(cashAfterDeposit > 0, "The lease deposit alone must not exhaust starting capital.");
 
-        var monthlyFixedCost = MonthlyFixedCostPerAircraft();
-        var monthsOfRunwayFlyingNothing = cashAfterDeposit / monthlyFixedCost;
+        // The whole point: a brand-new airline cannot buy an aircraft before flying a sector.
+        // Casual's own price for a used A320: the shared realistic figure scaled by this playstyle's
+        // purchase multiplier, then the used discount - exactly how FleetEndpoints prices a purchase.
+        var usedAircraftPrice = A320PurchasePrice * Config.PurchasePriceMultiplier * Config.UsedAircraft.PriceMultiplier;
+        // Compare against cash AFTER the deposit, not the headline capital: the starter aircraft is
+        // always leased at founding, so the player never actually holds the full starting figure.
+        Assert.True(cashAfterDeposit < usedAircraftPrice,
+            $"After the lease deposit a new airline holds {cashAfterDeposit:N0}, at or above the price " +
+            $"of a used airframe ({usedAircraftPrice:N0}) - so it can buy one before flying anything, " +
+            "which removes the progression loop entirely.");
 
-        // The design intent flipped with the progression-loop rebalance: runway must now be
-        // GENEROUS, not lean - "the balance must not punish low activity" (docs/PLAN.md "The
-        // progression loop"). Real figure is ~44 months, because fixed costs collapsed roughly
-        // tenfold while starting capital stayed the same. There is deliberately no tight upper
-        // bound here any more (the old "must not exceed ~6 months" assertion directly contradicted
-        // the new design goal) - only a loose sanity ceiling against something being totally broken.
-        Assert.True(monthsOfRunwayFlyingNothing >= 12.0m,
-            $"Starting capital only covers {monthsOfRunwayFlyingNothing:F1} months of fixed costs with zero flying - " +
-            "too tight for the 'must not punish low activity' design goal.");
-        Assert.True(monthsOfRunwayFlyingNothing < 200.0m,
-            $"{monthsOfRunwayFlyingNothing:F1} months of zero-flying runway is implausible - sanity check only.");
+        // And it must still leave something to operate on after the deposit, or the first month is
+        // unwinnable rather than merely tight.
+        var monthlyFixedCost = MonthlyFixedCostPerAircraft();
+        Assert.True(cashAfterDeposit >= monthlyFixedCost * 0.5m,
+            $"Only {cashAfterDeposit:N0} remains after the deposit against {monthlyFixedCost:N0}/month " +
+            "of fixed costs - too tight to get established before the first billing period lands.");
     }
 
     /// <summary>

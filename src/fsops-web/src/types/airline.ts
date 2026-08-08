@@ -70,6 +70,8 @@ export interface CreateAirlineInput {
   starterAircraftFamily: AircraftFamily
   currencyCode: string
   startingLoan?: StartingLoanInput
+  /** The player's own name for their founding pilot - blank/omitted falls back to a sensible default server-side. */
+  pilotName?: string
 }
 
 export interface Airline {
@@ -90,4 +92,6 @@ export interface AirlineSummary {
   fleetCount: number
   routeCount: number
   pilotCount: number
+  /** The player's own pilot name - lets Settings prefill "your name" without a separate /pilots fetch. */
+  playerPilotName: string
 }

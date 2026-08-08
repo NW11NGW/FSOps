@@ -30,10 +30,13 @@ export function AirlineSection() {
   const { currentCurrency } = useSettings()
 
   const [name, setName] = useState('')
+  const [pilotName, setPilotName] = useState('')
   const [accentColour, setAccentColour] = useState('#0EA5E9')
   const [strategyProfile, setStrategyProfile] = useState<StrategyProfile | null>(null)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+
+  const playerPilotName = airlineSummary.data?.playerPilotName ?? null
 
   useEffect(() => {
     if (airline && !dirty) {
@@ -43,16 +46,29 @@ export function AirlineSection() {
     }
   }, [airline, dirty])
 
+  useEffect(() => {
+    if (playerPilotName !== null && !dirty) {
+      setPilotName(playerPilotName)
+    }
+  }, [playerPilotName, dirty])
+
   const nameValid = name.trim().length >= 2 && name.trim().length <= 40
+  const pilotNameValid = pilotName.trim().length >= 1 && pilotName.trim().length <= 40
   const colourValid = isValidHexColour(accentColour)
   const strategyChanged = airline !== null && strategyProfile !== null && strategyProfile !== airline.strategyProfile
-  const canSave = dirty && nameValid && colourValid && strategyProfile !== null && !saving
+  const canSave = dirty && nameValid && pilotNameValid && colourValid && strategyProfile !== null && !saving
 
   async function handleSave() {
     if (!airline || !strategyProfile) return
     setSaving(true)
     try {
-      await put('/airline', { ...airline, name: name.trim(), accentColour, strategyProfile })
+      await put('/airline', {
+        ...airline,
+        name: name.trim(),
+        accentColour,
+        strategyProfile,
+        pilotName: pilotName.trim(),
+      })
       applyAccentColour(accentColour)
       setDirty(false)
       toast.success('Airline details updated')
@@ -61,6 +77,7 @@ export function AirlineSection() {
       setName(airline.name)
       setAccentColour(airline.accentColour)
       setStrategyProfile(airline.strategyProfile)
+      if (playerPilotName !== null) setPilotName(playerPilotName)
       setDirty(false)
     } finally {
       setSaving(false)
@@ -97,6 +114,29 @@ export function AirlineSection() {
                 }}
                 aria-invalid={!nameValid}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="settings-pilot-name">Your name</Label>
+              <Input
+                id="settings-pilot-name"
+                value={pilotName}
+                maxLength={40}
+                onChange={(event) => {
+                  setPilotName(event.target.value)
+                  setDirty(true)
+                }}
+                aria-invalid={!pilotNameValid}
+                aria-describedby="settings-pilot-name-hint"
+              />
+              <p
+                id="settings-pilot-name-hint"
+                className={!pilotNameValid ? 'text-xs text-danger' : 'text-xs text-muted-foreground'}
+              >
+                {!pilotNameValid
+                  ? '1–40 characters.'
+                  : 'Shows on every flight you fly and throughout the Pilots page.'}
+              </p>
             </div>
 
             <div>

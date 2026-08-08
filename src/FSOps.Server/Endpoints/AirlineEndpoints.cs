@@ -23,6 +23,14 @@ public static class AirlineEndpoints
     // Enum.GetValues<AirlinePlaystyle>()) picking it up automatically.
     private static string PlaystyleOptionsText => string.Join(", ", Enum.GetNames<AirlinePlaystyle>());
 
+    /// <summary>
+    /// The sensible fallback when the player leaves the onboarding "your name" field blank - see
+    /// docs/PLAN.md "Default it sensibly rather than blocking progress if left blank". Matches what
+    /// every player's pilot was named before this field existed, so leaving it blank changes
+    /// nothing for anyone who skips it.
+    /// </summary>
+    private const string DefaultPilotName = "Local Pilot";
+
     public static void MapAirlineEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapPost("/airline", CreateAsync);
@@ -173,7 +181,7 @@ public static class AirlineEndpoints
             CreatedUtc = now,
         };
 
-        var registration = AircraftRegistrationGenerator.Generate(homeAirport.Country, icaoCode);
+        var registration = AircraftRegistrationGenerator.Generate(homeAirport.Country);
         var fleetAircraft = new FleetAircraft
         {
             Id = Guid.NewGuid(),
@@ -190,6 +198,14 @@ public static class AirlineEndpoints
             ConditionPercent = 100,
             LocationIcao = homeAirportIcao,
             Status = FleetAircraftStatus.Active,
+            // A brand-new airline has exactly one aircraft, so it defaults to reserved-for-player -
+            // see docs/PLAN.md "The one-aircraft case must be handled deliberately": the plan wants
+            // the player to choose explicitly whether a pilot may fly their only aircraft, and
+            // defaulting to protected is the safe choice for that explicit-choice requirement
+            // (releasing it is one click away via PUT /fleet/{id}/reservation, forcing it to fly
+            // for a pilot silently would not be). See FleetAircraft.ReservedForPlayer's own doc for
+            // how this invariant is maintained as the fleet grows.
+            ReservedForPlayer = true,
             CreatedUtc = now,
         };
 
@@ -215,11 +231,26 @@ public static class AirlineEndpoints
             CreatedUtc = now,
         };
 
+        // The player names their own pilot at onboarding (docs/PLAN.md "You cannot name your own
+        // pilot") - currentUser.DisplayName is a fixed placeholder ("Local Pilot") from the
+        // single-user LocalUser stub, never a real identity. Trimmed and defaulted sensibly rather
+        // than blocking founding an airline over a blank field; the same default LocalUser used to
+        // supply unconditionally, so blank input changes nothing for a player who skips it.
+        var pilotName = (request.PilotName ?? string.Empty).Trim();
+        if (pilotName.Length == 0)
+        {
+            pilotName = DefaultPilotName;
+        }
+        else if (pilotName.Length > 40)
+        {
+            return Results.BadRequest(new { error = "pilotName must be 40 characters or fewer." });
+        }
+
         var pilot = new Pilot
         {
             Id = Guid.NewGuid(),
             AirlineId = airline.Id,
-            Name = currentUser.DisplayName,
+            Name = pilotName,
             IsPlayer = true,
             MonthlySalary = economyConfig.AirlineStartup.StartingPilotMonthlySalary,
             HoursFlown = 0,
@@ -357,6 +388,21 @@ public static class AirlineEndpoints
             airline.StrategyProfile = strategyProfile;
         }
 
+        if (request.PilotName is not null)
+        {
+            var pilotName = request.PilotName.Trim();
+            if (pilotName.Length is < 1 or > 40)
+            {
+                return Results.BadRequest(new { error = "pilotName must be between 1 and 40 characters." });
+            }
+
+            var playerPilot = await db.Pilots.FirstOrDefaultAsync(p => p.AirlineId == airline.Id && p.IsPlayer, ct);
+            if (playerPilot is not null)
+            {
+                playerPilot.Name = pilotName;
+            }
+        }
+
         await db.SaveChangesAsync(ct);
         return Results.Ok(airline);
     }
@@ -477,7 +523,15 @@ public static class AirlineEndpoints
 
         var pilotCount = await db.Pilots.CountAsync(p => p.AirlineId == airline.Id, ct);
 
-        return new { airline, cashBalance, fleetCount, routeCount, pilotCount };
+        // So Settings -> Airline can prefill the "your name" field without a separate /pilots
+        // fetch. Falls back to the same default CreateAsync uses if, somehow, the player pilot
+        // record is missing (never expected, but this must never throw over it).
+        var playerPilotName = await db.Pilots
+            .Where(p => p.AirlineId == airline.Id && p.IsPlayer)
+            .Select(p => p.Name)
+            .FirstOrDefaultAsync(ct) ?? DefaultPilotName;
+
+        return new { airline, cashBalance, fleetCount, routeCount, pilotCount, playerPilotName };
     }
 
     /// <summary>
@@ -539,6 +593,22 @@ public static class AirlineEndpoints
             pilot.DeletedUtc = now;
         }
 
+        // Schedules cascade with their pilots - see PilotEndpoints.ReleaseAsync for the same
+        // cascade on a single pilot's release. Without this, VirtualFlightResolverService would
+        // keep quietly resolving occurrences for a pilot whose airline no longer exists.
+        var schedules = await db.PilotSchedules.Where(s => s.AirlineId == airline.Id).ToListAsync(ct);
+        foreach (var schedule in schedules)
+        {
+            schedule.DeletedUtc = now;
+        }
+
+        var scheduleIds = schedules.Select(s => s.Id).ToList();
+        var entries = await db.PilotScheduleEntries.Where(e => scheduleIds.Contains(e.PilotScheduleId)).ToListAsync(ct);
+        foreach (var entry in entries)
+        {
+            entry.DeletedUtc = now;
+        }
+
         var routes = await db.Routes.Where(r => r.AirlineId == airline.Id).ToListAsync(ct);
         foreach (var route in routes)
         {
@@ -559,7 +629,13 @@ public record CreateAirlineRequest(
     string? AccentColour,
     string? StarterAircraftFamily,
     string? CurrencyCode,
-    StartingLoanRequest? StartingLoan);
+    StartingLoanRequest? StartingLoan,
+    /// <summary>
+    /// The player's own name for their founding pilot - see docs/PLAN.md "You cannot name your own
+    /// pilot". Optional: blank or omitted falls back to <see cref="AirlineEndpoints.DefaultPilotName"/>
+    /// rather than blocking airline creation.
+    /// </summary>
+    string? PilotName = null);
 
 /// <summary>
 /// A loan taken at the same moment the airline is created. Deliberately has NO rate field - see
@@ -574,7 +650,14 @@ public record UpdateAirlineRequest(
     string? AccentColour,
     string? StrategyProfile,
     string? IcaoCode,
-    string? HomeAirportIcao);
+    string? HomeAirportIcao,
+    /// <summary>
+    /// Renames the player's own pilot from Settings - docs/PLAN.md "Editable later from Settings".
+    /// Null means "leave unchanged" (same convention as every other field here); an explicit blank
+    /// string is rejected rather than silently reset, since a deliberate edit blanking the field is
+    /// a mistake to catch, not the same "leave it blank" case onboarding allows.
+    /// </summary>
+    string? PilotName = null);
 
 /// <summary>
 /// The figures behind one strategy profile, straight from economy-config.json plus the route

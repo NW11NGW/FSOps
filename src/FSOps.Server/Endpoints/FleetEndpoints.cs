@@ -1,4 +1,5 @@
-﻿using FSOps.Core.Economy;
+﻿using FSOps.Core.Airlines;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Finance;
 using FSOps.Data;
@@ -21,12 +22,15 @@ public static class FleetEndpoints
     {
         group.MapGet("/fleet", ListAsync);
         group.MapGet("/fleet/aircraft-types", ListAircraftTypesAsync);
+        group.MapGet("/fleet/registration-suggestion", GetRegistrationSuggestionAsync);
         group.MapPost("/fleet/lease", LeaseAsync);
         group.MapPost("/fleet/buy", BuyAsync);
         group.MapGet("/fleet/loans", ListLoansAsync);
         group.MapGet("/fleet/loan-eligibility", GetLoanEligibilityAsync);
         group.MapGet("/fleet/loan-quote", GetLoanQuoteAsync);
         group.MapPost("/fleet/loans", TakeLoanAsync);
+        group.MapPut("/fleet/{id:guid}/reservation", SetReservationAsync);
+        group.MapPut("/fleet/{id:guid}/registration", RenameAsync);
     }
 
     /// <summary>
@@ -89,6 +93,7 @@ public static class FleetEndpoints
                 f.FuelOnBoardKg,
                 f.GroundedUntilUtc,
                 groundedReason,
+                f.ReservedForPlayer,
                 f.CreatedUtc);
         }).ToList();
 
@@ -113,10 +118,13 @@ public static class FleetEndpoints
         var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
 
         var types = (await db.AircraftTypes.ToListAsync(ct))
-            .OrderBy(t => t.PurchasePrice)
             .Select(t =>
             {
-                var used = MaintenanceScheduler.ResolveUsedAircraftState(t.PurchasePrice, economyConfig);
+                // economyConfig.PurchasePriceFor, never t.PurchasePrice directly - see that
+                // method's own doc for why (True-life charges it unmodified, Casual applies the
+                // catalogue-wide multiplier).
+                var newPrice = economyConfig.PurchasePriceFor(t);
+                var used = MaintenanceScheduler.ResolveUsedAircraftState(newPrice, economyConfig);
                 // economyConfig.LeaseRateFor, never t.MonthlyLeaseRate - see EconomyConfig.LeaseRates'
                 // doc comment for why the DB column is never read for pricing or display.
                 return new AircraftTypeOption(
@@ -125,9 +133,10 @@ public static class FleetEndpoints
                     t.Family,
                     t.Manufacturer,
                     t.Name,
+                    AircraftCategoryFor(t.Family),
                     t.PaxCapacity,
                     t.RangeNm,
-                    t.PurchasePrice,
+                    newPrice,
                     used.PurchasePrice,
                     economyConfig.LeaseRateFor(t.IcaoType),
                     // The Fleet screen's lease preview derives its deposit from THIS figure - never
@@ -142,9 +151,33 @@ public static class FleetEndpoints
                     economyConfig.Maintenance.ACheckIntervalHours,
                     economyConfig.Maintenance.CCheckIntervalHours);
             })
+            .OrderBy(t => t.PurchasePriceNew)
             .ToList();
 
         return Results.Ok(types);
+    }
+
+    /// <summary>
+    /// Coarse size/role grouping for the buy/lease dialog's filter chips - docs/PLAN.md "filtering
+    /// by size or role". Purely presentational, derived from <see cref="AircraftType.Family"/>
+    /// rather than a stored column, so a new family only ever needs adding here, never a migration.
+    /// Unrecognised families default to Narrowbody rather than throwing - informational grouping,
+    /// not a safety-relevant lookup like <see cref="EconomyConfig.LeaseRateFor"/>.
+    /// </summary>
+    private static readonly HashSet<string> WidebodyFamilies = new(StringComparer.OrdinalIgnoreCase)
+        { "A330", "A350", "A380", "B767", "B777", "B787", "B747" };
+
+    private static readonly HashSet<string> RegionalFamilies = new(StringComparer.OrdinalIgnoreCase)
+        { "E-Jet", "CRJ", "ATR", "Dash8" };
+
+    private static string AircraftCategoryFor(string family)
+    {
+        if (WidebodyFamilies.Contains(family))
+        {
+            return "Widebody";
+        }
+
+        return RegionalFamilies.Contains(family) ? "Regional" : "Narrowbody";
     }
 
     /// <summary>
@@ -189,8 +222,13 @@ public static class FleetEndpoints
             });
         }
 
+        var (registrationError, registration) = await ResolveRegistrationAsync(db, airline, request.Registration, ct);
+        if (registrationError is not null)
+        {
+            return Results.BadRequest(new { error = registrationError });
+        }
+
         var now = DateTimeOffset.UtcNow;
-        var registration = await GenerateUniqueRegistrationAsync(db, airline, ct);
 
         var fleetAircraft = new FleetAircraft
         {
@@ -205,8 +243,14 @@ public static class FleetEndpoints
             ConditionPercent = 100,
             LocationIcao = airline.HomeAirportIcao,
             Status = FleetAircraftStatus.Active,
+            // Never auto-reserved itself - see EnsureSoleAircraftIsReservedAsync below, which
+            // protects the PRE-EXISTING aircraft the moment this one becomes the second, per
+            // docs/PLAN.md "prefer reserving an aircraft where the player actually is".
+            ReservedForPlayer = false,
             CreatedUtc = now,
         };
+
+        await EnsureSoleAircraftIsReservedAsync(db, airline.Id, ct);
 
         db.FleetAircraft.Add(fleetAircraft);
         db.Leases.Add(new Lease
@@ -270,8 +314,11 @@ public static class FleetEndpoints
 
         var isUsed = string.Equals(condition, "Used", StringComparison.OrdinalIgnoreCase);
         var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
-        var usedState = MaintenanceScheduler.ResolveUsedAircraftState(aircraftType.PurchasePrice, economyConfig);
-        var price = isUsed ? usedState.PurchasePrice : aircraftType.PurchasePrice;
+        // economyConfig.PurchasePriceFor, never aircraftType.PurchasePrice directly - see that
+        // method's own doc. "Used" is always 55% of THIS playstyle's new price.
+        var newPrice = economyConfig.PurchasePriceFor(aircraftType);
+        var usedState = MaintenanceScheduler.ResolveUsedAircraftState(newPrice, economyConfig);
+        var price = isUsed ? usedState.PurchasePrice : newPrice;
 
         var cashBalance = await CashBalanceAsync(db, airline.Id, ct);
         if (cashBalance < price)
@@ -282,8 +329,13 @@ public static class FleetEndpoints
             });
         }
 
+        var (registrationError, registration) = await ResolveRegistrationAsync(db, airline, request.Registration, ct);
+        if (registrationError is not null)
+        {
+            return Results.BadRequest(new { error = registrationError });
+        }
+
         var now = DateTimeOffset.UtcNow;
-        var registration = await GenerateUniqueRegistrationAsync(db, airline, ct);
 
         var fleetAircraft = new FleetAircraft
         {
@@ -298,8 +350,11 @@ public static class FleetEndpoints
             ConditionPercent = isUsed ? usedState.ConditionPercent : 100,
             LocationIcao = airline.HomeAirportIcao,
             Status = FleetAircraftStatus.Active,
+            ReservedForPlayer = false,
             CreatedUtc = now,
         };
+
+        await EnsureSoleAircraftIsReservedAsync(db, airline.Id, ct);
 
         db.FleetAircraft.Add(fleetAircraft);
         db.LedgerTransactions.Add(new LedgerTransaction
@@ -479,6 +534,52 @@ public static class FleetEndpoints
         return Results.Created("/api/v1/fleet/loans", new { loan, cashBalance = await CashBalanceAsync(db, airline.Id, ct) });
     }
 
+    /// <summary>
+    /// Fires the moment a fleet exceeds one aircraft - see docs/PLAN.md "Always keep one aircraft
+    /// free for the human" and "The one-aircraft case must be handled deliberately". A brand-new
+    /// airline's sole aircraft already starts reserved (AirlineEndpoints.CreateAsync), but this is
+    /// the moment that reservation actually starts to matter (before now there was only ever one
+    /// aircraft to fly anyway), so this defensively (re-)asserts it rather than trusting it was
+    /// never since cleared. After this call, reservation is entirely player-controlled via
+    /// PUT /fleet/{id}/reservation - nothing else in the app touches this flag again.
+    /// </summary>
+    private static async Task EnsureSoleAircraftIsReservedAsync(FsOpsDbContext db, Guid airlineId, CancellationToken ct)
+    {
+        var existingFleet = await db.FleetAircraft.Where(f => f.AirlineId == airlineId).ToListAsync(ct);
+        if (existingFleet.Count == 1 && !existingFleet.Any(f => f.ReservedForPlayer))
+        {
+            existingFleet[0].ReservedForPlayer = true;
+        }
+    }
+
+    /// <summary>
+    /// The explicit, never-silent choice docs/PLAN.md requires - "expose that choice, never decide
+    /// silently", both for the one-aircraft case and for releasing/re-assigning the reservation
+    /// later. Deliberately unopinionated: the player can release every aircraft (accepting nothing
+    /// is held back for them) or reserve more than one - this endpoint enforces nothing beyond
+    /// "this aircraft belongs to your airline", the same way every other Fleet action does.
+    /// </summary>
+    internal static async Task<IResult> SetReservationAsync(
+        Guid id, SetReservationRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.BadRequest(new { error = "Create an airline before managing the fleet." });
+        }
+
+        var aircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == id && f.AirlineId == airline.Id, ct);
+        if (aircraft is null)
+        {
+            return Results.NotFound();
+        }
+
+        aircraft.ReservedForPlayer = request.Reserved;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { aircraft.Id, aircraft.Registration, aircraft.ReservedForPlayer });
+    }
+
     /// <summary>Cash is never a stored column - see the project convention. Same materialise-then-sum
     /// pattern as AirlineEndpoints.BuildSummaryAsync (SQLite can't translate SumAsync over decimal).</summary>
     private static async Task<decimal> CashBalanceAsync(FsOpsDbContext db, Guid airlineId, CancellationToken ct)
@@ -505,43 +606,127 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// AircraftRegistrationGenerator.Generate is deterministic purely from the airline's ICAO code,
-    /// so a second call for the same airline produces the exact same tail number as the founding
-    /// aircraft - fine when it is only ever called once (at creation), not fine now that the fleet
-    /// screen can add aircraft repeatedly. Appends a numeric suffix until the result is unique within
-    /// this airline's fleet, so two aircraft never end up sharing a registration.
+    /// Live preview for the buy/lease dialog's "randomise" button and its pre-filled suggestion -
+    /// docs/PLAN.md "Show the generated suggestion pre-filled so randomising is the zero-effort
+    /// path". Read-only: never reserves the registration, since the player may never submit the
+    /// purchase - the actual endpoints re-check uniqueness at commit time regardless.
     /// </summary>
-    private static async Task<string> GenerateUniqueRegistrationAsync(FsOpsDbContext db, Airline airline, CancellationToken ct)
+    internal static async Task<IResult> GetRegistrationSuggestionAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
-        var homeAirport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == airline.HomeAirportIcao, ct);
-        var baseRegistration = Core.Airlines.AircraftRegistrationGenerator.Generate(homeAirport?.Country, airline.IcaoCode);
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.BadRequest(new { error = "Create an airline before buying or leasing aircraft." });
+        }
 
+        var (_, registration) = await ResolveRegistrationAsync(db, airline, requestedRegistration: null, ct);
+        return Results.Ok(new { registration });
+    }
+
+    /// <summary>
+    /// Repaints happen - docs/PLAN.md "Renaming an existing aircraft should also be possible from
+    /// the Fleet page ... subject to the same uniqueness rule" as a custom registration at
+    /// acquisition. Light validation only, same as buying/leasing: never a country-format check.
+    /// </summary>
+    internal static async Task<IResult> RenameAsync(
+        Guid id, RenameAircraftRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.BadRequest(new { error = "Create an airline before managing the fleet." });
+        }
+
+        var aircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == id && f.AirlineId == airline.Id, ct);
+        if (aircraft is null)
+        {
+            return Results.NotFound();
+        }
+
+        var normalized = NormalizeRegistration(request.Registration);
+        if (!AircraftRegistrationGenerator.IsValidCustomRegistration(normalized))
+        {
+            return Results.BadRequest(new { error = "Registration must be 2-10 characters: letters, digits and hyphens only." });
+        }
+
+        var existing = (await db.FleetAircraft
+                .Where(f => f.AirlineId == airline.Id && f.Id != id)
+                .Select(f => f.Registration)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (existing.Contains(normalized))
+        {
+            return Results.BadRequest(new { error = $"'{normalized}' is already used elsewhere in your fleet." });
+        }
+
+        aircraft.Registration = normalized;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { aircraft.Id, aircraft.Registration });
+    }
+
+    private static string NormalizeRegistration(string? raw) => (raw ?? string.Empty).Trim().ToUpperInvariant();
+
+    /// <summary>
+    /// Resolves the registration for a newly acquired aircraft - either the player's own custom
+    /// entry (validated lightly, never against a country's format - docs/PLAN.md "Let the player
+    /// set a custom registration") or a freshly generated one. The country comes from the airline's
+    /// HOME AIRPORT at this exact moment (acquisition time), never from anywhere the aircraft might
+    /// later fly - see docs/PLAN.md "The country comes from the airline's HUB, always".
+    ///
+    /// <para>Uniqueness is achieved by REGENERATING - calling <see cref="AircraftRegistrationGenerator.Generate"/>
+    /// again with a fresh random draw - never by appending a numeric suffix, which is what produced
+    /// invalid registrations like "G-OLAF1" before this fix.</para>
+    /// </summary>
+    private static async Task<(string? Error, string Registration)> ResolveRegistrationAsync(
+        FsOpsDbContext db, Airline airline, string? requestedRegistration, CancellationToken ct)
+    {
         var existing = (await db.FleetAircraft.Where(f => f.AirlineId == airline.Id).Select(f => f.Registration).ToListAsync(ct))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        if (!existing.Contains(baseRegistration))
+        if (!string.IsNullOrWhiteSpace(requestedRegistration))
         {
-            return baseRegistration;
+            var normalized = NormalizeRegistration(requestedRegistration);
+            if (!AircraftRegistrationGenerator.IsValidCustomRegistration(normalized))
+            {
+                return ("Registration must be 2-10 characters: letters, digits and hyphens only.", string.Empty);
+            }
+
+            if (existing.Contains(normalized))
+            {
+                return ($"'{normalized}' is already used in your fleet.", string.Empty);
+            }
+
+            return (null, normalized);
         }
 
-        for (var suffix = 2; suffix < 1000; suffix++)
+        var homeAirport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == airline.HomeAirportIcao, ct);
+
+        for (var attempt = 0; attempt < 1000; attempt++)
         {
-            var candidate = $"{baseRegistration}{suffix}";
-            if (!existing.Contains(candidate))
+            var candidate = AircraftRegistrationGenerator.Generate(homeAirport?.Country);
+            if (existing.Add(candidate))
             {
-                return candidate;
+                return (null, candidate);
             }
         }
 
-        // Astronomically unlikely (it would mean 998 aircraft of the same registration prefix
-        // already exist), but never return a colliding registration under any circumstances.
-        return $"{baseRegistration}{Guid.NewGuid().ToString("N")[..4].ToUpperInvariant()}";
+        // Astronomically unlikely (it would mean 1,000 freshly-generated candidates all collided
+        // with an existing registration), but never return a colliding registration regardless.
+        return (null, $"FS-{Guid.NewGuid().ToString("N")[..4].ToUpperInvariant()}");
     }
 }
 
-public record LeaseAircraftRequest(Guid? AircraftTypeId);
+/// <summary>
+/// <see cref="Registration"/> is the player's own custom entry (optional) - docs/PLAN.md "Let the
+/// player set a custom registration when buying or leasing". Null or blank means "generate one".
+/// </summary>
+public record LeaseAircraftRequest(Guid? AircraftTypeId, string? Registration = null);
 
-public record BuyAircraftRequest(Guid? AircraftTypeId, string? Condition);
+public record BuyAircraftRequest(Guid? AircraftTypeId, string? Condition, string? Registration = null);
+
+/// <summary>See FleetEndpoints.RenameAsync.</summary>
+public record RenameAircraftRequest(string? Registration);
 
 /// <summary>
 /// A mid-game loan request. Deliberately has NO rate field - see docs/PLAN.md "Loan interest is set
@@ -550,6 +735,9 @@ public record BuyAircraftRequest(Guid? AircraftTypeId, string? Condition);
 /// <see cref="FleetEndpoints.TakeLoanAsync"/> to trust.
 /// </summary>
 public record TakeLoanRequest(decimal Amount, int TermMonths);
+
+/// <summary>See FleetEndpoints.SetReservationAsync.</summary>
+public record SetReservationRequest(bool Reserved);
 
 /// <summary>One fleet aircraft, enriched for the Fleet page - see FleetEndpoints.ListAsync.</summary>
 public record FleetAircraftSummary(
@@ -571,6 +759,7 @@ public record FleetAircraftSummary(
     double FuelOnBoardKg,
     DateTimeOffset? GroundedUntilUtc,
     string? GroundedReason,
+    bool ReservedForPlayer,
     DateTimeOffset CreatedUtc);
 
 /// <summary>One buyable/leasable aircraft type, with new/used pricing and exactly what a used
@@ -581,6 +770,7 @@ public record AircraftTypeOption(
     string Family,
     string Manufacturer,
     string Name,
+    string Category,
     int PaxCapacity,
     int RangeNm,
     decimal PurchasePriceNew,

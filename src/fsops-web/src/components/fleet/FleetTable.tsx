@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, Plane } from 'lucide-react'
+import { AlertTriangle, Pencil, Plane, ShieldCheck, Users } from 'lucide-react'
 
 import { ConditionBar } from '@/components/fleet/ConditionBar'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { useSettings } from '@/hooks/useSettings'
 import type { FleetStatusState } from '@/hooks/useFleet'
@@ -14,6 +16,10 @@ interface FleetTableProps {
   fleet: FleetAircraftSummary[]
   status: FleetStatusState
   emptyAction?: ReactNode
+  onRename?: (aircraft: FleetAircraftSummary) => void
+  /** Toggle PUT /fleet/{id}/reservation - see docs/PLAN.md "Let the player release the reserved
+   *  aircraft". Omitted entirely hides the reservation column, same optional-prop convention as onRename. */
+  onToggleReservation?: (aircraft: FleetAircraftSummary) => void
 }
 
 function statusBadge(aircraft: FleetAircraftSummary) {
@@ -39,7 +45,7 @@ function formatUntil(iso: string | null): string | null {
   return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-export function FleetTable({ fleet, status, emptyAction }: FleetTableProps) {
+export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReservation }: FleetTableProps) {
   const { fmt } = useSettings()
 
   if (status === 'loading') {
@@ -87,6 +93,7 @@ export function FleetTable({ fleet, status, emptyAction }: FleetTableProps) {
             <TableHead>Next C-check</TableHead>
             <TableHead>Condition</TableHead>
             <TableHead>Fuel on board</TableHead>
+            {onToggleReservation && <TableHead>Reservation</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -98,7 +105,21 @@ export function FleetTable({ fleet, status, emptyAction }: FleetTableProps) {
                     <Plane className="size-4" />
                   </div>
                   <div className="min-w-0">
-                    <p className="min-w-0 break-words font-medium">{aircraft.registration}</p>
+                    <div className="flex min-w-0 items-center gap-1">
+                      <p className="min-w-0 break-words font-medium">{aircraft.registration}</p>
+                      {onRename && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-6 shrink-0"
+                          onClick={() => onRename(aircraft)}
+                          aria-label={`Rename ${aircraft.registration}`}
+                        >
+                          <Pencil className="size-3" />
+                        </Button>
+                      )}
+                    </div>
                     <p className="min-w-0 break-words text-xs text-muted-foreground">{aircraft.aircraftTypeName}</p>
                   </div>
                 </div>
@@ -127,6 +148,41 @@ export function FleetTable({ fleet, status, emptyAction }: FleetTableProps) {
                 <ConditionBar percent={aircraft.conditionPercent} />
               </TableCell>
               <TableCell className="tabular-nums">{fmt.weight(aircraft.fuelOnBoardKg)}</TableCell>
+              {onToggleReservation && (
+                <TableCell>
+                  <div className="flex flex-col items-start gap-1">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        {aircraft.reservedForPlayer ? (
+                          <Badge variant="warning" className="gap-1">
+                            <ShieldCheck className="size-3" />
+                            Reserved for you
+                          </Badge>
+                        ) : (
+                          <Badge variant="muted" className="gap-1">
+                            <Users className="size-3" />
+                            Available to pilots
+                          </Badge>
+                        )}
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {aircraft.reservedForPlayer
+                          ? 'Kept free for you to fly - never offered to virtual pilots.'
+                          : 'Available to virtual pilots to schedule - not held back for you.'}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-auto px-0 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-transparent"
+                      onClick={() => onToggleReservation(aircraft)}
+                    >
+                      {aircraft.reservedForPlayer ? 'Release to pilots' : 'Reserve for you'}
+                    </Button>
+                  </div>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

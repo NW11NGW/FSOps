@@ -645,6 +645,7 @@ public static class FlightEndpoints
         f.PositionJumpDetected,
         f.Revenue,
         f.TotalCost,
+        f.UnflyableReason,
         f.CreatedUtc,
     };
 }

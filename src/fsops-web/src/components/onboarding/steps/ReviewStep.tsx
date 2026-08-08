@@ -54,6 +54,7 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
 
   const rows: { label: string; value: string; stepKey: WizardStepKey }[] = [
     { label: 'Airline', value: `${data.name.trim()} (${data.icaoCode})`, stepKey: 'identity' },
+    { label: 'Your name', value: data.pilotName.trim() || 'Local Pilot (default)', stepKey: 'identity' },
     {
       label: 'Home base',
       value: data.homeAirport ? `${data.homeAirport.icao} — ${data.homeAirport.name}` : '—',

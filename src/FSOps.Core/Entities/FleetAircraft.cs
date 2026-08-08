@@ -43,6 +43,18 @@ public class FleetAircraft
     /// </summary>
     public DateTimeOffset? GroundedUntilUtc { get; set; }
 
+    /// <summary>
+    /// True if this aircraft is held back for the player rather than offered to the schedule
+    /// builder - see docs/PLAN.md "Always keep one aircraft free for the human". Once the fleet
+    /// exceeds one aircraft, exactly one is auto-flagged true the moment the second aircraft is
+    /// added (see FleetEndpoints.LeaseAsync/BuyAsync); a single-aircraft fleet also defaults to true
+    /// (the plan's "the player chooses explicitly" - defaulting to protected is the safe choice,
+    /// see AirlineEndpoints.CreateAsync). From then on this is entirely player-controlled via
+    /// PUT /fleet/{id}/reservation - nothing else in the app re-forces this flag, so the player can
+    /// freely release it (or reserve a different aircraft) and that choice sticks.
+    /// </summary>
+    public bool ReservedForPlayer { get; set; }
+
     public DateTimeOffset CreatedUtc { get; set; }
 
     public DateTimeOffset? DeletedUtc { get; set; }

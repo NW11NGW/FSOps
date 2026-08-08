@@ -119,6 +119,12 @@ builder.Services.AddHostedService<HeartbeatService>();
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddHostedService<EconomyClockService>();
 
+// Resolves every virtual pilot's scheduled occurrence whose block time has elapsed on the real
+// wall clock, with the same startup catch-up shape as EconomyClockService - see
+// VirtualFlightResolverService's class doc for how it reuses that service's idempotency/
+// monotonicity/capped-catch-up pattern rather than inventing a second one.
+builder.Services.AddHostedService<VirtualFlightResolverService>();
+
 var app = builder.Build();
 
 // Migrations are fast (schema-only), so this runs synchronously before Kestrel starts
@@ -160,6 +166,8 @@ apiV1.MapSettingsEndpoints();
 apiV1.MapSimEndpoints();
 apiV1.MapFlightEndpoints();
 apiV1.MapFleetEndpoints();
+apiV1.MapPilotEndpoints();
+apiV1.MapOperationsEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");
 

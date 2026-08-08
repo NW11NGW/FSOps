@@ -22,7 +22,9 @@ public class FsOpsDbContext : DbContext
 
     public DbSet<Route> Routes => Set<Route>();
 
-    public DbSet<Schedule> Schedules => Set<Schedule>();
+    public DbSet<PilotSchedule> PilotSchedules => Set<PilotSchedule>();
+
+    public DbSet<PilotScheduleEntry> PilotScheduleEntries => Set<PilotScheduleEntry>();
 
     public DbSet<Pilot> Pilots => Set<Pilot>();
 

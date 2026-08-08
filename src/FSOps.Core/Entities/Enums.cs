@@ -59,6 +59,26 @@ public enum FlightStatus
     Completed,
     Interrupted,
     Abandoned,
+
+    /// <summary>
+    /// A virtual pilot's scheduled flight that could not fly (aircraft in maintenance, still away,
+    /// or otherwise unavailable) and the airline's Playstyle is Casual - see docs/PLAN.md
+    /// "Playstyle is not only numbers - it changes behaviour". Recorded and visible in history so a
+    /// silent skip can never hide a scheduling bug, but no ledger lines are posted at all: no lost
+    /// revenue (nothing was ever booked) and no penalty. See VirtualFlightResolverService.
+    /// </summary>
+    Skipped,
+
+    /// <summary>
+    /// A virtual pilot's scheduled flight that could not fly and the airline's Playstyle is
+    /// True-life - see docs/PLAN.md "Playstyle is not only numbers - it changes behaviour". Unlike
+    /// <see cref="Skipped"/>, this posts a single <see cref="LedgerCategory.CancellationFee"/>
+    /// ledger line (see EconomyConfig.UnflyableSchedule) so a badly-planned schedule genuinely
+    /// bites. Whether an unflyable occurrence resolves to Skipped or Cancelled is entirely
+    /// config-driven (EconomyConfig.UnflyableSchedule.CancellationFee is zero for Casual, positive
+    /// for True-life) - there is no `if (playstyle)` branch anywhere in the resolution logic.
+    /// </summary>
+    Cancelled,
 }
 
 public enum FlightEventType
@@ -85,6 +105,16 @@ public enum LedgerCategory
     GsxServices,
     StartingCapital,
     LoanProceeds,
+
+    /// <summary>
+    /// Posted for a virtual pilot's flight that couldn't fly under a True-life airline - see
+    /// <see cref="FlightStatus.Cancelled"/> and docs/PLAN.md's Playstyle behaviour table. Never
+    /// posted for a Casual airline (see <see cref="FlightStatus.Skipped"/>) and never posted
+    /// alongside a <see cref="TicketRevenue"/> line for the same flight - a cancelled sector never
+    /// flew, so it never earns revenue.
+    /// </summary>
+    CancellationFee,
+
     Other,
 }
 

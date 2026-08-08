@@ -1,11 +1,14 @@
 import { useOutletContext } from 'react-router-dom'
-import { Clock3, DollarSign, Globe, PlaneTakeoff, Route, Users } from 'lucide-react'
+import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, Route, Users } from 'lucide-react'
 
+import { LiveOpsMap } from '@/components/map/LiveOpsMap'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatTile } from '@/components/shared/StatTile'
 import { WorldDataStatusBanner } from '@/components/shared/WorldDataStatusBanner'
+import { useLiveOperations } from '@/hooks/useLiveOperations'
 import { useServerClock } from '@/hooks/useServerClock'
 import { useSettings } from '@/hooks/useSettings'
 import { useWorldDataStatus } from '@/hooks/useWorldDataStatus'
@@ -31,6 +34,7 @@ export function Dashboard() {
   const { status, heartbeat, airlineSummary } = useOutletContext<LiveContext>()
   const serverNow = useServerClock(heartbeat)
   const worldData = useWorldDataStatus()
+  const liveOps = useLiveOperations()
   const { fmt } = useSettings()
 
   const summary = airlineSummary.data
@@ -161,6 +165,31 @@ export function Dashboard() {
           />
         </div>
       </div>
+
+      <Card className="mt-4">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Radar className="size-4" />
+            Live operations
+          </CardTitle>
+          {liveOps.status === 'ready' && liveOps.data && liveOps.data.aircraft.length > 0 && (
+            <Badge variant="success">
+              {liveOps.data.aircraft.length} airborne
+            </Badge>
+          )}
+        </CardHeader>
+        <CardContent>
+          {liveOps.status === 'loading' && <Skeleton className="h-[360px] w-full rounded-lg" />}
+          {liveOps.status === 'error' && (
+            <div className="flex h-[360px] items-center justify-center rounded-lg border border-border bg-surface text-sm text-muted-foreground">
+              Could not reach the live hub — retrying…
+            </div>
+          )}
+          {liveOps.status === 'ready' && liveOps.data && (
+            <LiveOpsMap aircraft={liveOps.data.aircraft} network={liveOps.data.network} className="h-[360px]" />
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

@@ -107,19 +107,41 @@ public sealed class EconomyConfigCatalog
                     StartingCapital = 2_500_000m,
                     LeaseDepositMonths = 2.0,
                 },
-                // Only the two starter types (A320/B738) actually differ from Casual - the other
-                // four (A319/A321/B737/B739) were never game-balanced, so True-life charges the
-                // same realistic rate Casual does for those. See EconomyConfig.Default()'s LeaseRates
-                // for the Casual list this mirrors.
+                // Real-world monthly lease rates for every catalogue type - the figures Casual's own
+                // list (EconomyConfig.Default()'s LeaseRates) is an ~8% multiple of, except the two
+                // hard-anchored starter types (A320/B738).
                 LeaseRates = new List<LeaseRateConfig>
                 {
                     new("A319", 350_000m),
                     new("A320", 380_000m),
                     new("A321", 420_000m),
+                    new("A20N", 410_000m),
+                    new("A21N", 450_000m),
                     new("B737", 340_000m),
                     new("B738", 390_000m),
                     new("B739", 410_000m),
+                    new("B38M", 430_000m),
+                    new("B752", 460_000m),
+                    new("A332", 750_000m),
+                    new("A333", 820_000m),
+                    new("A359", 1_150_000m),
+                    new("A388", 1_800_000m),
+                    new("B763", 650_000m),
+                    new("B77W", 1_450_000m),
+                    new("B789", 1_050_000m),
+                    new("B748", 1_300_000m),
+                    new("E170", 185_000m),
+                    new("E175", 205_000m),
+                    new("E190", 240_000m),
+                    new("E195", 260_000m),
+                    new("CRJ7", 160_000m),
+                    new("CRJ9", 175_000m),
+                    new("AT42", 95_000m),
+                    new("AT72", 115_000m),
+                    new("DH8D", 130_000m),
                 },
+                // True-life keeps real figures throughout - purchase price is unmodified.
+                PurchasePriceMultiplier = 1.0m,
                 FleetFinance = new PlaystyleFleetFinanceOverrides { MonthlyInsurancePerAircraft = 50_000m },
                 Maintenance = new PlaystyleMaintenanceOverrides { ACheckDowntimeHours = 24, CCheckDowntimeHours = 336 },
                 // Realistic borrowing costs to match every other True-life figure - a higher base
@@ -127,6 +149,12 @@ public sealed class EconomyConfigCatalog
                 // own doc). See docs/PLAN.md "Loan interest is set by the simulation, never by the
                 // player".
                 Loan = new PlaystyleLoanOverrides { BaseAnnualRatePct = 4.0, CapAnnualRatePct = 8.0 },
+                // True-life cancels an unflyable virtual flight with a real cost rather than
+                // Casual's quiet skip - see docs/PLAN.md's Playstyle behaviour table and
+                // UnflyableScheduleConfig's own doc. Sized as a modest multiple of a typical
+                // sector's fixed per-sector costs (turnaround/handling), not a punitive figure -
+                // it needs to bite a badly-planned schedule, not bankrupt one bad week.
+                UnflyableSchedule = new PlaystyleUnflyableScheduleOverrides { CancellationFee = 350m },
             }),
         };
 
@@ -148,6 +176,17 @@ public sealed class EconomyConfigCatalog
         Fuel = baseConfig.Fuel,
         Costs = baseConfig.Costs,
         StrategyProfiles = baseConfig.StrategyProfiles,
+        // Shared across playstyles - see SchedulingConfig's own doc (a duty day and a legal rest
+        // period are working-time facts, not a game-balance figure).
+        Scheduling = baseConfig.Scheduling,
+        // Entirely from the playstyle's own override block, same reasoning as FleetFinance/Loan
+        // above - Casual's CancellationFee is 0 (skip quietly), True-life's is positive (cancel
+        // with a cost). A playstyle block that forgets this fails Validate() the moment it produces
+        // a negative default (it won't - the field defaults to 0, which is a VALID Casual-shaped
+        // value), so a missing True-life override would silently behave like Casual instead of
+        // failing loudly; deliberately still resolved explicitly here (rather than falling through
+        // to baseConfig) so a future review of this method is the one place that has to notice.
+        UnflyableSchedule = new UnflyableScheduleConfig { CancellationFee = overrides.UnflyableSchedule.CancellationFee },
         AirlineStartup = new AirlineStartupConfig
         {
             // Shared across playstyles - the founding pilot's salary is already a realistic
@@ -162,6 +201,9 @@ public sealed class EconomyConfigCatalog
         // field with the base, so a playstyle block that forgets a type fails loudly via LeaseRateFor
         // rather than silently inheriting the wrong figure.
         LeaseRates = overrides.LeaseRates,
+        // Entirely from the playstyle's own override block, same reasoning as LeaseRates above -
+        // see EconomyConfig.PurchasePriceMultiplier's own doc.
+        PurchasePriceMultiplier = overrides.PurchasePriceMultiplier,
         FleetFinance = new FleetFinanceConfig
         {
             MonthlyInsurancePerAircraft = overrides.FleetFinance.MonthlyInsurancePerAircraft,
@@ -207,11 +249,15 @@ public sealed class EconomyConfigCatalog
 
         public IReadOnlyList<LeaseRateConfig> LeaseRates { get; init; } = Array.Empty<LeaseRateConfig>();
 
+        public decimal PurchasePriceMultiplier { get; init; }
+
         public PlaystyleFleetFinanceOverrides FleetFinance { get; init; } = new();
 
         public PlaystyleMaintenanceOverrides Maintenance { get; init; } = new();
 
         public PlaystyleLoanOverrides Loan { get; init; } = new();
+
+        public PlaystyleUnflyableScheduleOverrides UnflyableSchedule { get; init; } = new();
     }
 
     private sealed class PlaystyleAirlineStartupOverrides
@@ -238,5 +284,10 @@ public sealed class EconomyConfigCatalog
         public double BaseAnnualRatePct { get; init; }
 
         public double CapAnnualRatePct { get; init; }
+    }
+
+    private sealed class PlaystyleUnflyableScheduleOverrides
+    {
+        public decimal CancellationFee { get; init; }
     }
 }

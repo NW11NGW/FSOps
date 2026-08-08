@@ -27,7 +27,12 @@ public sealed record LiveFlightSnapshot(
     double ElapsedBlockMinutes,
     int PlannedBlockMinutes,
     bool AwaitingSimReconnect,
-    DateTimeOffset TimestampUtc);
+    DateTimeOffset TimestampUtc,
+    // Trailing with a default so the existing test call sites that construct this positionally
+    // without a heading keep compiling unchanged. True heading (not magnetic) to match what
+    // LiveFlightMap already renders for the in-flight marker - see OperationsEndpoints, the only
+    // other reader of this field.
+    double TrueHeadingDeg = 0);
 
 /// <summary>
 /// Owns the flight currently being tracked: advances its <see cref="FlightPhaseStateMachine"/> off
@@ -630,7 +635,7 @@ public sealed class FlightLifecycleService : IHostedService
             tracker.FlightId, phase.ToString(), sample.LatitudeDeg, sample.LongitudeDeg,
             sample.AltitudeMslFt, sample.AltitudeAglFt, sample.IndicatedAirspeedKt, sample.GroundSpeedKt,
             sample.VerticalSpeedFpm, sample.TotalFuelKg, elapsedMinutes, tracker.PlannedBlockMinutes,
-            tracker.PendingReconnect, sample.TimestampUtc);
+            tracker.PendingReconnect, sample.TimestampUtc, sample.TrueHeadingDeg);
     }
 
     private static FlightTelemetrySample MapSample(TelemetrySample s) => new(

@@ -115,6 +115,8 @@ export const AIRCRAFT_OPTIONS: AircraftMeta[] = [
 export interface WizardData {
   name: string
   icaoCode: string
+  /** The player's own name for their founding pilot - optional, defaults sensibly server-side if left blank. */
+  pilotName: string
   homeAirport: AirportSummary | null
   playstyle: Playstyle | null
   strategyProfile: StrategyProfile | null
@@ -134,6 +136,7 @@ export interface WizardData {
 export const DEFAULT_WIZARD_DATA: WizardData = {
   name: '',
   icaoCode: '',
+  pilotName: '',
   homeAirport: null,
   playstyle: null,
   strategyProfile: null,
@@ -207,6 +210,7 @@ export function buildCreateAirlineInput(data: WizardData): CreateAirlineInput {
     accentColour: data.accentColour,
     starterAircraftFamily: data.starterAircraftFamily,
     currencyCode: data.currencyCode,
+    pilotName: data.pilotName.trim(),
     ...(data.loanEnabled
       ? {
           startingLoan: {

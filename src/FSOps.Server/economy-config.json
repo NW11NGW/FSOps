@@ -107,22 +107,73 @@
     // fixed. leaseDepositMonths itself is a pacing decision, not a fictional-number label - a
     // single month's deposit is a normal real-world lease term too.
     "airlineStartup": {
-      "startingCapital": 2000000,
+      // 60,000 covers the 30,000 lease deposit plus a month's cushion, and - the load-bearing part -
+      // sits BELOW the price of a used airframe (~51,200), so a new airline cannot buy past the
+      // progression loop before flying a single sector. This was 2,000,000 while Casual purchase
+      // prices were still realistic and therefore unreachable; once they came down to ~93,100 new,
+      // that same figure bought 39 used A320s on day one and the earn-your-second-aircraft loop
+      // stopped existing. Starting lean is safe here precisely because one leg a day already nets
+      // about 45,000/month - the airline is profitable from month one, so runway matters far less
+      // than the temptation it removes.
+      "startingCapital": 60000,
       "leaseDepositMonths": 1.0
     },
     // Every leasable type's monthly lease rate for this playstyle - the ONLY place lease pricing
     // is read from (EconomyConfig.LeaseRateFor); AircraftType.MonthlyLeaseRate in the seeded
-    // catalogue is never used for pricing (see AircraftTypeSeeder.cs's class doc). A320/B738 are
-    // the deliberate game-balance figures the starter aircraft use; the other four types were
-    // never game-balanced, so they carry the same realistic rate as trueLife below.
+    // catalogue is never used for pricing (see AircraftTypeSeeder.cs's class doc).
+    //
+    // DELIBERATE GAME-BALANCE FIGURES, NOT REAL-WORLD RATES (2026-08-08 catalogue-wide rebalance) -
+    // every entry here is the SAME ~8% multiplier applied to trueLife's real rate below, so a 737
+    // is never eleven times cheaper to lease than an A321 just because one happened to be the
+    // starter type. A320/B738 are the two exceptions: hard-anchored at exactly 30,000 (not 8% of
+    // their real rate, which would be ~30,400/31,200) because the whole Casual balance is anchored
+    // to that one figure - see docs/PLAN.md "Casual pricing must scale the WHOLE catalogue". Do NOT
+    // "correct" any of these toward trueLife's figures, for the same reason as A320/B738 - that
+    // reopens the unplayable-grind problem the rebalance fixed, just for every OTHER type instead.
     "leaseRates": [
-      { "icaoType": "A319", "monthlyRate": 350000 },
+      { "icaoType": "A319", "monthlyRate": 28000 },
       { "icaoType": "A320", "monthlyRate": 30000 },
-      { "icaoType": "A321", "monthlyRate": 420000 },
-      { "icaoType": "B737", "monthlyRate": 340000 },
+      { "icaoType": "A321", "monthlyRate": 33600 },
+      { "icaoType": "A20N", "monthlyRate": 32800 },
+      { "icaoType": "A21N", "monthlyRate": 36000 },
+      { "icaoType": "B737", "monthlyRate": 27200 },
       { "icaoType": "B738", "monthlyRate": 30000 },
-      { "icaoType": "B739", "monthlyRate": 410000 }
+      { "icaoType": "B739", "monthlyRate": 32800 },
+      { "icaoType": "B38M", "monthlyRate": 34400 },
+      { "icaoType": "B752", "monthlyRate": 36800 },
+      { "icaoType": "A332", "monthlyRate": 60000 },
+      { "icaoType": "A333", "monthlyRate": 65600 },
+      { "icaoType": "A359", "monthlyRate": 92000 },
+      { "icaoType": "A388", "monthlyRate": 144000 },
+      { "icaoType": "B763", "monthlyRate": 52000 },
+      { "icaoType": "B77W", "monthlyRate": 116000 },
+      { "icaoType": "B789", "monthlyRate": 84000 },
+      { "icaoType": "B748", "monthlyRate": 104000 },
+      { "icaoType": "E170", "monthlyRate": 14800 },
+      { "icaoType": "E175", "monthlyRate": 16400 },
+      { "icaoType": "E190", "monthlyRate": 19200 },
+      { "icaoType": "E195", "monthlyRate": 20800 },
+      { "icaoType": "CRJ7", "monthlyRate": 12800 },
+      { "icaoType": "CRJ9", "monthlyRate": 14000 },
+      { "icaoType": "AT42", "monthlyRate": 7600 },
+      { "icaoType": "AT72", "monthlyRate": 9200 },
+      { "icaoType": "DH8D", "monthlyRate": 10400 }
     ],
+    // Casual's purchase-price multiplier - see EconomyConfig.PurchasePriceMultiplier's own doc.
+    // Applied to AircraftType.PurchasePrice (the shared realistic figure, unchanged by playstyle)
+    // to get what THIS playstyle actually charges. 0.00116 lands the starter A320 at ~55,100 new -
+    // "near £55,000 new" per docs/PLAN.md - so a Used example (55% of that, see UsedAircraft below)
+    // is ~30,305: affordable after roughly ten sectors' profit, matching the lease deposit it sits
+    // beside. Unlike leaseRates above (a per-type list, since real lease rates vary too much
+    // relative to their own value to derive from a single column), this is a SINGLE scalar derived
+    // from AircraftType.PurchasePrice, so it scales automatically as the catalogue grows - a new
+    // type never needs its own Casual purchase-price entry authored by hand.
+    // 0.00196 puts a USED A320 at roughly 51,000 - about 17 sectors' profit at the ~3,016 a
+    // typical short-haul sector nets, which is the pace the user chose (2026-08-08). It was 0.00116
+    // (~10 sectors) briefly; that made a used airframe cost about the same as a lease deposit, so
+    // leasing had almost no reason to exist. Do NOT tune this toward realism - see the game-balance
+    // note above; it is deliberately a tiny fraction of a real transaction value.
+    "purchasePriceMultiplier": 0.00196,
     "fleetFinance": {
       "monthlyInsurancePerAircraft": 6000
     },
@@ -141,6 +192,12 @@
     "loan": {
       "baseAnnualRatePct": 2.5,
       "capAnnualRatePct": 5.0
+    },
+    // A virtual pilot's flight that can't fly (aircraft in maintenance, still away, or otherwise
+    // unavailable) is skipped quietly under Casual - recorded in history, no financial penalty at
+    // all. See docs/PLAN.md's Playstyle behaviour table and FlightStatus.Skipped.
+    "unflyableSchedule": {
+      "cancellationFee": 0
     }
   },
   "trueLife": {
@@ -160,14 +217,40 @@
       "startingCapital": 2500000,
       "leaseDepositMonths": 2.0
     },
+    // Real-world monthly operating-lease rates for every catalogue type - the figures Casual's own
+    // list above is an ~8% multiple of (except the two anchored starter types).
     "leaseRates": [
       { "icaoType": "A319", "monthlyRate": 350000 },
       { "icaoType": "A320", "monthlyRate": 380000 },
       { "icaoType": "A321", "monthlyRate": 420000 },
+      { "icaoType": "A20N", "monthlyRate": 410000 },
+      { "icaoType": "A21N", "monthlyRate": 450000 },
       { "icaoType": "B737", "monthlyRate": 340000 },
       { "icaoType": "B738", "monthlyRate": 390000 },
-      { "icaoType": "B739", "monthlyRate": 410000 }
+      { "icaoType": "B739", "monthlyRate": 410000 },
+      { "icaoType": "B38M", "monthlyRate": 430000 },
+      { "icaoType": "B752", "monthlyRate": 460000 },
+      { "icaoType": "A332", "monthlyRate": 750000 },
+      { "icaoType": "A333", "monthlyRate": 820000 },
+      { "icaoType": "A359", "monthlyRate": 1150000 },
+      { "icaoType": "A388", "monthlyRate": 1800000 },
+      { "icaoType": "B763", "monthlyRate": 650000 },
+      { "icaoType": "B77W", "monthlyRate": 1450000 },
+      { "icaoType": "B789", "monthlyRate": 1050000 },
+      { "icaoType": "B748", "monthlyRate": 1300000 },
+      { "icaoType": "E170", "monthlyRate": 185000 },
+      { "icaoType": "E175", "monthlyRate": 205000 },
+      { "icaoType": "E190", "monthlyRate": 240000 },
+      { "icaoType": "E195", "monthlyRate": 260000 },
+      { "icaoType": "CRJ7", "monthlyRate": 160000 },
+      { "icaoType": "CRJ9", "monthlyRate": 175000 },
+      { "icaoType": "AT42", "monthlyRate": 95000 },
+      { "icaoType": "AT72", "monthlyRate": 115000 },
+      { "icaoType": "DH8D", "monthlyRate": 130000 }
     ],
+    // True-life keeps real figures throughout (docs/PLAN.md) - purchase price is charged exactly
+    // as AircraftType.PurchasePrice reads, unmodified.
+    "purchasePriceMultiplier": 1.0,
     "fleetFinance": {
       "monthlyInsurancePerAircraft": 50000
     },
@@ -183,7 +266,25 @@
     "loan": {
       "baseAnnualRatePct": 4.0,
       "capAnnualRatePct": 8.0
+    },
+    // A virtual pilot's flight that can't fly is CANCELLED under True-life, with a real cost -
+    // "clearly reported", per docs/PLAN.md's Playstyle behaviour table (see
+    // FlightStatus.Cancelled). Sized as a modest multiple of a typical sector's fixed per-sector
+    // costs (turnaround/handling), not punitive - it needs to bite a badly-planned schedule, not
+    // bankrupt one bad week.
+    "unflyableSchedule": {
+      "cancellationFee": 350
     }
+  },
+  // Pilot rest/duty and minimum turnaround for the weekly schedule builder - see docs/PLAN.md
+  // "Virtual pilot scheduling". Shared across playstyles: a duty day and a legal rest period are
+  // working-time facts, not something that should differ by how realistically the player wants to
+  // be billed. 10h rest / 13h max duty are ordinary short-haul crewing figures; 45 minutes covers a
+  // realistic minimum turnaround (deplane, clean, board).
+  "scheduling": {
+    "minRestHoursBetweenDutyDays": 10,
+    "maxDutyHoursPerDay": 13,
+    "minTurnaroundMinutes": 45
   },
   "strategyProfiles": [
     { "profile": "LowCost", "referenceFareMultiplier": 0.75, "baselineLoadFactor": 0.76, "elasticity": 1.60, "costMultiplier": 0.85 },

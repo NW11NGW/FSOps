@@ -90,6 +90,30 @@ public sealed class EconomyConfig
         return rate;
     }
 
+    /// <summary>
+    /// One consistent multiplier applied to <see cref="AircraftType.PurchasePrice"/> (the shared,
+    /// realistic transaction value every airline's database row holds - see AircraftTypeSeeder.cs's
+    /// class doc) to get THIS playstyle's purchase price - see docs/PLAN.md "Casual pricing must
+    /// scale the WHOLE catalogue". True-life's is exactly 1.0 (real figures throughout); Casual's
+    /// is small enough that a used airframe (55% of this, see <see cref="UsedAircraft"/>) is
+    /// affordable after roughly ten sectors' profit. Deliberately a scalar rather than a per-type
+    /// list (unlike <see cref="LeaseRates"/>): since it is derived from AircraftType.PurchasePrice,
+    /// which every new catalogue type already has, a newly-added type gets a correctly-scaled
+    /// Casual purchase price automatically, with nothing to remember to author by hand.
+    /// </summary>
+    public decimal PurchasePriceMultiplier { get; init; } = 1.0m;
+
+    /// <summary>
+    /// This playstyle's purchase price for a "New" example of <paramref name="aircraftType"/> - the
+    /// ONLY sanctioned way to price a purchase anywhere in the app (never read
+    /// <see cref="AircraftType.PurchasePrice"/> directly - see <see cref="PurchasePriceMultiplier"/>'s
+    /// own doc for why). <see cref="MaintenanceScheduler.ResolveUsedAircraftState"/> applies the
+    /// used-aircraft discount on top of whatever this returns, so "Used" is always 55% of THIS
+    /// playstyle's new price, never of the shared realistic figure directly.
+    /// </summary>
+    public decimal PurchasePriceFor(AircraftType aircraftType) =>
+        Math.Round(aircraftType.PurchasePrice * PurchasePriceMultiplier, 2, MidpointRounding.AwayFromZero);
+
     /// <summary>Recurring monthly costs that are not tied to any single flight. Currently just
     /// insurance; lease and salary are already recurring via <see cref="Lease.MonthlyRate"/> and
     /// <see cref="Pilot.MonthlySalary"/> and do not need duplicating here.</summary>
@@ -116,6 +140,26 @@ public sealed class EconomyConfig
     /// airframe starts with are a property of the used-aircraft market, not a game-balance figure
     /// that differs by how realistically the player wants to be billed.</summary>
     public UsedAircraftConfig UsedAircraft { get; init; } = new();
+
+    /// <summary>
+    /// Pilot rest/duty and minimum turnaround for the weekly schedule builder - see docs/PLAN.md
+    /// "Virtual pilot scheduling". Shared across playstyles: a duty day and a legal rest period are
+    /// working-time facts, not a game-balance figure that should differ by how realistically the
+    /// player wants to be billed (unlike <see cref="UnflyableSchedule"/> below, which does differ).
+    /// </summary>
+    public SchedulingConfig Scheduling { get; init; } = new();
+
+    /// <summary>
+    /// What happens to a scheduled virtual flight that cannot fly (aircraft in maintenance, still
+    /// away, or otherwise unavailable) - see docs/PLAN.md "Playstyle is not only numbers - it
+    /// changes behaviour". Resolved per playstyle by <see cref="EconomyConfigCatalog"/>, like
+    /// <see cref="FleetFinance"/>/<see cref="Loan"/>: Casual's <see cref="UnflyableScheduleConfig.CancellationFee"/>
+    /// is zero (skipped quietly, no penalty), True-life's is positive (cancelled with a real cost).
+    /// Nothing in <see cref="FSOps.Server.Services.VirtualFlightResolverService"/> branches on the
+    /// playstyle directly - it only ever asks "is the configured fee zero or positive", so a
+    /// hypothetical third playstyle just needs its own override block, never a code change.
+    /// </summary>
+    public UnflyableScheduleConfig UnflyableSchedule { get; init; } = new();
 
     public IReadOnlyList<StrategyProfileConfig> StrategyProfiles { get; init; } = Array.Empty<StrategyProfileConfig>();
 
@@ -223,6 +267,12 @@ public sealed class EconomyConfig
                 throw new InvalidOperationException(
                     $"LeaseRates entry '{leaseRate.IcaoType}' must have a positive monthlyRate, was {leaseRate.MonthlyRate}.");
             }
+        }
+
+        if (PurchasePriceMultiplier <= 0)
+        {
+            throw new InvalidOperationException(
+                $"PurchasePriceMultiplier must be positive, was {PurchasePriceMultiplier}.");
         }
 
         if (FleetFinance.MonthlyInsurancePerAircraft < 0)
@@ -338,6 +388,33 @@ public sealed class EconomyConfig
         {
             throw new InvalidOperationException("Demand.DayOfWeekMultiplier must have exactly 7 entries (Sunday=0..Saturday=6).");
         }
+
+        if (Scheduling.MinRestHoursBetweenDutyDays <= 0)
+        {
+            throw new InvalidOperationException($"Scheduling.MinRestHoursBetweenDutyDays must be positive, was {Scheduling.MinRestHoursBetweenDutyDays}.");
+        }
+
+        if (Scheduling.MaxDutyHoursPerDay is <= 0 or > 24)
+        {
+            throw new InvalidOperationException($"Scheduling.MaxDutyHoursPerDay must be in (0,24], was {Scheduling.MaxDutyHoursPerDay}.");
+        }
+
+        if (Scheduling.MinRestHoursBetweenDutyDays + Scheduling.MaxDutyHoursPerDay > 24)
+        {
+            throw new InvalidOperationException(
+                "Scheduling.MinRestHoursBetweenDutyDays + Scheduling.MaxDutyHoursPerDay must not exceed 24 - " +
+                "otherwise a pilot flying every day could never legally satisfy both in the same 24-hour cycle.");
+        }
+
+        if (Scheduling.MinTurnaroundMinutes < 0)
+        {
+            throw new InvalidOperationException($"Scheduling.MinTurnaroundMinutes cannot be negative, was {Scheduling.MinTurnaroundMinutes}.");
+        }
+
+        if (UnflyableSchedule.CancellationFee < 0)
+        {
+            throw new InvalidOperationException($"UnflyableSchedule.CancellationFee cannot be negative, was {UnflyableSchedule.CancellationFee}.");
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -426,23 +503,56 @@ public sealed class EconomyConfig
             },
             AirlineStartup = new AirlineStartupConfig
             {
-                StartingCapital = 2_000_000m,
+                // 60,000 covers the 30,000 lease deposit plus a month's cushion, and deliberately
+                // sits BELOW a used airframe's price (~51,200) so a new airline cannot buy past the
+                // progression loop before flying a sector. Was 2,000,000 while Casual purchase
+                // prices were still realistic and unreachable; once they came down that bought 39
+                // used A320s on day one. Keep in step with economy-config.json's casual block, which
+                // is what the server actually loads - this default only applies if that file is gone.
+                StartingCapital = 60_000m,
                 LeaseDepositMonths = 1.0,
                 StartingPilotMonthlySalary = 9_000m,
             },
-            // Casual figures - mirrors AircraftTypeSeeder.cs's catalogue for the four realistic
-            // types (A319/A321/B737/B739 - never game-balanced) and the deliberate game-balance
-            // figure for the two starter types (A320/B738 - see that file's class doc). True-life's
-            // own list (EconomyConfigCatalog.Default()) overrides only the two starter entries.
+            // Casual figures - every entry is trueLife's real rate (EconomyConfigCatalog.Default())
+            // times the ~8% catalogue-wide multiplier, except A320/B738 which are hard-anchored at
+            // exactly 30,000 since the whole Casual balance is anchored to that figure - see
+            // docs/PLAN.md "Casual pricing must scale the WHOLE catalogue".
             LeaseRates = new List<LeaseRateConfig>
             {
-                new("A319", 350_000m),
+                new("A319", 28_000m),
                 new("A320", 30_000m),
-                new("A321", 420_000m),
-                new("B737", 340_000m),
+                new("A321", 33_600m),
+                new("A20N", 32_800m),
+                new("A21N", 36_000m),
+                new("B737", 27_200m),
                 new("B738", 30_000m),
-                new("B739", 410_000m),
+                new("B739", 32_800m),
+                new("B38M", 34_400m),
+                new("B752", 36_800m),
+                new("A332", 60_000m),
+                new("A333", 65_600m),
+                new("A359", 92_000m),
+                new("A388", 144_000m),
+                new("B763", 52_000m),
+                new("B77W", 116_000m),
+                new("B789", 84_000m),
+                new("B748", 104_000m),
+                new("E170", 14_800m),
+                new("E175", 16_400m),
+                new("E190", 19_200m),
+                new("E195", 20_800m),
+                new("CRJ7", 12_800m),
+                new("CRJ9", 14_000m),
+                new("AT42", 7_600m),
+                new("AT72", 9_200m),
+                new("DH8D", 10_400m),
             },
+            // Casual's purchase-price multiplier - see PurchasePriceMultiplier's own doc. Lands the
+            // starter A320 at ~93,100 new / ~51,200 used (55% of new), so a used airframe costs
+            // roughly seventeen sectors' profit at the ~3,016 a typical short-haul sector nets.
+            // Must stay in step with economy-config.json's casual block, which is the file the
+            // server actually loads - this default only applies when that file is missing.
+            PurchasePriceMultiplier = 0.00196m,
             FleetFinance = new FleetFinanceConfig
             {
                 MonthlyInsurancePerAircraft = 6_000m,
@@ -478,6 +588,21 @@ public sealed class EconomyConfig
                 StartingConditionPercent = 70,
                 StartingAirframeHours = 18_000,
             },
+            // Casual figures - shared across playstyles (see the Scheduling property's own doc).
+            // 10h rest / 13h max duty are ordinary short-haul crewing figures, comfortably inside
+            // the 24h/day ceiling Validate() enforces; 45 minutes covers a realistic minimum
+            // turnaround (deplane, clean, board) without being so tight that a modest schedule
+            // trips it constantly. See docs/PLAN.md "Virtual pilot scheduling".
+            Scheduling = new SchedulingConfig
+            {
+                MinRestHoursBetweenDutyDays = 10,
+                MaxDutyHoursPerDay = 13,
+                MinTurnaroundMinutes = 45,
+            },
+            // Casual: 0 (skipped quietly, no penalty). True-life's own figure (positive - cancelled
+            // with a real cost) is applied separately in EconomyConfigCatalog.Default()'s Resolve()
+            // call, same pattern as FleetFinance/Maintenance/Loan.
+            UnflyableSchedule = new UnflyableScheduleConfig { CancellationFee = 0m },
             StrategyProfiles = new List<StrategyProfileConfig>
             {
                 // Elasticity and baseline load factor are chosen so the demand-cap mechanism
@@ -790,4 +915,42 @@ public sealed class UsedAircraftConfig
     /// this total), but part of making the age/condition trade-off visible before purchase per the
     /// plan's requirement.</summary>
     public double StartingAirframeHours { get; init; } = 18_000;
+}
+
+/// <summary>Pilot rest/duty and minimum turnaround for the weekly schedule builder - see
+/// <see cref="EconomyConfig.Scheduling"/>'s own doc and docs/PLAN.md "Virtual pilot scheduling".
+/// Shared across playstyles.</summary>
+public sealed class SchedulingConfig
+{
+    /// <summary>Minimum hours between the end of one duty day and the start of the next, for one
+    /// pilot - "the honest reason one pilot cannot saturate an aircraft" (docs/PLAN.md).</summary>
+    public double MinRestHoursBetweenDutyDays { get; init; } = 10;
+
+    /// <summary>Maximum hours from a pilot's first departure to their last arrival on any single
+    /// duty day.</summary>
+    public double MaxDutyHoursPerDay { get; init; } = 13;
+
+    /// <summary>Minimum minutes an aircraft must sit on the ground between one leg's arrival and
+    /// its next leg's departure - shows up as its own gap in the calendar UI (docs/PLAN.md "Minimum
+    /// turnaround appears as its own gap") and is enforced here so the builder can't be saved with
+    /// a day that only looks fine at a glance.</summary>
+    public double MinTurnaroundMinutes { get; init; } = 45;
+}
+
+/// <summary>
+/// What happens to a scheduled virtual flight that cannot fly - see
+/// <see cref="EconomyConfig.UnflyableSchedule"/>'s own doc and docs/PLAN.md's Playstyle behaviour
+/// table. Resolved per playstyle, unlike <see cref="SchedulingConfig"/> above.
+/// </summary>
+public sealed class UnflyableScheduleConfig
+{
+    /// <summary>
+    /// Zero means "skip quietly, no penalty, but still recorded" (Casual - see
+    /// <see cref="FSOps.Core.Entities.FlightStatus.Skipped"/>). Positive means "cancel, and post
+    /// this flat fee as a <see cref="FSOps.Core.Entities.LedgerCategory.CancellationFee"/> ledger
+    /// line" (True-life - see <see cref="FSOps.Core.Entities.FlightStatus.Cancelled"/>). Either way
+    /// no ticket revenue is ever posted for a flight that never flew - this field only controls
+    /// whether an ADDITIONAL cost is charged on top of that.
+    /// </summary>
+    public decimal CancellationFee { get; init; } = 0m;
 }

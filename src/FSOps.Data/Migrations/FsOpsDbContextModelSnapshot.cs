@@ -193,6 +193,9 @@ namespace FSOps.Data.Migrations
                     b.Property<DateTimeOffset>("LastProcessedUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("LastScheduleResolvedUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("WorldSeed")
                         .HasColumnType("INTEGER");
 
@@ -248,6 +251,9 @@ namespace FSOps.Data.Migrations
                     b.Property<string>("Registration")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("ReservedForPlayer")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -362,6 +368,9 @@ namespace FSOps.Data.Migrations
 
                     b.Property<bool>("TypeMismatch")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("UnflyableReason")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -598,6 +607,71 @@ namespace FSOps.Data.Migrations
                     b.ToTable("Pilots");
                 });
 
+            modelBuilder.Entity("FSOps.Core.Entities.PilotSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AirlineId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("DeletedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PilotId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AirlineId");
+
+                    b.HasIndex("PilotId")
+                        .IsUnique();
+
+                    b.ToTable("PilotSchedules");
+                });
+
+            modelBuilder.Entity("FSOps.Core.Entities.PilotScheduleEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DayOfWeek")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("DeletedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<TimeSpan>("DepartureTimeUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("FleetAircraftId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PilotScheduleId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RouteId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PilotScheduleId");
+
+                    b.ToTable("PilotScheduleEntries");
+                });
+
             modelBuilder.Entity("FSOps.Core.Entities.Route", b =>
                 {
                     b.Property<Guid>("Id")
@@ -694,43 +768,6 @@ namespace FSOps.Data.Migrations
                     b.HasIndex("AirportIcao");
 
                     b.ToTable("Runways");
-                });
-
-            modelBuilder.Entity("FSOps.Core.Entities.Schedule", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("BlockMinutes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset>("CreatedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("DaysOfWeekMask")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset?>("DeletedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<TimeSpan>("DepartureTimeUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("FleetAircraftId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("PilotId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("RouteId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RouteId");
-
-                    b.ToTable("Schedules");
                 });
 
             modelBuilder.Entity("FSOps.Core.Entities.UserSettings", b =>

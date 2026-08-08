@@ -66,22 +66,28 @@ public class PlaystyleInvariantsTests
         // The whole point of the split: fixed costs genuinely differ.
         Assert.NotEqual(casual.AirlineStartup.StartingCapital, trueLife.AirlineStartup.StartingCapital);
         Assert.NotEqual(casual.AirlineStartup.LeaseDepositMonths, trueLife.AirlineStartup.LeaseDepositMonths);
-        // Only the two starter types (the ones offered at airline creation) actually diverge - see
-        // FleetEndpointsTests.Lease_ChargesThePlaystylesOwnRate_NotTheCatalogueColumn for the
-        // regression test that pins exactly this divergence at the FleetEndpoints call site.
-        Assert.NotEqual(casual.LeaseRateFor("A320"), trueLife.LeaseRateFor("A320"));
-        Assert.NotEqual(casual.LeaseRateFor("B738"), trueLife.LeaseRateFor("B738"));
-        Assert.True(trueLife.LeaseRateFor("A320") > casual.LeaseRateFor("A320"));
-        Assert.True(trueLife.LeaseRateFor("B738") > casual.LeaseRateFor("B738"));
-        // The other four seeded types were never game-balanced, so both playstyles charge the same
-        // realistic rate for them - no divergence risk here the way there is for A320/B738.
-        Assert.Equal(casual.LeaseRateFor("A319"), trueLife.LeaseRateFor("A319"));
-        Assert.Equal(casual.LeaseRateFor("A321"), trueLife.LeaseRateFor("A321"));
-        Assert.Equal(casual.LeaseRateFor("B737"), trueLife.LeaseRateFor("B737"));
-        Assert.Equal(casual.LeaseRateFor("B739"), trueLife.LeaseRateFor("B739"));
+        // EVERY leasable type diverges now (2026-08-08 catalogue-wide rebalance) - not just the two
+        // starter types. A320/B738 are hard-anchored at exactly 30,000 in Casual; every other type
+        // (including every one added by the aircraft-catalogue expansion) is Casual's ~8% multiple
+        // of True-life's real rate - see docs/PLAN.md "Casual pricing must scale the WHOLE
+        // catalogue" and FleetEndpointsTests.Lease_ChargesThePlaystylesOwnRate_NotTheCatalogueColumn
+        // for the regression test that pins the two starter types' divergence at the call site.
+        foreach (var icaoType in new[] { "A319", "A320", "A321", "B737", "B738", "B739" })
+        {
+            Assert.True(trueLife.LeaseRateFor(icaoType) > casual.LeaseRateFor(icaoType),
+                $"{icaoType}: True-life ({trueLife.LeaseRateFor(icaoType)}) should charge more than Casual ({casual.LeaseRateFor(icaoType)}).");
+        }
+
         Assert.NotEqual(casual.FleetFinance.MonthlyInsurancePerAircraft, trueLife.FleetFinance.MonthlyInsurancePerAircraft);
         Assert.True(trueLife.AirlineStartup.StartingCapital > casual.AirlineStartup.StartingCapital);
         Assert.True(trueLife.FleetFinance.MonthlyInsurancePerAircraft > casual.FleetFinance.MonthlyInsurancePerAircraft);
+
+        // Purchase price now diverges too (it never used to - see docs/PLAN.md "Purchase prices
+        // have the same disease from the other direction"): Casual applies its own small,
+        // catalogue-wide multiplier so a used example is affordable after roughly ten sectors'
+        // profit, while True-life keeps the real transaction value throughout.
+        Assert.Equal(1.0m, trueLife.PurchasePriceMultiplier);
+        Assert.True(casual.PurchasePriceMultiplier < trueLife.PurchasePriceMultiplier);
 
         // The founding pilot's salary is already realistic and needs no game-balance treatment
         // (docs/PLAN.md "The starter lease is a deliberate game-balance number") - shared, not overridden.

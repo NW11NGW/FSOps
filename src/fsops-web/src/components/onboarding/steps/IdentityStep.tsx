@@ -12,7 +12,7 @@ interface IdentityStepProps {
 }
 
 export function IdentityStep({ data, onChange, errorMessage }: IdentityStepProps) {
-  const { name, icaoCode } = data
+  const { name, icaoCode, pilotName } = data
   const nameError = name.length > 0 && (name.trim().length < 2 || name.trim().length > 40)
   const icaoError = icaoCode.length > 0 && !/^[A-Z]{2,3}$/.test(icaoCode)
 
@@ -64,6 +64,22 @@ export function IdentityStep({ data, onChange, errorMessage }: IdentityStepProps
             {icaoError ? '2–3 letters, A–Z only.' : '2–3 letters, used on flight numbers and callsigns.'}
           </p>
         </div>
+      </div>
+
+      <div className="mt-10 space-y-2 border-t border-border pt-8">
+        <Label htmlFor="pilot-name">Your name</Label>
+        <Input
+          id="pilot-name"
+          value={pilotName}
+          maxLength={40}
+          placeholder="e.g. Alex Morgan"
+          onChange={(event) => onChange({ pilotName: event.target.value })}
+          aria-describedby="pilot-name-hint"
+        />
+        <p id="pilot-name-hint" className="text-xs text-muted-foreground">
+          This is you, the player — it shows on every flight you fly and throughout the Pilots page. Leave blank
+          for a default, and change it later from Settings.
+        </p>
       </div>
 
       {(name.trim() || icaoCode) && (

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Search, Shuffle } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { ConditionBar } from '@/components/fleet/ConditionBar'
@@ -11,14 +12,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ToggleGroup } from '@/components/shared/ToggleGroup'
 import { useAircraftTypes } from '@/hooks/useAircraftTypes'
 import { useSettings } from '@/hooks/useSettings'
-import { ApiError, post } from '@/lib/api'
+import { ApiError, get, post } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { AircraftCondition, AircraftTypeOption } from '@/types/fleet'
+import { AircraftRegistrationGenerator } from '@/lib/registration'
+import type { AircraftCategory, AircraftCondition, AircraftTypeOption } from '@/types/fleet'
 
 interface BuyLeaseDialogProps {
   open: boolean
@@ -27,12 +30,26 @@ interface BuyLeaseDialogProps {
 }
 
 type Mode = 'lease' | 'buy'
+type CategoryFilter = AircraftCategory | 'All'
+
+const CATEGORY_OPTIONS: { value: CategoryFilter; label: string }[] = [
+  { value: 'All', label: 'All' },
+  { value: 'Narrowbody', label: 'Narrowbody' },
+  { value: 'Widebody', label: 'Widebody' },
+  { value: 'Regional', label: 'Regional' },
+]
 
 /** "1 month" / "2 months" - singular only for exactly 1, matching how the founding lease and
  *  LeaseAsync's own ledger description word it elsewhere in the app. */
 function formatMonths(months: number): string {
   const rounded = Math.round(months * 10) / 10
   return `${rounded % 1 === 0 ? rounded : rounded.toFixed(1)} month${rounded === 1 ? '' : 's'}`
+}
+
+function matchesSearch(type: AircraftTypeOption, query: string): boolean {
+  if (!query.trim()) return true
+  const haystack = `${type.icaoType} ${type.manufacturer} ${type.name}`.toLowerCase()
+  return haystack.includes(query.trim().toLowerCase())
 }
 
 export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialogProps) {
@@ -45,10 +62,68 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const selected = useMemo<AircraftTypeOption | null>(
-    () => types.find((t) => t.id === selectedId) ?? types[0] ?? null,
-    [types, selectedId],
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState<CategoryFilter>('All')
+
+  const [registration, setRegistration] = useState('')
+  const [registrationTouched, setRegistrationTouched] = useState(false)
+  const [suggestionLoading, setSuggestionLoading] = useState(false)
+
+  const filteredTypes = useMemo(
+    () => types.filter((t) => (category === 'All' || t.category === category) && matchesSearch(t, search)),
+    [types, category, search],
   )
+
+  const selected = useMemo<AircraftTypeOption | null>(
+    () => types.find((t) => t.id === selectedId) ?? filteredTypes[0] ?? types[0] ?? null,
+    [types, filteredTypes, selectedId],
+  )
+
+  // Fresh, format-correct suggestion each time the dialog opens - docs/PLAN.md "Show the generated
+  // suggestion pre-filled so randomising is the zero-effort path and typing over it is the
+  // deliberate one". Falls back to a client-side generator if the request fails, so a flaky
+  // connection never blocks buying/leasing outright (the server re-validates uniqueness anyway).
+  useEffect(() => {
+    if (!open) {
+      setRegistration('')
+      setRegistrationTouched(false)
+      setSearch('')
+      setCategory('All')
+      return
+    }
+
+    let cancelled = false
+    setSuggestionLoading(true)
+    get<{ registration: string }>('/fleet/registration-suggestion')
+      .then((result) => {
+        if (cancelled) return
+        setRegistration(result.registration)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRegistration(AircraftRegistrationGenerator.fallback())
+      })
+      .finally(() => {
+        if (!cancelled) setSuggestionLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  async function handleRandomise() {
+    setSuggestionLoading(true)
+    try {
+      const result = await get<{ registration: string }>('/fleet/registration-suggestion')
+      setRegistration(result.registration)
+      setRegistrationTouched(false)
+    } catch {
+      setRegistration(AircraftRegistrationGenerator.fallback())
+    } finally {
+      setSuggestionLoading(false)
+    }
+  }
 
   async function handleSubmit() {
     if (!selected) return
@@ -57,11 +132,11 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
 
     try {
       if (mode === 'lease') {
-        await post('/fleet/lease', { aircraftTypeId: selected.id })
-        toast.success(`Leased a ${selected.name} (${selected.icaoType}).`)
+        await post('/fleet/lease', { aircraftTypeId: selected.id, registration })
+        toast.success(`Leased a ${selected.name} (${selected.icaoType}) - ${registration}.`)
       } else {
-        await post('/fleet/buy', { aircraftTypeId: selected.id, condition })
-        toast.success(`Bought a ${condition.toLowerCase()} ${selected.name} (${selected.icaoType}).`)
+        await post('/fleet/buy', { aircraftTypeId: selected.id, condition, registration })
+        toast.success(`Bought a ${condition.toLowerCase()} ${selected.name} (${selected.icaoType}) - ${registration}.`)
       }
       onOpenChange(false)
       onSuccess()
@@ -102,7 +177,23 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
           {/* One shared content block switched by `mode`, not per-tab TabsContent panels - the
            *  picker list and summary card are identical in shape between Lease and Buy, only the
            *  figures shown differ, so a single conditional block is simpler than duplicating it. */}
-          <div className="mt-2 space-y-4">
+          <div className="mt-2 space-y-3">
+            {status === 'ready' && types.length > 0 && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search by ICAO type, manufacturer or name…"
+                    className="pl-8"
+                    aria-label="Search the aircraft catalogue"
+                  />
+                </div>
+                <ToggleGroup<CategoryFilter> value={category} onChange={setCategory} ariaLabel="Filter by size or role" options={CATEGORY_OPTIONS} />
+              </div>
+            )}
+
             {status === 'loading' && (
               <div className="space-y-2">
                 <Skeleton className="h-12 w-full" />
@@ -115,7 +206,10 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
 
             {status === 'ready' && (
               <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                {types.map((type) => {
+                {filteredTypes.length === 0 && (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No aircraft match "{search}".</p>
+                )}
+                {filteredTypes.map((type) => {
                   const isSelected = selected?.id === type.id
                   return (
                     <button
@@ -132,7 +226,9 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
                         <p className="min-w-0 break-words text-sm font-medium">
                           {type.name} <span className="text-muted-foreground">({type.icaoType})</span>
                         </p>
-                        <p className="text-xs text-muted-foreground">{type.paxCapacity} seats &middot; {type.rangeNm.toLocaleString()} nm range</p>
+                        <p className="text-xs text-muted-foreground">
+                          {type.category} &middot; {type.paxCapacity} seats &middot; {type.rangeNm.toLocaleString()} nm range
+                        </p>
                       </div>
                       <div className="shrink-0 text-right text-xs text-muted-foreground">
                         {mode === 'lease' ? (
@@ -215,6 +311,36 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
                 </div>
               </div>
             )}
+
+            {selected && (
+              <div className="space-y-1.5">
+                <label htmlFor="registration" className="text-sm font-medium">
+                  Registration
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    id="registration"
+                    value={registration}
+                    onChange={(e) => {
+                      setRegistration(e.target.value.toUpperCase())
+                      setRegistrationTouched(true)
+                    }}
+                    placeholder="e.g. G-EZBA"
+                    maxLength={10}
+                    className="font-mono uppercase"
+                    disabled={suggestionLoading}
+                  />
+                  <Button type="button" variant="outline" size="icon" onClick={handleRandomise} disabled={suggestionLoading} aria-label="Randomise registration">
+                    <Shuffle />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {registrationTouched
+                    ? 'Type your own to match a livery, or randomise a fresh suggestion.'
+                    : `Suggested for your fleet - edit it or hit randomise for another.`}
+                </p>
+              </div>
+            )}
           </div>
         </Tabs>
 
@@ -224,7 +350,7 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={!selected || submitting || status !== 'ready'}>
+          <Button onClick={handleSubmit} disabled={!selected || !registration.trim() || submitting || status !== 'ready'}>
             {submitting ? 'Working…' : mode === 'lease' ? 'Lease aircraft' : `Buy ${condition.toLowerCase()}`}
           </Button>
         </DialogFooter>
