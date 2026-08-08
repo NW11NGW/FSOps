@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { RoutesStatus } from '@/hooks/useRoutes'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError } from '@/lib/api'
+import { formatCallsign } from '@/lib/callsign'
 import { cn } from '@/lib/utils'
 import type { RouteSummary } from '@/types/route'
 
@@ -21,6 +22,7 @@ interface RoutesTableProps {
   blockMinutes: Record<string, number | undefined>
   selectedId: string | null
   hoveredId?: string | null
+  airlineIcaoCode: string | null
   onSelect: (route: RouteSummary) => void
   onDelete: (route: RouteSummary) => Promise<void>
   onHover?: (routeId: string | null) => void
@@ -59,7 +61,7 @@ function groupRoutePairs(routes: RouteSummary[]): RoutePair[] {
 
 /** The airline's saved routes (GET /routes), grouped into round-trip pairs. Each pair expands to
  *  show both legs; deleting a pair removes both legs together. */
-export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredId, onSelect, onDelete, onHover }: RoutesTableProps) {
+export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredId, airlineIcaoCode, onSelect, onDelete, onHover }: RoutesTableProps) {
   const { fmt } = useSettings()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [deletingPair, setDeletingPair] = useState<RoutePair | null>(null)
@@ -161,6 +163,8 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredI
                 const outboundMinutes = blockMinutes[outbound.id]
                 const inboundMinutes = inbound ? blockMinutes[inbound.id] : undefined
                 const faresMatch = inbound ? outbound.baseFare === inbound.baseFare : true
+                const outboundCallsign = formatCallsign(airlineIcaoCode, outbound.flightNumber)
+                const inboundCallsign = inbound ? formatCallsign(airlineIcaoCode, inbound.flightNumber) : null
 
                 return (
                   <Fragment key={pair.key}>
@@ -214,9 +218,9 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredI
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {outbound.flightNumber && <Badge variant="outline">{outbound.flightNumber}</Badge>}
-                          {inbound?.flightNumber && <Badge variant="outline">{inbound.flightNumber}</Badge>}
-                          {!outbound.flightNumber && !inbound?.flightNumber && <span className="text-muted-foreground">—</span>}
+                          {outboundCallsign && <Badge variant="outline" className="font-mono">{outboundCallsign}</Badge>}
+                          {inboundCallsign && <Badge variant="outline" className="font-mono">{inboundCallsign}</Badge>}
+                          {!outboundCallsign && !inboundCallsign && <span className="text-muted-foreground">—</span>}
                         </div>
                       </TableCell>
                       <TableCell className="tabular-nums">{fmt.distance(outbound.distanceNm)}</TableCell>
@@ -254,7 +258,7 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredI
                               <span className="flex items-center gap-1.5">
                                 <Badge variant="secondary">Outbound</Badge>
                                 <span className="font-mono">{outbound.departureIcao} → {outbound.arrivalIcao}</span>
-                                {outbound.flightNumber && <span className="text-muted-foreground">FL{outbound.flightNumber}</span>}
+                                {outboundCallsign && <span className="font-mono text-muted-foreground">{outboundCallsign}</span>}
                               </span>
                               <span className="tabular-nums text-muted-foreground">
                                 {fmt.distance(outbound.distanceNm)} ·{' '}
@@ -270,7 +274,7 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredI
                                 <span className="flex items-center gap-1.5">
                                   <Badge variant="muted">Return</Badge>
                                   <span className="font-mono">{inbound.departureIcao} → {inbound.arrivalIcao}</span>
-                                  {inbound.flightNumber && <span className="text-muted-foreground">FL{inbound.flightNumber}</span>}
+                                  {inboundCallsign && <span className="font-mono text-muted-foreground">{inboundCallsign}</span>}
                                 </span>
                                 <span className="tabular-nums text-muted-foreground">
                                   {fmt.distance(inbound.distanceNm)} ·{' '}

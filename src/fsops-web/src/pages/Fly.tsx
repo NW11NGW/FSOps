@@ -147,6 +147,7 @@ export function Fly() {
     selectedRow?.departureIcao ?? null,
     selectedRow?.arrivalIcao ?? null,
     selectedAircraft?.aircraftTypeId ?? null,
+    selectedRow?.baseFare ?? null,
   )
 
   const simStatus = useSimStatus(activeFlight.status === 'none')
@@ -271,9 +272,11 @@ export function Fly() {
                     departureName: (routesById[completedDetail.data.flight.routeId] as RouteSummary).departureName,
                     arrivalIcao: (routesById[completedDetail.data.flight.routeId] as RouteSummary).arrivalIcao,
                     arrivalName: (routesById[completedDetail.data.flight.routeId] as RouteSummary).arrivalName,
+                    flightNumber: (routesById[completedDetail.data.flight.routeId] as RouteSummary).flightNumber,
                   }
                 : null
             }
+            airlineIcaoCode={airlineIcaoCode}
           />
         )}
       </div>
@@ -332,6 +335,8 @@ export function Fly() {
             arrival={liveArrival}
             path={livePath}
             routeLabel={routeLabel}
+            flightNumber={activeRoute?.flightNumber ?? null}
+            airlineIcaoCode={airlineIcaoCode}
             onAbandon={() => handleAbandon(flight.id)}
           />
         )}
@@ -357,6 +362,7 @@ export function Fly() {
             selectedPairId={selectedPairId}
             onSelect={(pair) => setSelectedPairId(pair.pairId)}
             optionsUnavailable={optionsQuery.status === 'unavailable' || optionsQuery.status === 'error'}
+            airlineIcaoCode={airlineIcaoCode}
           />
 
           {selectedRow ? (
@@ -386,6 +392,7 @@ export function Fly() {
         flights={historyQuery.flights}
         status={historyQuery.status}
         routesById={routesById}
+        airlineIcaoCode={airlineIcaoCode}
         onView={setHistoryFlight}
       />
 
@@ -406,9 +413,11 @@ export function Fly() {
                       departureName: (routesById[historyFlight.routeId] as RouteSummary).departureName,
                       arrivalIcao: (routesById[historyFlight.routeId] as RouteSummary).arrivalIcao,
                       arrivalName: (routesById[historyFlight.routeId] as RouteSummary).arrivalName,
+                      flightNumber: (routesById[historyFlight.routeId] as RouteSummary).flightNumber,
                     }
                   : null
               }
+              airlineIcaoCode={airlineIcaoCode}
             />
           )}
         </DialogContent>

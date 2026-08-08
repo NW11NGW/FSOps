@@ -38,6 +38,14 @@ export interface Flight {
   centrelineDeviationM: number | null
   titleFlown: string
   typeMismatch: boolean
+  /** True if the sim ran faster than real time at any point during this flight - see FlightIntegrityMonitor. Block-time variance and on-time performance are not measured when true; landing quality is unaffected. */
+  simRateElevated: boolean
+  /** Highest simulation rate observed. 1.0 (normal speed) if simRateElevated is false. */
+  maxSimulationRateObserved: number
+  /** True if slew mode was active at any point - invalidates the sector for payment. */
+  slewDetected: boolean
+  /** True if telemetry implied a physically impossible position jump - invalidates the sector for payment. */
+  positionJumpDetected: boolean
   revenue: number
   totalCost: number
   createdUtc: string
@@ -50,10 +58,38 @@ export interface FlightEvent {
   payloadJson: string
 }
 
+export type LedgerCategory =
+  | 'TicketRevenue'
+  | 'Fuel'
+  | 'LandingFees'
+  | 'Handling'
+  | 'Maintenance'
+  | 'Salary'
+  | 'LeasePayment'
+  | 'LoanPayment'
+  | 'AircraftPurchase'
+  | 'Insurance'
+  | 'GsxServices'
+  | 'StartingCapital'
+  | 'LoanProceeds'
+  | 'Other'
+
+/** One posted LedgerTransaction for a flight - the itemised financial outcome the report card
+ *  shows, straight from the append-only ledger rather than a recomputation. */
+export interface FlightLedgerLine {
+  id: string
+  utc: string
+  category: LedgerCategory
+  /** Signed - positive is money in, negative is money out. */
+  amount: number
+  description: string
+}
+
 /** GET /flights/{id} response. */
 export interface FlightDetail {
   flight: Flight
   events: FlightEvent[]
+  ledgerTransactions: FlightLedgerLine[]
 }
 
 /** Mismatch FlightEvent payload (see FlightEndpoints.StartAsync). */

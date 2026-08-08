@@ -7,18 +7,21 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useSettings } from '@/hooks/useSettings'
 import type { FlightHistoryStatus } from '@/hooks/useFlightHistory'
+import { formatCallsign } from '@/lib/callsign'
 import { assessLanding } from '@/lib/flightFormat'
 import type { Flight, FlightStatus } from '@/types/flight'
 
 interface RouteLookupEntry {
   departureIcao: string
   arrivalIcao: string
+  flightNumber: string | null
 }
 
 interface FlightHistoryListProps {
   flights: Flight[]
   status: FlightHistoryStatus
   routesById: Record<string, RouteLookupEntry>
+  airlineIcaoCode: string | null
   onView: (flight: Flight) => void
 }
 
@@ -32,7 +35,7 @@ const STATUS_BADGE: Record<FlightStatus, 'success' | 'muted' | 'warning' | 'dang
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
 
-export function FlightHistoryList({ flights, status, routesById, onView }: FlightHistoryListProps) {
+export function FlightHistoryList({ flights, status, routesById, airlineIcaoCode, onView }: FlightHistoryListProps) {
   const { fmt } = useSettings()
 
   return (
@@ -70,6 +73,7 @@ export function FlightHistoryList({ flights, status, routesById, onView }: Fligh
             <TableBody>
               {flights.map((flight) => {
                 const route = routesById[flight.routeId]
+                const callsign = route ? formatCallsign(airlineIcaoCode, route.flightNumber) : null
                 const landing = flight.landingFpmFirst !== null ? assessLanding(flight.landingFpmFirst) : null
                 const blockMinutes = flight.outUtc && flight.inUtc ? (Date.parse(flight.inUtc) - Date.parse(flight.outUtc)) / 60000 : null
 
@@ -88,7 +92,10 @@ export function FlightHistoryList({ flights, status, routesById, onView }: Fligh
                     }}
                   >
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{DATE_FORMATTER.format(new Date(flight.createdUtc))}</TableCell>
-                    <TableCell className="font-mono">{route ? `${route.departureIcao} → ${route.arrivalIcao}` : '—'}</TableCell>
+                    <TableCell className="font-mono">
+                      {route ? `${route.departureIcao} → ${route.arrivalIcao}` : '—'}
+                      {callsign && <span className="ml-2 font-sans text-xs text-muted-foreground">{callsign}</span>}
+                    </TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={flight.titleFlown}>
                       {flight.titleFlown || '—'}
                     </TableCell>

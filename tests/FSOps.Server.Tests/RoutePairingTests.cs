@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Server.Endpoints;
 using Microsoft.AspNetCore.Http;
@@ -34,7 +35,7 @@ public class RoutePairingTests
         using var ctx = await RouteTestContext.CreateAsync();
 
         var request = new CreateRouteRequest("EGGD", "EGPH", null, null, null);
-        var result = await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(result));
 
@@ -69,8 +70,8 @@ public class RoutePairingTests
         using var ctx = await RouteTestContext.CreateAsync();
         var request = new CreateRouteRequest("EGGD", "EGPH", null, null, null);
 
-        await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, CancellationToken.None);
-        var second = await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
+        var second = await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status409Conflict, StatusCodeOf(second));
         Assert.Equal(2, await ctx.Db.Routes.CountAsync());
@@ -98,7 +99,7 @@ public class RoutePairingTests
         await ctx.Db.SaveChangesAsync();
 
         var request = new CreateRouteRequest("EGGD", "EGPH", null, null, null);
-        var result = await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await RouteEndpoints.CreateAsync(request, ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(result));
         Assert.Equal(2, await ctx.Db.Routes.CountAsync());
@@ -112,7 +113,7 @@ public class RoutePairingTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var created = await RouteEndpoints.CreateAsync(
-            new CreateRouteRequest("EGGD", "EGPH", null, null, null), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+            new CreateRouteRequest("EGGD", "EGPH", null, null, null), ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
         var createdValue = ValueOf(created);
         var outboundId = GetProp<Guid>(GetProp<object>(createdValue, "outbound")!, "Id");
         var inboundId = GetProp<Guid>(GetProp<object>(createdValue, "inbound")!, "Id");
@@ -181,7 +182,7 @@ public class RoutePairingTests
 
         Assert.Equal(1, await ctx.Db.Routes.CountAsync());
 
-        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
         // The missing reverse leg was created as a side effect of listing - this is exactly the
@@ -202,7 +203,7 @@ public class RoutePairingTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
 
-        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
         Assert.Empty((IEnumerable)ValueOf(result));
@@ -246,7 +247,7 @@ public class RoutePairingTests
         ctx.Db.Routes.AddRange(original, autoCreatedReturn);
         await ctx.Db.SaveChangesAsync();
 
-        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
         var list = ((IEnumerable)ValueOf(result)).Cast<object>().ToList();
@@ -264,7 +265,7 @@ public class RoutePairingTests
         Assert.Equal(502, int.Parse(newNumber!));
 
         // Idempotent: repairing an already-fully-numbered pair a second time changes nothing.
-        var second = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var second = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
         var secondList = ((IEnumerable)ValueOf(second)).Cast<object>().ToList();
         Assert.Equal(2, secondList.Count);
         Assert.Equal("501", GetProp<string>(secondList.Single(item => GetProp<Guid>(item, "Id") == autoCreatedReturn.Id), "FlightNumber"));
@@ -308,7 +309,7 @@ public class RoutePairingTests
         ctx.Db.Routes.AddRange(outbound, inbound);
         await ctx.Db.SaveChangesAsync();
 
-        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await RouteEndpoints.ListAsync(ctx.Db, ctx.CurrentUser, EconomyConfig.Default(), CancellationToken.None);
         var list = ((IEnumerable)ValueOf(result)).Cast<object>().ToList();
 
         var repairedOutbound = list.Single(item => GetProp<Guid>(item, "Id") == outbound.Id);

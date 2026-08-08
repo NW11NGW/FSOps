@@ -28,7 +28,8 @@ public class FlightPhaseStateMachineTests
         s.LatitudeDeg, s.LongitudeDeg, s.AltitudeMslFt, s.AltitudeAglFt,
         s.IndicatedAirspeedKt, s.GroundSpeedKt, s.VerticalSpeedFpm,
         s.TrueHeadingDeg, s.MagneticHeadingDeg, s.OnGround, s.EngineRunning, s.ParkingBrakeSet,
-        s.GForce, s.TouchdownNormalVelocityFps, s.TotalFuelKg, s.AircraftTitle, s.AtcModel, s.AtcType);
+        s.GForce, s.TouchdownNormalVelocityFps, s.TotalFuelKg, s.AircraftTitle, s.AtcModel, s.AtcType,
+        s.SimulationRate, s.IsSlewActive);
 
     /// <summary>Hand-built sample for the synthetic edge-case tests, so they need no dependency on the replay script.</summary>
     private static FlightTelemetrySample Sample(
@@ -43,7 +44,7 @@ public class FlightPhaseStateMachineTests
         double touchdownFps = 0,
         double headingDeg = 90) =>
         new(Base + TimeSpan.FromSeconds(t), 0, 0, aglFt + 200, aglFt, gsKt, gsKt, vsFpm, headingDeg, headingDeg,
-            onGround, engineRunning, brake, gForce, touchdownFps, 5000, "Test Aircraft", "TEST", "Test");
+            onGround, engineRunning, brake, gForce, touchdownFps, 5000, "Test Aircraft", "TEST", "Test", 1.0, false);
 
     [Fact]
     public void FullReplay_ReachesEveryPhaseInOrder_WithSaneOooiAndAPlausibleTouchdown()

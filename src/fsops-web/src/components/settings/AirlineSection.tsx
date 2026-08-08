@@ -1,25 +1,32 @@
 import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Check } from 'lucide-react'
+import { Check, Info } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { StrategyProfileCard } from '@/components/shared/StrategyProfileCard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { STRATEGY_PROFILES } from '@/components/onboarding/wizardData'
+import { useStrategyProfiles } from '@/hooks/useStrategyProfiles'
 import { ACCENT_PALETTE } from '@/lib/accentPalette'
 import { ApiError, put } from '@/lib/api'
+import { STRATEGY_NEVER_BLOCKS_NOTICE } from '@/lib/strategyProfileCopy'
 import { applyAccentColour, isValidHexColour } from '@/lib/theme'
 import { cn } from '@/lib/utils'
+import type { StrategyProfile } from '@/types/airline'
 import type { LiveContext } from '@/types/live-context'
 
 export function AirlineSection() {
   const { airlineSummary } = useOutletContext<LiveContext>()
   const airline = airlineSummary.data?.airline ?? null
+  const { status: strategyStatus, profiles: strategyProfiles, refetch: refetchStrategyProfiles } = useStrategyProfiles()
 
   const [name, setName] = useState('')
   const [accentColour, setAccentColour] = useState('#0EA5E9')
+  const [strategyProfile, setStrategyProfile] = useState<StrategyProfile | null>(null)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
 
@@ -27,18 +34,20 @@ export function AirlineSection() {
     if (airline && !dirty) {
       setName(airline.name)
       setAccentColour(airline.accentColour)
+      setStrategyProfile(airline.strategyProfile)
     }
   }, [airline, dirty])
 
   const nameValid = name.trim().length >= 2 && name.trim().length <= 40
   const colourValid = isValidHexColour(accentColour)
-  const canSave = dirty && nameValid && colourValid && !saving
+  const strategyChanged = airline !== null && strategyProfile !== null && strategyProfile !== airline.strategyProfile
+  const canSave = dirty && nameValid && colourValid && strategyProfile !== null && !saving
 
   async function handleSave() {
-    if (!airline) return
+    if (!airline || !strategyProfile) return
     setSaving(true)
     try {
-      await put('/airline', { ...airline, name: name.trim(), accentColour })
+      await put('/airline', { ...airline, name: name.trim(), accentColour, strategyProfile })
       applyAccentColour(accentColour)
       setDirty(false)
       toast.success('Airline details updated')
@@ -46,6 +55,7 @@ export function AirlineSection() {
       toast.error(err instanceof ApiError ? err.message : 'Could not save airline details — reverted.')
       setName(airline.name)
       setAccentColour(airline.accentColour)
+      setStrategyProfile(airline.strategyProfile)
       setDirty(false)
     } finally {
       setSaving(false)
@@ -129,6 +139,63 @@ export function AirlineSection() {
               <p className="text-sm text-muted-foreground">
                 {airline.homeAirportIcao} <span className="text-xs">(fixed for now)</span>
               </p>
+            </div>
+
+            <div className="space-y-3 border-t border-border pt-6">
+              <div>
+                <Label>Strategy</Label>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Chosen at onboarding, but never permanent — pick a different profile any time.
+                </p>
+              </div>
+
+              <div className="flex items-start gap-2 rounded-md border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-foreground">
+                <Info className="mt-0.5 size-4 shrink-0 text-accent" />
+                <p className="min-w-0 break-words">{STRATEGY_NEVER_BLOCKS_NOTICE}</p>
+              </div>
+
+              {strategyStatus === 'error' && (
+                <div className="flex flex-wrap items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">
+                  <Info className="mt-0.5 size-4 shrink-0 text-warning" />
+                  <p className="min-w-0 flex-1 break-words">
+                    Couldn't load the figures for each strategy. If FSOps was updated while running, restarting it
+                    should fix this. Choosing a profile still works.
+                  </p>
+                  <Button type="button" variant="outline" size="sm" onClick={refetchStrategyProfiles}>
+                    Try again
+                  </Button>
+                </div>
+              )}
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                {STRATEGY_PROFILES.map((profile) => (
+                  <StrategyProfileCard
+                    key={profile.id}
+                    meta={profile}
+                    info={
+                      strategyStatus === 'ready' ? strategyProfiles.find((p) => p.profile === profile.id) : undefined
+                    }
+                    figuresUnavailable={strategyStatus === 'error'}
+                    selected={strategyProfile === profile.id}
+                    onSelect={() => {
+                      setStrategyProfile(profile.id)
+                      setDirty(true)
+                    }}
+                  />
+                ))}
+              </div>
+
+              {strategyChanged && (
+                <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">
+                  <Info className="mt-0.5 size-4 shrink-0 text-warning" />
+                  <p className="min-w-0 break-words">
+                    This applies <span className="font-medium">going forward only</span>. Saving changes the fares
+                    and demand suggested for new routes, and which routes get an advisory note from here on. It
+                    never touches completed flights, posted ledger entries, or the fares already set on your
+                    existing routes.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end">

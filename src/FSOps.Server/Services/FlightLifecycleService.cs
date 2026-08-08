@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Flights;
 using FSOps.Core.Planning;
@@ -51,6 +52,7 @@ public sealed class FlightLifecycleService : IHostedService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SimTelemetryService _telemetry;
     private readonly IHubContext<LiveHub> _hub;
+    private readonly EconomyConfig _economyConfig;
     private readonly ILogger<FlightLifecycleService> _logger;
 
     private readonly Channel<FlightEvent> _eventQueue = Channel.CreateBounded<FlightEvent>(
@@ -63,11 +65,13 @@ public sealed class FlightLifecycleService : IHostedService
     private Task? _writerTask;
 
     public FlightLifecycleService(
-        IServiceScopeFactory scopeFactory, SimTelemetryService telemetry, IHubContext<LiveHub> hub, ILogger<FlightLifecycleService> logger)
+        IServiceScopeFactory scopeFactory, SimTelemetryService telemetry, IHubContext<LiveHub> hub,
+        EconomyConfig economyConfig, ILogger<FlightLifecycleService> logger)
     {
         _scopeFactory = scopeFactory;
         _telemetry = telemetry;
         _hub = hub;
+        _economyConfig = economyConfig;
         _logger = logger;
     }
 
@@ -178,7 +182,9 @@ public sealed class FlightLifecycleService : IHostedService
         tracker.StartFuelKg ??= sample.TotalFuelKg;
         tracker.LastFuelKg = sample.TotalFuelKg;
 
-        var result = tracker.Machine.Advance(MapSample(sample));
+        var flightSample = MapSample(sample);
+        var result = tracker.Machine.Advance(flightSample);
+        tracker.IntegrityMonitor.Observe(flightSample);
         var now = sample.TimestampUtc;
 
         if (result.PhaseChanged)
@@ -356,13 +362,30 @@ public sealed class FlightLifecycleService : IHostedService
             return;
         }
 
+        // Idempotency: a retry, reconnect, or crash rehydration must never finalise (or re-post
+        // the ledger for) the same flight twice - see Flight.RevenuePosted. A flight already
+        // Completed has necessarily already run this whole method once.
+        if (flight.Status == FlightStatus.Completed || flight.RevenuePosted)
+        {
+            _logger.LogWarning("Flight {FlightId} was already completed; ignoring a duplicate finalize call.", flight.Id);
+            return;
+        }
+
         var machine = tracker.Machine;
+
+        // The moment the flight actually completed - used to timestamp its ledger lines and as
+        // the day the demand model (season/day-of-week) resolves against, falling back to now if
+        // the state machine somehow never captured an In time.
+        var completionUtc = machine.InUtc ?? DateTimeOffset.UtcNow;
+
         flight.OutUtc = machine.OutUtc;
         flight.OffUtc = machine.OffUtc;
         flight.OnUtc = machine.OnUtc;
         flight.InUtc = machine.InUtc;
         flight.FuelUsedKg = Math.Max(0, (tracker.StartFuelKg ?? tracker.LastFuelKg) - tracker.LastFuelKg);
-        // Booking/economy isn't built yet - every booked seat is assumed flown for now.
+        // Overwritten below by FlightEconomicsPoster.PostCompletionAsync when the sector is
+        // payable (real demand-modelled booking, not every seat sold) - this is just the fallback
+        // for a sector that can't be priced (see the guard around that call).
         flight.PaxFlown = flight.PaxBooked;
 
         if (machine.FirstTouchdown is { } first)
@@ -380,9 +403,12 @@ public sealed class FlightLifecycleService : IHostedService
             flight.LandingFpmHardest = hardest.Fpm;
         }
 
+        flight.SimRateElevated = tracker.IntegrityMonitor.ElevatedSimRateDetected;
+        flight.MaxSimulationRateObserved = tracker.IntegrityMonitor.MaxSimulationRateObserved;
+        flight.SlewDetected = tracker.IntegrityMonitor.SlewDetected;
+        flight.PositionJumpDetected = tracker.IntegrityMonitor.PositionJumpDetected;
+
         flight.Status = FlightStatus.Completed;
-        // Revenue and TotalCost are deliberately left at zero - the economy engine that posts
-        // ledger entries for a completed flight arrives in the next chunk.
 
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == tracker.FleetAircraftId);
         if (fleetAircraft is not null)
@@ -405,7 +431,26 @@ public sealed class FlightLifecycleService : IHostedService
                 fleetAircraft.Status = FleetAircraftStatus.Active;
             }
 
-            fleetAircraft.AirframeHours += BlockTimeCalculator.BlockHours(machine.OutUtc, machine.InUtc);
+            var flightHours = BlockTimeCalculator.BlockHours(machine.OutUtc, machine.InUtc);
+            fleetAircraft.AirframeHours += flightHours;
+
+            // Landing/handling/parking/passenger/turnaround fees are charged at wherever the
+            // aircraft actually landed (landing.Icao), not necessarily the planned arrival - a
+            // diversion still incurs real ground-service costs at the airport it used. Fuel was
+            // already charged at uplift (flight start); this posts every other line, or nothing
+            // at all if the sector isn't payable (see FlightEconomicsPoster.PostCompletionAsync).
+            // Quietly skips if any of the data it needs can't be resolved - better to post
+            // nothing than guess.
+            var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId);
+            var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId);
+            var arrivalAirport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == landing.Icao);
+            var aircraftType = await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId]);
+
+            if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
+            {
+                await FlightEconomicsPoster.PostCompletionAsync(
+                    db, flight, airline, route, aircraftType, arrivalAirport, _economyConfig, flightHours, completionUtc, CancellationToken.None);
+            }
 
             if (landing.Decision == LandingAirportDecision.Diverted)
             {
@@ -485,7 +530,7 @@ public sealed class FlightLifecycleService : IHostedService
         s.TimestampUtc, s.LatitudeDeg, s.LongitudeDeg, s.AltitudeMslFt, s.AltitudeAglFt,
         s.IndicatedAirspeedKt, s.GroundSpeedKt, s.VerticalSpeedFpm, s.TrueHeadingDeg, s.MagneticHeadingDeg,
         s.OnGround, s.EngineRunning, s.ParkingBrakeSet, s.GForce, s.TouchdownNormalVelocityFps, s.TotalFuelKg,
-        s.AircraftTitle, s.AtcModel, s.AtcType);
+        s.AircraftTitle, s.AtcModel, s.AtcType, s.SimulationRate, s.IsSlewActive);
 
     private static (double Lat, double Lon)? TryExtractPosition(FlightEvent evt)
     {
@@ -541,6 +586,8 @@ public sealed class FlightLifecycleService : IHostedService
         public required int PlannedBlockMinutes { get; init; }
 
         public required FlightPhaseStateMachine Machine { get; init; }
+
+        public FlightIntegrityMonitor IntegrityMonitor { get; } = new();
 
         public double? StartFuelKg { get; set; }
 

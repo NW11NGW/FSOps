@@ -25,4 +25,6 @@ public sealed record FlightTelemetrySample(
     double TotalFuelKg,
     string AircraftTitle,
     string AtcModel,
-    string AtcType);
+    string AtcType,
+    double SimulationRate,
+    bool IsSlewActive);

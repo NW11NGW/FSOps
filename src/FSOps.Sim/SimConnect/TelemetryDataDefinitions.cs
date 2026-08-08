@@ -59,6 +59,17 @@ internal struct TelemetryData
 
     [SimVar(NameId = FsSimVar.FuelTotalQuantityWeight, UnitId = FsUnit.Kg, DataType = SIMCONNECT_DATATYPE.FLOAT64)]
     public double FuelTotalWeightKg;
+
+    // 1.0 is normal speed; anything higher means wall-clock and sim-clock have diverged, which
+    // makes block-time and on-time measurements meaningless for whatever samples it covers - see
+    // FlightIntegrityMonitor.
+    [SimVar(NameId = FsSimVar.SimulationRate, UnitId = FsUnit.Number, DataType = SIMCONNECT_DATATYPE.FLOAT64)]
+    public double SimulationRate;
+
+    // Slew lets the aircraft be repositioned without flying - a flight sector covered this way
+    // is not valid for payment. See FlightIntegrityMonitor.
+    [SimVar(NameId = FsSimVar.IsSlewActive, UnitId = FsUnit.Bool, DataType = SIMCONNECT_DATATYPE.INT32)]
+    public int IsSlewActive;
 }
 
 /// <summary>

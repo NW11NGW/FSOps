@@ -24,7 +24,9 @@ public sealed record TelemetrySample(
     double TotalFuelKg,
     string AircraftTitle,
     string AtcModel,
-    string AtcType);
+    string AtcType,
+    double SimulationRate,
+    bool IsSlewActive);
 
 /// <summary>Aircraft identity, known once the sim has reported it after connecting or a livery/aircraft change.</summary>
 public sealed record AircraftIdentity(string Title, string AtcModel, string AtcType);

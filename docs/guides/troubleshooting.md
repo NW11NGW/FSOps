@@ -10,6 +10,8 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [The setup wizard keeps reappearing](#the-setup-wizard-keeps-reappearing)
 - [Route creation is refused](#route-creation-is-refused)
 - [My currency looks wrong](#my-currency-looks-wrong)
+- [Strategy profile figures won't load](#strategy-profile-figures-wont-load)
+- [My fare or revenue numbers look different than yesterday](#my-fare-or-revenue-numbers-look-different-than-yesterday)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
@@ -82,6 +84,22 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Solution:** If a number looks wrong, double check which currency is currently selected in settings. If it still looks wrong after that, it's worth reporting (see [How to report a problem](#how-to-report-a-problem)) — but a mismatch with real-world exchange rates is expected behaviour, not a bug.
 
+## Strategy profile figures won't load
+
+**Symptom:** On the Settings → Airline page, each strategy profile card shows a message reading "Couldn't load the figures for each strategy" with a **Try again** button, instead of the usual fares/sensitivity/load-factor/costs breakdown.
+
+**Cause:** The profile cards fetch their figures live from `GET /api/v1/airline/strategy-profiles`, which reads straight out of `economy-config.json` at request time. This can fail to load right after FSOps itself was updated or restarted while the browser tab was still open, or if the backend genuinely can't be reached.
+
+**Solution:** Select **Try again**. If that doesn't help, refresh the browser tab so it reconnects to a freshly started backend. Choosing and saving a strategy still works even while the figures panel is showing this error — you just won't see the numbers behind each option until it loads.
+
+## My fare or revenue numbers look different than yesterday
+
+**Symptom:** The same route's suggested fare stays the same, but the expected passengers, load factor, or expected revenue shown in the route planner (or the actual revenue posted after a flight) has changed from one day to the next, with nothing in your airline or route having changed.
+
+**Cause:** This is expected, not a bug. Passenger demand for a route factors in the month (a seasonality curve — August, for example, is a stronger month than February) and the day of the week, and fuel prices drift day to day by a small, deterministic amount per airport (see [The economy simulation](user-guide.md#the-economy-simulation)). Flying the same route on a different real-world day can genuinely produce different numbers.
+
+**Solution:** Nothing to fix — if you want to sanity-check a figure, note the date you're comparing against, since demand and fuel price are both date-dependent by design.
+
 ## Where the database lives
 
 FSOps stores its SQLite database at:
@@ -103,6 +121,7 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 3. **Check for other SimConnect clients.** Only one application can hold certain SimConnect connections cleanly at a time; if you have another SimConnect-based tool running (another tracker, a panel add-on, etc.) alongside FSOps, try closing it and see if FSOps connects.
 4. **Check your firewall.** SimConnect communicates locally between MSFS and FSOps. If Windows Firewall or third-party security software is blocking that local traffic, allow both Microsoft Flight Simulator and FSOps through it.
 5. **Restart both.** As a last resort, closing and reopening FSOps after MSFS has finished loading a flight, or a full restart of the simulator, clears up most remaining SimConnect connection issues.
+6. **If you're building from source, make sure you're on a current build.** An earlier version of FSOps had a real bug where SimConnect data definitions were registered before the connection was actually established, which silently prevented a connection to a live MSFS 2024 session no matter how long you waited — none of the steps above would have fixed it. This has been fixed and verified against live MSFS 2024. If you're running an old build (from before this fix), pull the latest source, rebuild (`dotnet build`), and restart FSOps.
 
 ## Flight tracking stopped mid-flight
 
@@ -134,9 +153,9 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 
 **Symptom:** A route you expect to be able to fly shows up under "Not flyable right now" on the Fly screen, with a reason like "No aircraft at {ICAO} — your fleet is currently at {other ICAO}."
 
-**Cause:** FSOps only lets you fly a route whose departure airport matches where one of your fleet aircraft is actually recorded as being (see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is)). In the current build, an aircraft's recorded location is set once — when it joins your fleet — and doesn't yet move automatically to the arrival airport once a flight lands. So if your airline has only one aircraft, only the route(s) departing from wherever that aircraft started (your home base, for a newly founded airline) will show as flyable; a route departing from anywhere else reports the reason above rather than pretending it's flyable.
+**Cause:** FSOps only lets you fly a route whose departure airport matches where one of your fleet aircraft is actually recorded as being (see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is)). A completed flight moves its aircraft to wherever it actually landed, so this is expected the first time you look at a fresh airline (your only aircraft is still sitting at your home base, so only routes leaving from there show as flyable) or any time your aircraft is genuinely elsewhere — mid-flight, in maintenance, or sitting at an airport you haven't flown a route back from yet.
 
-**Solution:** This isn't something you can currently fix from within FSOps — flying the outbound leg of a round trip doesn't yet make the return leg (or any other route from that airport) show as flyable the way the pairing is ultimately designed to support, since aircraft-location updates on landing are still being built. If a route genuinely should be flyable and isn't for a different reason (for example, your aircraft is showing as "in maintenance" or "in flight" when it shouldn't be), check the [log files](#where-to-find-log-files) and consider it worth reporting.
+**Solution:** Fly a route departing from wherever your aircraft actually is. If you expect a route to be flyable because you believe your aircraft already landed at its departure airport, but it still isn't showing up, that points to something worth reporting rather than normal behaviour — check the [log files](#where-to-find-log-files) for what actually happened at the end of that earlier flight (for example, whether it completed normally or was abandoned, since an abandoned flight leaves the aircraft where it was rather than moving it).
 
 ## Where to find log files
 

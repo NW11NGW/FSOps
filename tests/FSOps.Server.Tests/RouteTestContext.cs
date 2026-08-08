@@ -126,6 +126,7 @@ internal sealed class RouteTestContext : IDisposable
             RangeNm = 3400,
             CruiseTasKts = 450,
             FuelBurnKgPerHour = 2400,
+            MtowTonnes = 78.0,
             MinRunwayFt = 5500,
             ServiceCeilingFt = 39000,
             PurchasePrice = 100_000_000m,

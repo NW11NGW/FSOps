@@ -37,6 +37,16 @@
     </Content>
   </ItemGroup>
 
+  <!-- Economy tuning constants. Same reasoning as wwwroot above: must land beside the built
+       assembly regardless of how the app is launched, since the content root differs between
+       dotnet run and a direct exe launch. -->
+  <ItemGroup>
+    <None Include="economy-config.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>

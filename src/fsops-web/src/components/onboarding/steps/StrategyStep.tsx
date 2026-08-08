@@ -1,6 +1,8 @@
-import { Check } from 'lucide-react'
+import { Info } from 'lucide-react'
 
-import { cn } from '@/lib/utils'
+import { StrategyProfileCard } from '@/components/shared/StrategyProfileCard'
+import { useStrategyProfiles } from '@/hooks/useStrategyProfiles'
+import { STRATEGY_NEVER_BLOCKS_NOTICE } from '@/lib/strategyProfileCopy'
 
 import { STRATEGY_PROFILES, type WizardData } from '../wizardData'
 
@@ -11,13 +13,20 @@ interface StrategyStepProps {
 }
 
 export function StrategyStep({ data, onChange, errorMessage }: StrategyStepProps) {
+  const { status, profiles } = useStrategyProfiles()
+
   return (
     <div>
       <h2 className="text-2xl font-semibold tracking-tight">Choose your strategy.</h2>
       <p className="mt-2 text-sm text-muted-foreground">
-        This shapes the routes that suit you, how you price fares, and where your costs sit. Lean into it, or evolve
+        This shapes how you price fares, how demand responds, and where your costs sit. Lean into it, or evolve
         later.
       </p>
+
+      <div className="mt-4 flex items-start gap-2 rounded-md border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-foreground">
+        <Info className="mt-0.5 size-4 shrink-0 text-accent" />
+        <p className="min-w-0 break-words">{STRATEGY_NEVER_BLOCKS_NOTICE}</p>
+      </div>
 
       {errorMessage && (
         <div className="mt-6 rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -26,46 +35,24 @@ export function StrategyStep({ data, onChange, errorMessage }: StrategyStepProps
       )}
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
-        {STRATEGY_PROFILES.map((profile) => {
-          const selected = data.strategyProfile === profile.id
-          return (
-            <button
-              key={profile.id}
-              type="button"
-              onClick={() => onChange({ strategyProfile: profile.id })}
-              aria-pressed={selected}
-              className={cn(
-                'flex flex-col gap-3 rounded-lg border p-5 text-left transition-colors',
-                selected ? 'border-accent bg-accent/10' : 'border-border bg-surface hover:border-accent/40',
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-base font-semibold tracking-tight">{profile.label}</span>
-                {selected && (
-                  <span className="flex size-5 items-center justify-center rounded-full bg-accent text-accent-foreground">
-                    <Check className="size-3" />
-                  </span>
-                )}
-              </div>
-              <p className="text-xs font-medium uppercase tracking-wide text-accent">{profile.tagline}</p>
-              <dl className="space-y-1.5 text-xs text-muted-foreground">
-                <div>
-                  <dt className="inline font-medium text-foreground">Routes — </dt>
-                  <dd className="inline">{profile.routeLengths}</dd>
-                </div>
-                <div>
-                  <dt className="inline font-medium text-foreground">Fares — </dt>
-                  <dd className="inline">{profile.fares}</dd>
-                </div>
-                <div>
-                  <dt className="inline font-medium text-foreground">Costs — </dt>
-                  <dd className="inline">{profile.costs}</dd>
-                </div>
-              </dl>
-            </button>
-          )
-        })}
+        {STRATEGY_PROFILES.map((profile) => (
+          <StrategyProfileCard
+            key={profile.id}
+            meta={profile}
+            info={status === 'ready' ? profiles.find((p) => p.profile === profile.id) : undefined}
+            figuresUnavailable={status === 'error'}
+            selected={data.strategyProfile === profile.id}
+            onSelect={() => onChange({ strategyProfile: profile.id })}
+          />
+        ))}
       </div>
+
+      {status === 'error' && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Couldn&rsquo;t load the live figures for each strategy right now — you can still choose one; the exact
+          numbers will be available once you&rsquo;re connected.
+        </p>
+      )}
     </div>
   )
 }

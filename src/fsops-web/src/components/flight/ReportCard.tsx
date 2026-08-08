@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Clock3, Fuel, Gauge, Info, RotateCw, Target } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Banknote, Clock3, Fuel, Gauge, Info, Minus, Plus, RotateCw, Target } from 'lucide-react'
 
 import { LandingGauge } from '@/components/flight/LandingGauge'
 import { PhaseTimeline } from '@/components/flight/PhaseTimeline'
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { useSettings } from '@/hooks/useSettings'
+import { formatCallsign } from '@/lib/callsign'
 import { minutesBetween } from '@/lib/flightFormat'
 import { cn } from '@/lib/utils'
 import type { FlightDetail, FlightPhase, MismatchPayload } from '@/types/flight'
@@ -16,11 +17,13 @@ interface ReportRouteInfo {
   departureName: string | null
   arrivalIcao: string
   arrivalName: string | null
+  flightNumber: string | null
 }
 
 interface ReportCardProps {
   detail: FlightDetail
   route: ReportRouteInfo | null
+  airlineIcaoCode: string | null
   className?: string
 }
 
@@ -62,13 +65,24 @@ function inferFinalPhase(flight: FlightDetail['flight']): FlightPhase {
 
 /**
  * The post-flight hero moment: landing quality first, then the phase timeline with OOOI, then
- * actual-vs-planned, then an informational (never punitive) aircraft-type badge. No money is
- * shown - the economy engine that would make Revenue/TotalCost real numbers isn't built yet, and
- * this app never displays a fabricated figure.
+ * actual-vs-planned, an informational (never punitive) aircraft-type badge, and finally the
+ * itemised financial outcome - straight from the flight's posted LedgerTransaction rows, never a
+ * recomputation, so it can never show a figure that doesn't match what actually moved the
+ * airline's cash balance.
  */
-export function ReportCard({ detail, route, className }: ReportCardProps) {
-  const { flight, events } = detail
+export function ReportCard({ detail, route, airlineIcaoCode, className }: ReportCardProps) {
+  const { flight } = detail
   const { fmt } = useSettings()
+
+  // Default the collections rather than destructuring them raw. A response that predates a field -
+  // an older server, a partial payload, a flight recorded before a feature existed - would
+  // otherwise throw inside render and, with no boundary above, blank the entire app rather than
+  // just this card. Missing history is a rendering detail, not a fatal condition.
+  const events = detail.events ?? []
+  const ledgerTransactions = detail.ledgerTransactions ?? []
+
+  const netTotal = ledgerTransactions.reduce((sum, line) => sum + line.amount, 0)
+  const sectorNotPayable = flight.slewDetected || flight.positionJumpDetected
 
   const bounceCount = Math.max(0, events.filter((e) => e.type === 'Touchdown').length - 1)
   const mismatchEvent = events.find((e) => e.type === 'Mismatch')
@@ -86,13 +100,21 @@ export function ReportCard({ detail, route, className }: ReportCardProps) {
 
   const title = route ? `${route.departureIcao} → ${route.arrivalIcao}` : 'Flight report'
   const subtitle = route ? [route.departureName, route.arrivalName].filter(Boolean).join(' → ') : null
+  const callsign = route ? formatCallsign(airlineIcaoCode, route.flightNumber) : null
 
   return (
     <div className={cn('space-y-4', className)}>
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-          <div>
-            <CardTitle className="font-mono text-xl">{title}</CardTitle>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="font-mono text-xl">{title}</CardTitle>
+              {callsign && (
+                <Badge variant="outline" className="font-mono">
+                  {callsign}
+                </Badge>
+              )}
+            </div>
             {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
           </div>
           <Badge variant={flight.status === 'Completed' ? 'success' : 'muted'}>{flight.status}</Badge>
@@ -107,7 +129,7 @@ export function ReportCard({ detail, route, className }: ReportCardProps) {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
             <StatTile
               label="Peak G"
               icon={Gauge}
@@ -195,6 +217,44 @@ export function ReportCard({ detail, route, className }: ReportCardProps) {
         </CardContent>
       </Card>
 
+      {(flight.simRateElevated || flight.slewDetected || flight.positionJumpDetected) && (
+        <Card className={flight.slewDetected || flight.positionJumpDetected ? 'border-warning/30' : undefined}>
+          <CardHeader>
+            <CardTitle className="text-base">Flight integrity</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {flight.simRateElevated && (
+              <div className="flex items-start gap-3 text-sm">
+                <Gauge className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <p className="min-w-0 break-words text-muted-foreground">
+                  Time acceleration was used during this flight
+                  {flight.maxSimulationRateObserved > 1
+                    ? ` (up to ${flight.maxSimulationRateObserved.toFixed(1)}x)`
+                    : ''}
+                  . Block time and on-time performance above are{' '}
+                  <strong className="text-foreground">not measured</strong> as a result — elapsed wall time
+                  doesn&rsquo;t mean anything once the sim clock runs faster than real time. Landing quality is
+                  unaffected.
+                </p>
+              </div>
+            )}
+            {(flight.slewDetected || flight.positionJumpDetected) && (
+              <div className="flex items-start gap-3 text-sm">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+                <p className="min-w-0 break-words text-warning">
+                  {flight.slewDetected && flight.positionJumpDetected
+                    ? 'Slew was active and telemetry showed a position jump during this flight.'
+                    : flight.slewDetected
+                      ? 'Slew was active during this flight.'
+                      : 'Telemetry showed a position change inconsistent with normal flight.'}{' '}
+                  This sector is not valid for payment.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {flight.typeMismatch && (
         <Card className="border-accent/30">
           <CardContent className="flex items-start gap-3 p-4">
@@ -212,10 +272,57 @@ export function ReportCard({ detail, route, className }: ReportCardProps) {
         </Card>
       )}
 
-      <Separator />
-      <p className="text-center text-xs text-muted-foreground">
-        Revenue and costs for this flight aren&rsquo;t shown yet — the economy engine arrives in a later update.
-      </p>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Banknote className="size-4 text-muted-foreground" />
+            Financial outcome
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {ledgerTransactions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No financial lines were posted for this flight.</p>
+          ) : (
+            <>
+              <ul className="space-y-2">
+                {ledgerTransactions.map((line) => {
+                  const isCredit = line.amount >= 0
+                  return (
+                    <li key={line.id} className="flex items-start justify-between gap-3 text-sm">
+                      <div className="flex min-w-0 items-start gap-2">
+                        {isCredit ? (
+                          <Plus className="mt-0.5 size-3.5 shrink-0 text-success" />
+                        ) : (
+                          <Minus className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="min-w-0 break-words text-foreground">{line.description}</span>
+                      </div>
+                      <span className={cn('shrink-0 tabular-nums font-medium', isCredit ? 'text-success' : 'text-foreground')}>
+                        {isCredit ? '' : '-'}
+                        {fmt.money(Math.abs(line.amount))}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+              <Separator />
+              <div className="flex items-center justify-between text-sm font-semibold">
+                <span>Net</span>
+                <span className={cn('tabular-nums', netTotal >= 0 ? 'text-success' : 'text-danger')}>
+                  {netTotal < 0 ? '-' : ''}
+                  {fmt.money(Math.abs(netTotal))}
+                </span>
+              </div>
+              {sectorNotPayable && (
+                <p className="text-xs text-muted-foreground">
+                  This sector wasn&rsquo;t valid for payment (see flight integrity above) — only fuel already bought stays
+                  charged, and no ticket revenue was posted.
+                </p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

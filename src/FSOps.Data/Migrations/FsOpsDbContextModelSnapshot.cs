@@ -52,6 +52,9 @@ namespace FSOps.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
 
+                    b.Property<double>("MtowTonnes")
+                        .HasColumnType("REAL");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -286,6 +289,9 @@ namespace FSOps.Data.Migrations
                     b.Property<double?>("LandingGForce")
                         .HasColumnType("REAL");
 
+                    b.Property<double>("MaxSimulationRateObserved")
+                        .HasColumnType("REAL");
+
                     b.Property<DateTimeOffset?>("OffUtc")
                         .HasColumnType("TEXT");
 
@@ -310,15 +316,27 @@ namespace FSOps.Data.Migrations
                     b.Property<DateTimeOffset>("PlannedDepartureUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("PositionJumpDetected")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal>("Revenue")
                         .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("RevenuePosted")
+                        .HasColumnType("INTEGER");
 
                     b.Property<Guid>("RouteId")
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("ScheduleId")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("SimRateElevated")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SlewDetected")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Status")
                         .IsRequired()

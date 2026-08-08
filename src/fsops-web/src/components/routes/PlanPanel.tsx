@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock3, Compass, Fuel, Gauge, Route as RouteIcon, Ruler, Tag, TriangleAlert } from 'lucide-react'
+import { AlertTriangle, Clock3, Compass, Fuel, Gauge, Percent, Route as RouteIcon, Ruler, Tag, TriangleAlert, Users } from 'lucide-react'
 
 import { StatTile } from '@/components/shared/StatTile'
 import { Button } from '@/components/ui/button'
@@ -87,7 +87,7 @@ export function PlanPanel({
         {showErrorOnly && <p className="text-sm text-danger">{errorMessage}</p>}
 
         {showSkeleton && (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="h-[86px] w-full" />
             ))}
@@ -96,7 +96,7 @@ export function PlanPanel({
 
         {preview && (
           <div className={cn('space-y-4 transition-opacity duration-200', isRefreshing && 'opacity-60')}>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
               <StatTile label="Distance" icon={Ruler} value={fmt.distance(preview.distanceNm)} />
               <StatTile label="Initial bearing" icon={Compass} value={`${Math.round(preview.initialBearingDeg)}°`} />
               <StatTile label="Block time" icon={Clock3} value={fmt.duration(preview.estimatedBlockMinutes)} />
@@ -187,12 +187,28 @@ export function PlanPanel({
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">Defaults to the suggested fare — edit to override.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Suggested: {fmt.money(preview.suggestedFare)} — defaults to it, edit to override.
+                  </p>
                 </div>
                 <Button type="button" onClick={onCreate} disabled={!canCreate}>
                   {creating ? 'Creating…' : 'Create route'}
                 </Button>
               </div>
+
+              {/* Live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
+               *  sector" readout - no fare validation beyond ">0" (see docs/PLAN.md "Fare setting
+               *  and demand response"): the simulation is the guardrail, this is the honest
+               *  warning. Absent rather than zeroed when the engine can't price this pick yet
+               *  (no airline, or same-airport/no-distance). */}
+              {preview.economics && (
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3">
+                  <StatTile label="At this fare" icon={Users} value={`${preview.economics.expectedPassengers} pax`} />
+                  <StatTile label="Load factor" icon={Percent} value={`${preview.economics.loadFactorPercent.toFixed(1)}%`} />
+                  <StatTile label="Revenue per sector" icon={Tag} value={fmt.money(preview.economics.expectedRevenuePerSector)} />
+                </div>
+              )}
+
               <p className="text-xs text-muted-foreground">
                 This creates both directions at once — {departure.icao} → {arrival.icao} and {arrival.icao} → {departure.icao}
                 — so an aircraft never gets stranded at the outstation.

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Flights;
 using FSOps.Core.Planning;
@@ -22,9 +23,9 @@ public static class FlightEndpoints
         group.MapGet("/flights/options", OptionsAsync);
     }
 
-    private static async Task<IResult> StartAsync(
+    internal static async Task<IResult> StartAsync(
         StartFlightRequest request, FsOpsDbContext db, ICurrentUser currentUser,
-        FlightLifecycleService lifecycle, SimTelemetryService telemetry, CancellationToken ct)
+        FlightLifecycleService lifecycle, SimTelemetryService telemetry, EconomyConfig economyConfig, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -91,7 +92,7 @@ public static class FlightEndpoints
             return Results.Problem("Your airline has no pilot on record.", statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
-        var plan = RoutePreviewCalculator.Calculate(departure, arrival, aircraftType, airline.StrategyProfile);
+        var plan = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline.StrategyProfile);
 
         var currentAircraft = telemetry.CurrentAircraft;
         var titleFlown = currentAircraft?.Title ?? string.Empty;
@@ -122,6 +123,25 @@ public static class FlightEndpoints
 
         db.Flights.Add(flight);
         fleetAircraft.Status = FleetAircraftStatus.InFlight;
+
+        // Fuel is charged when it's bought, not when it's burned - see docs/PLAN.md "Persistent
+        // fuel state and tankering". FleetAircraft has no persisted tank state yet, so this treats
+        // every flight as uplifting fuel at the departure airport, right now, rather than
+        // detecting a real uplift event and carrying fuel over between flights. Posted
+        // unconditionally, in the same SaveChangesAsync as the flight row below, so it stands even
+        // if the flight is later abandoned (fuel already bought is never refunded).
+        //
+        // Charged on FuelBreakdown.ChargedFuelKg (trip + taxi + contingency), NOT TotalFuelKg: the
+        // alternate and final-reserve allowances are loaded for safety and normally stay in the
+        // tanks unburned, so billing the full block figure every sector would charge, in full,
+        // for roughly 2,400 kg that's never actually consumed and then vanishes (no persisted tank
+        // state to carry it forward) - see FuelBreakdown.ChargedFuelKg's doc for the full
+        // rationale. FuelPlannedKg below still records the full realistic block-fuel figure a
+        // pilot would actually load, for the flight brief and report card - only the charge is
+        // limited to what the sector actually burns.
+        var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
+        flight.TotalCost = FlightEconomicsPoster.PostFuelUplift(
+            db, flight, economyConfig, departure, plan.FuelBreakdown.ChargedFuelKg, now, worldSeed);
 
         if (typeMismatch)
         {
@@ -174,7 +194,8 @@ public static class FlightEndpoints
         return Results.Ok(ToFlightDto(flight));
     }
 
-    internal static async Task<IResult> CompleteManualAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
+    internal static async Task<IResult> CompleteManualAsync(
+        Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, EconomyConfig economyConfig, CancellationToken ct)
     {
         var flight = await LoadOwnedFlightAsync(db, currentUser, id, ct);
         if (flight is null)
@@ -185,6 +206,14 @@ public static class FlightEndpoints
         if (flight.Status is not (FlightStatus.InProgress or FlightStatus.Interrupted))
         {
             return Results.BadRequest(new { error = $"Flight is {flight.Status} and cannot be manually completed." });
+        }
+
+        // Defensive: the Status guard above already stops a genuine HTTP retry (Status flips to
+        // Completed below), but a flight somehow already processed is never reprocessed - see
+        // Flight.RevenuePosted.
+        if (flight.RevenuePosted)
+        {
+            return Results.Ok(ToFlightDto(flight));
         }
 
         lifecycle.StopTracking(flight.Id);
@@ -205,6 +234,18 @@ public static class FlightEndpoints
         flight.PaxFlown = flight.PaxBooked;
         flight.Status = FlightStatus.Completed;
 
+        // No reliable telemetry for a manual completion (that's the whole reason this path
+        // exists) - trust the planned arrival rather than guessing at a real position. That
+        // applies to the economics too: OutUtc/InUtc above are best-effort stamps for the record,
+        // but the actual wall-clock gap between them is whatever the user happened to take to
+        // click "complete" (could be seconds), not how long the sector really took. Using it to
+        // drive maintenance accrual/crew cost let a flight completed instantly accrue a few pence
+        // of maintenance instead of a realistic full-sector figure. Planned block time is the
+        // honest basis here, exactly as the real-telemetry completion path (FlightLifecycleService)
+        // uses the flight's actual measured Out/In gap for the same purpose.
+        var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
+        var flightHours = flight.PlannedBlockMinutes / 60.0;
+
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
         if (fleetAircraft is not null)
         {
@@ -213,15 +254,27 @@ public static class FlightEndpoints
                 fleetAircraft.Status = FleetAircraftStatus.Active;
             }
 
-            // No reliable telemetry for a manual completion (that's the whole reason this path
-            // exists) - trust the planned arrival rather than guessing at a real position.
-            var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
             if (route is not null)
             {
                 fleetAircraft.LocationIcao = route.ArrivalIcao;
             }
 
-            fleetAircraft.AirframeHours += BlockTimeCalculator.BlockHours(flight.OutUtc, flight.InUtc);
+            fleetAircraft.AirframeHours += flightHours;
+        }
+
+        // Manual completion posts ticket revenue and normal sector costs, but never a landing
+        // quality or punctuality bonus - there is no such mechanism to begin with (see
+        // FlightEconomicsResult), and this path exists precisely because no reliable telemetry
+        // was ever captured to score one. Skips quietly (no ledger lines) if any of the data an
+        // economics calculation needs isn't resolvable - better to post nothing than guess.
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
+        var arrivalAirport = route is not null ? await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct) : null;
+        var aircraftType = fleetAircraft is not null ? await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId], ct) : null;
+
+        if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
+        {
+            await FlightEconomicsPoster.PostCompletionAsync(
+                db, flight, airline, route, aircraftType, arrivalAirport, economyConfig, flightHours, now, ct);
         }
 
         await db.SaveChangesAsync(ct);
@@ -266,7 +319,14 @@ public static class FlightEndpoints
             .OrderBy(e => e.Utc)
             .Select(e => new { e.Id, e.Utc, Type = e.Type.ToString(), e.PayloadJson });
 
-        return Results.Ok(new { flight = ToFlightDto(flight), events });
+        // The itemised financial outcome for the report card - the actual posted ledger rows,
+        // never a recomputation. This is the same append-only source the airline's cash balance
+        // sums, scoped to this one flight.
+        var ledgerTransactions = (await db.LedgerTransactions.Where(t => t.FlightId == flight.Id).ToListAsync(ct))
+            .OrderBy(t => t.Utc)
+            .Select(t => new { t.Id, t.Utc, Category = t.Category.ToString(), t.Amount, t.Description });
+
+        return Results.Ok(new { flight = ToFlightDto(flight), events, ledgerTransactions });
     }
 
     private static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -292,7 +352,7 @@ public static class FlightEndpoints
     /// route flyable even though the outbound EGGD-&gt;EGPH route isn't (its aircraft is gone).
     /// Routes with nothing available get a human-readable reason instead.
     /// </summary>
-    private static async Task<IResult> OptionsAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    private static async Task<IResult> OptionsAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -388,7 +448,7 @@ public static class FlightEndpoints
             double? distanceNm = route.DistanceNm;
             if (aircraftType is not null)
             {
-                var preview = RoutePreviewCalculator.Calculate(departure, arrival, aircraftType, airline.StrategyProfile);
+                var preview = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline.StrategyProfile);
                 estimatedBlockMinutes = preview.BlockTimeBreakdown.TotalMinutes;
             }
 
@@ -405,6 +465,10 @@ public static class FlightEndpoints
                 isFlyable,
                 fleetAircraftId = readyAircraft?.Id,
                 aircraftRegistration = readyAircraft?.Registration,
+                // The Fly screen's brief needs this to show "N booked / capacity" - already
+                // resolved above for the block-time estimate, so exposing it here is free.
+                aircraftTypeId = aircraftType?.Id,
+                paxCapacity = aircraftType?.PaxCapacity,
                 reason = isFlyable ? null : reason,
             });
         }
@@ -480,6 +544,10 @@ public static class FlightEndpoints
         f.CentrelineDeviationM,
         f.TitleFlown,
         f.TypeMismatch,
+        f.SimRateElevated,
+        f.MaxSimulationRateObserved,
+        f.SlewDetected,
+        f.PositionJumpDetected,
         f.Revenue,
         f.TotalCost,
         f.CreatedUtc,

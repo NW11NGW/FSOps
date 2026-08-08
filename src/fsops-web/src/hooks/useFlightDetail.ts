@@ -11,7 +11,7 @@ interface UseFlightDetailResult {
   errorMessage: string | null
 }
 
-/** GET /flights/{id} - full detail (flight row + event history) for a report card, on demand. */
+/** GET /flights/{id} - full detail (flight row, event history, and posted ledger lines) for a report card, on demand. */
 export function useFlightDetail(flightId: string | null): UseFlightDetailResult {
   const [status, setStatus] = useState<FlightDetailStatus>('idle')
   const [data, setData] = useState<FlightDetail | null>(null)

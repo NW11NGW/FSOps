@@ -70,6 +70,8 @@ public static class FakeFlightInterpolator
             Lerp(from.TotalFuelKg, to.TotalFuelKg),
             aircraft.Title,
             aircraft.AtcModel,
-            aircraft.AtcType);
+            aircraft.AtcType,
+            Lerp(from.SimulationRate, to.SimulationRate),
+            useTo ? to.IsSlewActive : from.IsSlewActive);
     }
 }

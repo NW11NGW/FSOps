@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useSettings } from '@/hooks/useSettings'
 import type { FlightPreviewStatus } from '@/hooks/useFlightPreview'
+import { formatCallsign } from '@/lib/callsign'
 import { cn } from '@/lib/utils'
 import type { FlightOptionAircraft, SimStatus, TelemetryPayload } from '@/types/flight'
 import type { RoutePreviewResponse } from '@/types/route'
@@ -62,10 +63,14 @@ export function FlightBrief({
   const { fmt } = useSettings()
 
   const paxCapacity = selectedAircraft?.paxCapacity ?? null
-  const expectedRevenue = paxCapacity !== null && row.baseFare > 0 ? row.baseFare * paxCapacity : null
+  // From the real demand/fare engine (see RouteEconomicsPreview) - not every seat sold at fare.
+  const economics = preview?.economics ?? null
+  const expectedPassengers = economics?.expectedPassengers ?? null
+  const expectedRevenue = economics?.expectedRevenuePerSector ?? null
+  const callsign = formatCallsign(airlineIcaoCode, row.flightNumber)
 
   const summaryLines = [
-    `${row.departureIcao} → ${row.arrivalIcao}${row.flightNumber ? ` (${row.flightNumber})` : ''}`,
+    `${row.departureIcao} → ${row.arrivalIcao}${callsign ? ` (${callsign})` : ''}`,
     preview ? `Distance: ${fmt.distance(preview.distanceNm)}` : `Distance: ${fmt.distance(row.distanceNm)}`,
     preview ? `Cruise altitude: ${fmt.altitude(preview.cruiseAltitudeFt)}` : null,
     preview ? `Block time: ${fmt.duration(preview.estimatedBlockMinutes)}` : row.blockMinutes !== null ? `Block time: ${fmt.duration(row.blockMinutes)}` : null,
@@ -82,7 +87,7 @@ export function FlightBrief({
         </CardTitle>
         <p className="font-mono text-sm text-muted-foreground">
           {row.departureIcao} → {row.arrivalIcao}
-          {row.flightNumber && <span className="ml-2 font-sans text-xs">· {row.flightNumber}</span>}
+          {callsign && <span className="ml-2 font-sans text-xs">· {callsign}</span>}
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -119,13 +124,13 @@ export function FlightBrief({
 
         <div>
           {previewStatus === 'loading' && !preview ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
               {Array.from({ length: 6 }).map((_, index) => (
                 <Skeleton key={index} className="h-[86px] w-full" />
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
               <StatTile label="Distance" icon={Ruler} value={fmt.distance(preview?.distanceNm ?? row.distanceNm)} />
               <StatTile
                 label="Cruise altitude"
@@ -138,7 +143,11 @@ export function FlightBrief({
                 value={preview ? fmt.duration(preview.estimatedBlockMinutes) : row.blockMinutes !== null ? fmt.duration(row.blockMinutes) : undefined}
               />
               <StatTile label="Block fuel" icon={Fuel} value={preview ? fmt.weight(preview.blockFuelKg) : undefined} />
-              <StatTile label="Passengers" icon={Users} value={paxCapacity !== null ? String(paxCapacity) : '—'} />
+              <StatTile
+                label="Passengers"
+                icon={Users}
+                value={expectedPassengers !== null ? `${expectedPassengers} / ${paxCapacity ?? '—'}` : '—'}
+              />
               <StatTile
                 label="Expected revenue"
                 icon={Tag}
@@ -146,8 +155,11 @@ export function FlightBrief({
               />
             </div>
           )}
-          {expectedRevenue !== null && (
-            <p className="mt-1.5 text-xs text-muted-foreground">Estimate only — final pricing arrives with the economy engine.</p>
+          {economics !== null && (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {economics.loadFactorPercent.toFixed(0)}% load factor at {fmt.money(economics.fare)} — today's demand model,
+              actual boardings may vary.
+            </p>
           )}
         </div>
 

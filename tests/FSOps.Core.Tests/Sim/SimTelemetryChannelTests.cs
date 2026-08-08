@@ -65,5 +65,7 @@ public class SimTelemetryChannelTests
         TotalFuelKg: 0,
         AircraftTitle: "test",
         AtcModel: "test",
-        AtcType: "test");
+        AtcType: "test",
+        SimulationRate: 1.0,
+        IsSlewActive: false);
 }

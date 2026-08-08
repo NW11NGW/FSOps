@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json.Serialization;
 using FSOps.Core;
+using FSOps.Core.Economy;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using FSOps.Server.Endpoints;
@@ -11,7 +12,18 @@ using FSOps.Sim.Fake;
 using FSOps.Sim.SimConnect;
 using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
+// Pin the content root to the folder the assembly actually lives in, rather than letting it
+// default to the process working directory. The SPA is served from <contentRoot>/wwwroot, so a
+// launch whose working directory is anywhere else - a shortcut with a "Start in" folder, a
+// terminal in another directory, a scheduled task - would find no wwwroot and serve the "UI not
+// built yet" fallback instead of the app. That is a blank product for an installed user, and it
+// has now bitten twice, so resolve it from the binary's own location and stop depending on how
+// the process happened to be started.
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+});
 
 // Localhost only - this app tracks flights and money through SimConnect and a local
 // SQLite ledger, and none of that should ever be reachable from another machine. The port
@@ -47,6 +59,18 @@ builder.Services.AddCors(options =>
 builder.Services.AddSignalR();
 builder.Services.AddScoped<ICurrentUser, LocalUser>();
 builder.Services.AddFsOpsData();
+
+// The single place economy-config.json is ever loaded from - every tuning constant the economy
+// engine uses (fares, demand, fuel, costs). AppContext.BaseDirectory (not ContentRootPath) so
+// this resolves the same way under "dotnet run" and a published exe, matching the world-data
+// seed path above. Falls back to EconomyConfig.Default() if the file is missing (e.g. a stripped
+// deployment); either way, Validate() has already run by the time this returns, so a bad config
+// fails fast at startup rather than producing silently wrong numbers mid-flight.
+builder.Services.AddSingleton(_ =>
+{
+    var path = Path.Combine(AppContext.BaseDirectory, "economy-config.json");
+    return File.Exists(path) ? EconomyConfig.FromJson(File.ReadAllText(path)) : EconomyConfig.Default();
+});
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 

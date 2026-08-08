@@ -1,3 +1,4 @@
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Planning;
 using FSOps.Core.Routes;
@@ -34,7 +35,8 @@ public static class RouteEndpoints
     /// responses. The try/catch is a deliberate last line of defence on top of the null-checks
     /// below, not a substitute for them.
     /// </summary>
-    private static async Task<IResult> PreviewAsync(RoutePreviewRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    private static async Task<IResult> PreviewAsync(
+        RoutePreviewRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
     {
         try
         {
@@ -78,8 +80,36 @@ public static class RouteEndpoints
                 return Results.Ok(EmptyPreview(departureIcao, arrivalIcao, warnings));
             }
 
-            var result = RoutePreviewCalculator.Calculate(departure, arrival, aircraftType, airline?.StrategyProfile);
+            var result = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile);
             warnings.AddRange(result.Validation.Warnings);
+
+            // The live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
+            // sector" readout - the real DemandCalculator/FareDemandModel engine, not the rough
+            // distance-only estimate above. Needs an airline (for strategy profile and
+            // reputation) and a real sector, so it's null for onboarding or a same-airport/no
+            // distance pick rather than guessing at either. No fare validation beyond ">0" per
+            // docs/PLAN.md "Fare setting and demand response" - the simulation is the guardrail.
+            object? economics = null;
+            if (airline is not null && !result.Validation.SameAirport && result.DistanceNm > 0)
+            {
+                var fare = request.Fare is decimal requestedFare && requestedFare > 0 ? requestedFare : result.SuggestedFare;
+                var strategyConfig = economyConfig.GetStrategy(airline.StrategyProfile);
+                var referenceFare = ReferenceFareCalculator.Calculate(economyConfig, airline.StrategyProfile, result.DistanceNm);
+                var marketDemandPax = DemandCalculator.AvailablePassengers(
+                    economyConfig.Demand, departure.SizeCategory, arrival.SizeCategory, result.DistanceNm, DateTimeOffset.UtcNow, airline.ReputationScore);
+                var booking = FareDemandModel.Calculate(
+                    economyConfig.MaxLoadFactor, strategyConfig, fare, referenceFare, aircraftType.PaxCapacity, marketDemandPax,
+                    economyConfig.CaptiveFareCeilingMultiple, economyConfig.PostCaptiveElasticity);
+
+                economics = new
+                {
+                    fare,
+                    referenceFare,
+                    expectedPassengers = booking.PaxBooked,
+                    loadFactorPercent = Math.Round(booking.LoadFactor * 100, 1),
+                    expectedRevenuePerSector = booking.Revenue,
+                };
+            }
 
             return Results.Ok(new
             {
@@ -91,6 +121,7 @@ public static class RouteEndpoints
                 blockFuelKg = Math.Round(result.FuelBreakdown.TotalFuelKg, 0),
                 fuelBreakdown = result.FuelBreakdown,
                 suggestedFare = result.SuggestedFare,
+                economics,
                 greatCirclePath = result.GreatCirclePath.Select(p => new[] { p.Lon, p.Lat }),
                 validation = new
                 {
@@ -118,6 +149,7 @@ public static class RouteEndpoints
         blockFuelKg = 0.0,
         fuelBreakdown = (object?)null,
         suggestedFare = 0m,
+        economics = (object?)null,
         greatCirclePath = Array.Empty<double[]>(),
         validation = new
         {
@@ -172,7 +204,8 @@ public static class RouteEndpoints
     /// reverse direction already exists (most likely a route created before pairing was
     /// mandatory), it's reused as the return leg instead of being rejected as a conflict.
     /// </summary>
-    internal static async Task<IResult> CreateAsync(CreateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    internal static async Task<IResult> CreateAsync(
+        CreateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -185,7 +218,7 @@ public static class RouteEndpoints
 
         var (outbound, error) = await BuildRouteAsync(
             db, airline, departureIcao, arrivalIcao, request.AircraftTypeId, request.BaseFare, request.FlightNumber,
-            existing => FlightNumberGenerator.SuggestOutbound(airline.IcaoCode, existing), ct);
+            existing => FlightNumberGenerator.SuggestOutbound(airline.IcaoCode, existing), economyConfig, ct);
         if (error is not null)
         {
             return error;
@@ -203,7 +236,7 @@ public static class RouteEndpoints
         {
             var (built, returnError) = await BuildRouteAsync(
                 db, airline, arrivalIcao, departureIcao, aircraftTypeId: null, outbound!.BaseFare, requestedFlightNumber: null,
-                existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), ct);
+                existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), economyConfig, ct);
             if (returnError is not null)
             {
                 return returnError;
@@ -237,7 +270,7 @@ public static class RouteEndpoints
     /// unless the caller supplies their own.
     /// </summary>
     private static async Task<IResult> CreateReturnLegAsync(
-        Guid id, CreateReturnLegRequest? request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+        Guid id, CreateReturnLegRequest? request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -255,7 +288,7 @@ public static class RouteEndpoints
 
         var (route, error) = await BuildRouteAsync(
             db, airline, outbound.ArrivalIcao, outbound.DepartureIcao, aircraftTypeId: null, requestedFare, request?.FlightNumber,
-            existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), ct);
+            existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), economyConfig, ct);
         if (error is not null)
         {
             return error;
@@ -283,6 +316,7 @@ public static class RouteEndpoints
         decimal? requestedFare,
         string? requestedFlightNumber,
         Func<List<string?>, string> suggestFlightNumber,
+        EconomyConfig economyConfig,
         CancellationToken ct)
     {
         if (departureIcao.Length == 0 || arrivalIcao.Length == 0)
@@ -348,7 +382,7 @@ public static class RouteEndpoints
             return (null, Results.Problem("No aircraft type is available to plan this route.", statusCode: StatusCodes.Status503ServiceUnavailable));
         }
 
-        var result = RoutePreviewCalculator.Calculate(departure, arrival, aircraftType, airline.StrategyProfile);
+        var result = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline.StrategyProfile);
 
         decimal baseFare;
         if (requestedFare is decimal fareValue)
@@ -487,7 +521,7 @@ public static class RouteEndpoints
         return Results.Ok(await ToRouteDtoAsync(route, db, ct));
     }
 
-    internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -506,7 +540,7 @@ public static class RouteEndpoints
         // having to notice or do anything. Best-effort - a leg that can't be repaired right now
         // (e.g. the reverse is beyond the fleet's range) is left as a single leg rather than
         // failing the whole list; see POST /routes/{id}/return-leg for a manual retry.
-        var backfilled = await BackfillMissingReturnLegsAsync(db, airline, routes, ct);
+        var backfilled = await BackfillMissingReturnLegsAsync(db, airline, routes, economyConfig, ct);
         if (backfilled.Count > 0)
         {
             routes.AddRange(backfilled);
@@ -532,7 +566,7 @@ public static class RouteEndpoints
                 airports.TryGetValue(r.DepartureIcao, out var dep) &&
                 airports.TryGetValue(r.ArrivalIcao, out var arr))
             {
-                var preview = RoutePreviewCalculator.Calculate(dep, arr, aircraftType, airline.StrategyProfile);
+                var preview = RoutePreviewCalculator.Calculate(economyConfig, dep, arr, aircraftType, airline.StrategyProfile);
                 estimatedBlockMinutes = preview.BlockTimeBreakdown.TotalMinutes;
             }
 
@@ -626,7 +660,7 @@ public static class RouteEndpoints
     /// that with the returned list to avoid double-counting.
     /// </summary>
     private static async Task<List<Route>> BackfillMissingReturnLegsAsync(
-        FsOpsDbContext db, Airline airline, List<Route> routes, CancellationToken ct)
+        FsOpsDbContext db, Airline airline, List<Route> routes, EconomyConfig economyConfig, CancellationToken ct)
     {
         // Local working copy - pass 2 needs visibility into legs pass 1 just created, but this
         // method must not mutate the `routes` parameter's membership itself, or the caller's own
@@ -651,7 +685,7 @@ public static class RouteEndpoints
 
             var (reverse, error) = await BuildRouteAsync(
                 db, airline, route.ArrivalIcao, route.DepartureIcao, aircraftTypeId: null, route.BaseFare, requestedFlightNumber: null,
-                existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, route.FlightNumber, existing), ct);
+                existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, route.FlightNumber, existing), economyConfig, ct);
 
             if (error is not null || reverse is null)
             {
@@ -745,7 +779,7 @@ public static class RouteEndpoints
     }
 }
 
-public record RoutePreviewRequest(string? DepartureIcao, string? ArrivalIcao, Guid? AircraftTypeId);
+public record RoutePreviewRequest(string? DepartureIcao, string? ArrivalIcao, Guid? AircraftTypeId, decimal? Fare);
 
 public record CreateRouteRequest(string? DepartureIcao, string? ArrivalIcao, Guid? AircraftTypeId, decimal? BaseFare, string? FlightNumber);
 

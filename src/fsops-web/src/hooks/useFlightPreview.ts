@@ -19,17 +19,24 @@ const DEBOUNCE_MS = 150
  * useRoutePreview (used by the route planner, which previews against the fleet's default type)
  * rather than an extension of it - the Fly screen's brief always has a specific aircraft picked
  * and needs the preview to reflect that aircraft's performance.
+ *
+ * `fareInBaseCurrency` (optional) drives the live economics readout (expected passengers, load
+ * factor, revenue per sector - see RouteEconomicsPreview) against the route's actual fare, since
+ * the brief is pricing a real sector rather than letting the user try different fares.
  */
 export function useFlightPreview(
   departureIcao: string | null,
   arrivalIcao: string | null,
   aircraftTypeId: string | null,
+  fareInBaseCurrency?: number | null,
 ): UseFlightPreviewResult {
   const [data, setData] = useState<RoutePreviewResponse | null>(null)
   const [status, setStatus] = useState<FlightPreviewStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const key = departureIcao && arrivalIcao ? `${departureIcao}|${arrivalIcao}|${aircraftTypeId ?? ''}` : null
+  const key = departureIcao && arrivalIcao
+    ? `${departureIcao}|${arrivalIcao}|${aircraftTypeId ?? ''}|${fareInBaseCurrency ?? ''}`
+    : null
   const debouncedKey = useDebouncedValue(key, DEBOUNCE_MS)
 
   useEffect(() => {
@@ -40,14 +47,20 @@ export function useFlightPreview(
       return
     }
 
-    const [dep, arr, typeId] = debouncedKey.split('|')
+    const [dep, arr, typeId, fare] = debouncedKey.split('|')
+    const parsedFare = Number(fare)
     const controller = new AbortController()
     setStatus('loading')
     setErrorMessage(null)
 
     post<RoutePreviewResponse>(
       '/routes/preview',
-      { departureIcao: dep, arrivalIcao: arr, ...(typeId ? { aircraftTypeId: typeId } : {}) },
+      {
+        departureIcao: dep,
+        arrivalIcao: arr,
+        ...(typeId ? { aircraftTypeId: typeId } : {}),
+        ...(fare && Number.isFinite(parsedFare) && parsedFare > 0 ? { fare: parsedFare } : {}),
+      },
       undefined,
       { signal: controller.signal },
     )

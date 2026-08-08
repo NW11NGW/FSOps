@@ -1,3 +1,4 @@
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 
 namespace FSOps.Core.Planning;
@@ -38,7 +39,7 @@ public static class RoutePreviewCalculator
     private const double ShortHopThresholdNm = 200;
 
     public static RoutePreviewResult Calculate(
-        Airport departure, Airport arrival, AircraftType aircraftType, AirlineStrategyProfile? strategy)
+        EconomyConfig economyConfig, Airport departure, Airport arrival, AircraftType aircraftType, AirlineStrategyProfile? strategy)
     {
         var warnings = new List<string>();
         var sameAirport = string.Equals(departure.Icao, arrival.Icao, StringComparison.OrdinalIgnoreCase);
@@ -55,7 +56,18 @@ public static class RoutePreviewCalculator
         var blockTime = BlockTimeEstimator.Estimate(distanceNm, aircraftType.CruiseTasKts);
         var cruiseAltitudeFt = CruiseAltitudeSelector.SelectCruiseAltitudeFt(distanceNm, bearingDeg, aircraftType.ServiceCeilingFt);
         var fuel = BlockFuelEstimator.Estimate(blockTime, aircraftType.FuelBurnKgPerHour);
-        var fare = FareEstimator.SuggestFare(distanceNm, strategy ?? AirlineStrategyProfile.Domestic);
+        // The one true source for "the suggested fare" is ReferenceFareCalculator/EconomyConfig -
+        // the same figure FareDemandModel anchors demand and elasticity to (see
+        // FlightEconomicsCalculator, RouteEndpoints.PreviewAsync). A separate hardcoded formula
+        // used to live here (FareEstimator, a Chunk-A/B placeholder predating the real economy
+        // engine) and could silently drift from it - a player would be offered one fare while the
+        // demand model scored it against a different one. distanceNm is 0 for a same-airport
+        // preview, which ReferenceFareCalculator rejects (a real route never has zero distance),
+        // so that case still falls back to the configured minimum fare rather than throwing - this
+        // method must never throw (see RouteEndpoints.PreviewAsync's own doc comment).
+        var fare = distanceNm > 0
+            ? ReferenceFareCalculator.Calculate(economyConfig, strategy ?? AirlineStrategyProfile.Domestic, distanceNm)
+            : economyConfig.ReferenceFare.MinimumFare;
 
         var operationalRangeNm = aircraftType.RangeNm * OperationalRangeFactor;
         var withinRange = distanceNm <= operationalRangeNm;
@@ -91,11 +103,12 @@ public static class RoutePreviewCalculator
         if (strategy is { } strategyProfile && !sameAirport)
         {
             var internationalSector = !string.Equals(departure.Country, arrival.Country, StringComparison.OrdinalIgnoreCase);
-            if (strategyProfile == AirlineStrategyProfile.Domestic && internationalSector)
+            var rules = AdvisoryRulesFor(strategyProfile);
+            if (rules.WarnsOnInternationalSector && internationalSector)
             {
                 warnings.Add("This is an international route, which doesn't match your Domestic strategy.");
             }
-            else if (strategyProfile == AirlineStrategyProfile.International && !internationalSector && distanceNm < ShortHopThresholdNm)
+            else if (rules.WarnsOnShortDomesticHop && !internationalSector && distanceNm < ShortHopThresholdNm)
             {
                 warnings.Add("This is a short domestic hop, which doesn't match your International strategy.");
             }
@@ -105,4 +118,21 @@ public static class RoutePreviewCalculator
 
         return new RoutePreviewResult(distanceNm, bearingDeg, blockTime, cruiseAltitudeFt, fuel, fare, path, validation);
     }
+
+    /// <summary>
+    /// Which of the two route-suitability advisories above a strategy profile raises. These are
+    /// strategy *preferences*, never physical limits - range and runway warnings above apply to
+    /// every profile unconditionally, Balanced included. Domestic and International are the only
+    /// profiles with a directional preference; every other profile (LowCost, Premium, Balanced,
+    /// and any future addition that doesn't opt in here) raises neither. Balanced in particular
+    /// is exempt by design - "no route-suitability warnings at all" is the entire point of the
+    /// all-rounder profile. Public so the Settings/onboarding profile picker can describe exactly
+    /// this behaviour without a second, hand-maintained copy that could drift from it.
+    /// </summary>
+    public static (bool WarnsOnInternationalSector, bool WarnsOnShortDomesticHop) AdvisoryRulesFor(AirlineStrategyProfile profile) => profile switch
+    {
+        AirlineStrategyProfile.Domestic => (WarnsOnInternationalSector: true, WarnsOnShortDomesticHop: false),
+        AirlineStrategyProfile.International => (WarnsOnInternationalSector: false, WarnsOnShortDomesticHop: true),
+        _ => (WarnsOnInternationalSector: false, WarnsOnShortDomesticHop: false),
+    };
 }

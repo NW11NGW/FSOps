@@ -62,4 +62,11 @@ public sealed class FakeKeyframe
     public double TouchdownNormalVelocityFps { get; set; }
 
     public double TotalFuelKg { get; set; }
+
+    /// <summary>1.0 is normal speed. Defaults to 1.0 so replays written before this field existed
+    /// keep working unchanged.</summary>
+    public double SimulationRate { get; set; } = 1.0;
+
+    /// <summary>Defaults to false so replays written before this field existed keep working unchanged.</summary>
+    public bool IsSlewActive { get; set; }
 }

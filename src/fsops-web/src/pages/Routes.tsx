@@ -40,11 +40,19 @@ export function RoutesPage() {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [hoveredRouteId, setHoveredRouteId] = useState<string | null>(null)
 
-  const preview = useRoutePreview(departure?.icao ?? null, arrival?.icao ?? null)
+  // Same base-currency conversion handleCreate uses for the actual baseFare it submits - the
+  // live economics readout must be priced in the same units the engine actually charges in.
+  const parsedFareOverride = Number(fareOverride)
+  const fareOverrideInBase =
+    fareTouched && Number.isFinite(parsedFareOverride) && parsedFareOverride > 0
+      ? parsedFareOverride / currentCurrency.rate
+      : null
+  const preview = useRoutePreview(departure?.icao ?? null, arrival?.icao ?? null, fareOverrideInBase)
   const routesQuery = useRoutes()
   const blockMinutes = useRouteBlockTimes(routesQuery.routes)
 
   const homeAirportIcao = airlineSummary.data?.airline.homeAirportIcao ?? null
+  const airlineIcaoCode = airlineSummary.data?.airline.icaoCode ?? null
 
   // Saved routes only carry ICAO codes, not coordinates - this resolves the hub plus every
   // unique departure/arrival airport across the whole route list so the map can draw the
@@ -312,6 +320,7 @@ export function RoutesPage() {
         blockMinutes={blockMinutes}
         selectedId={selectedRouteId}
         hoveredId={hoveredRouteId}
+        airlineIcaoCode={airlineIcaoCode}
         onSelect={handleSelectRoute}
         onDelete={handleDeleteRoute}
         onHover={setHoveredRouteId}

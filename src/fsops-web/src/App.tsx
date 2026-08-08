@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
-import { Route, Routes, useNavigate } from 'react-router-dom'
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 
 import { AppShell } from '@/components/layout/AppShell'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { useAirlineGate } from '@/hooks/useAirlineGate'
 import { applyAccentColour } from '@/lib/theme'
 import { Dashboard } from '@/pages/Dashboard'
@@ -49,18 +50,22 @@ function App() {
   }
 
   return (
-    <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<Dashboard />} />
-        <Route path="fly" element={<Fly />} />
-        <Route path="routes" element={<RoutesPage />} />
-        <Route path="fleet" element={<Fleet />} />
-        <Route path="pilots" element={<Pilots />} />
-        <Route path="finances" element={<Finances />} />
-        <Route path="stats" element={<Stats />} />
-        <Route path="settings" element={<Settings />} />
-      </Route>
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route index element={<Dashboard />} />
+          <Route path="fly" element={<Fly />} />
+          <Route path="routes" element={<RoutesPage />} />
+          <Route path="fleet" element={<Fleet />} />
+          <Route path="pilots" element={<Pilots />} />
+          <Route path="finances" element={<Finances />} />
+          <Route path="stats" element={<Stats />} />
+          <Route path="settings" element={<Settings />} />
+          {/* Any unknown path lands on the dashboard rather than rendering nothing at all. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </ErrorBoundary>
   )
 }
 

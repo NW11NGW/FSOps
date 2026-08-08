@@ -50,9 +50,51 @@ public class Flight
     /// <summary>Informational only - a wrong-family aircraft is flagged, never penalised.</summary>
     public bool TypeMismatch { get; set; }
 
+    /// <summary>
+    /// True if the sim ran faster than real time (simulation rate above 1.0) at any point while
+    /// this flight was tracked. Not a penalty - accelerating a long cruise is normal single-player
+    /// behaviour - but it does mean anything measured in wall-clock time (block-time variance,
+    /// on-time performance) is meaningless for this flight and must be reported as "not measured"
+    /// rather than scored, and no reputation may be gained from it. Landing quality is unaffected -
+    /// it comes from the sim's own instantaneous touchdown telemetry, not elapsed time - and is
+    /// still scored normally. See FlightIntegrityMonitor.
+    /// </summary>
+    public bool SimRateElevated { get; set; }
+
+    /// <summary>Highest simulation rate observed while this flight was tracked. 1.0 (normal speed) if <see cref="SimRateElevated"/> is false.</summary>
+    public double MaxSimulationRateObserved { get; set; } = 1.0;
+
+    /// <summary>
+    /// True if slew mode was active at any point while this flight was tracked. Unlike
+    /// <see cref="SimRateElevated"/>, this means the sector is not valid for payment - a
+    /// structural gate, not a deduction: whatever posts revenue for this flight must check this
+    /// (and <see cref="PositionJumpDetected"/>) rather than pay out a reduced amount.
+    /// </summary>
+    public bool SlewDetected { get; set; }
+
+    /// <summary>
+    /// True if two consecutive samples implied a physically impossible ground speed (see
+    /// FlightIntegrityMonitor.ImpossibleGroundSpeedKt) - a teleport, scenery reload, or slew the
+    /// sim did not otherwise report. Detected independently of <see cref="SlewDetected"/> so a
+    /// missing or misreported slew simvar can't hide a jump. Also means the sector is not valid
+    /// for payment - see <see cref="SlewDetected"/> for how callers must treat that.
+    /// </summary>
+    public bool PositionJumpDetected { get; set; }
+
     public decimal Revenue { get; set; }
 
     public decimal TotalCost { get; set; }
+
+    /// <summary>
+    /// True once this flight's completion ledger lines (or the deliberate decision to post none -
+    /// see <see cref="SlewDetected"/>/<see cref="PositionJumpDetected"/>) have been written. The
+    /// single idempotency gate for <c>FlightEconomicsPoster.PostCompletionAsync</c>: a retry,
+    /// reconnect, or crash rehydration that calls completion again for the same flight is a no-op
+    /// once this is true, so ledger lines are posted exactly once no matter how many times
+    /// completion is invoked. Fuel is posted separately, at <see cref="FlightStatus.InProgress"/>
+    /// start (see the fuel-uplift rule in docs/PLAN.md), so it isn't gated by this flag.
+    /// </summary>
+    public bool RevenuePosted { get; set; }
 
     public DateTimeOffset CreatedUtc { get; set; }
 

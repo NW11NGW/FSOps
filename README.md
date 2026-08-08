@@ -2,15 +2,15 @@
 
 **Build and fly your own virtual airline in Microsoft Flight Simulator 2024.**
 
-FSOps is a Windows companion app for MSFS 2024. Found an airline, pick a home base and a strategy, build out a route network, and fly it — FSOps tracks every flight live against the simulator, runs a proper economy underneath it, and lets your airline keep growing on its own schedule between sessions.
+FSOps is a Windows companion app for MSFS 2024. Found an airline, pick a home base and a strategy, build out a route network, and fly it — FSOps tracks every flight live against the simulator and runs a proper economy underneath it, itemising exactly what each sector earned and cost. Growing your airline on its own schedule between sessions, via virtual pilots, is planned but not yet built — see [Status](#status-in-development) below for what's real today.
 
 ## Status: in development
 
-FSOps is being built in the open, in public view, one feature at a time. Founding an airline, planning a route network, and flying a route with full live tracking through MSFS all work today. The economy simulation, virtual pilots, fleet purchasing, maintenance, and statistics dashboards are not available yet — see the [user guide](docs/guides/user-guide.md) for what's built and what's coming.
+FSOps is being built in the open, in public view, one feature at a time. Founding an airline, planning a route network, flying a route with full live tracking through MSFS, and posting the resulting ticket revenue and costs to your airline's ledger all work today. Virtual pilots, fleet purchasing, maintenance, and statistics dashboards are not available yet — see the [user guide](docs/guides/user-guide.md) for what's built and what's coming.
 
 ## Headline features
 
-- **Found your airline** — a full-screen setup wizard walks you through naming your airline, picking a home base airport and strategy (international, domestic, low-cost, or premium), an accent colour and starter aircraft, your currency and units, and an optional startup loan.
+- **Found your airline** — a full-screen setup wizard walks you through naming your airline, picking a home base airport and strategy (international, domestic, low-cost, premium, or the balanced all-rounder), an accent colour and starter aircraft, your currency and units, and an optional startup loan. Strategy isn't locked in — change it any time from Settings → Airline.
 - **Plan a round-trip route network** — search the airport database, pick a departure and arrival, and see a live plan: great-circle distance and bearing on an interactive map, block time and cruise altitude, a full fuel breakdown, and a suggested fare you can override before creating the route. Creating a route always creates both directions, with paired flight numbers, so your aircraft is never stranded at the outstation. Every saved route draws as a curved great-circle line on your network map, with your hub marked distinctly.
 - **Fly a tracked flight** — pick a route on the Fly screen, review the flight brief (distance, cruise altitude, block time, block fuel breakdown), then start flying. FSOps connects to MSFS 2024 via SimConnect, auto-reconnecting whenever the sim isn't running, and tracks your flight live: phase detection (preflight through shutdown), a moving map, and live readouts of altitude, speed and fuel.
 - **Landing quality scoring and report cards** — every landing is graded on touchdown rate, peak G-force, bounce count, and deviation from the runway centreline. A post-flight report card compares your actual block time and fuel burn against the plan and shows the full phase timeline with captured OOOI times.
@@ -18,7 +18,7 @@ FSOps is being built in the open, in public view, one feature at a time. Foundin
 - **Aircraft-type awareness** — FSOps checks the aircraft you're actually flying against the route's expected aircraft at family level (a 737-800 matches a 737-700 route); a mismatch is flagged for information only and never affects payment.
 - **Settings that stay out of your way** — currency, distance/altitude/weight units, time display, theme and accent colour are all adjustable; changing currency only changes how numbers are displayed, never your actual balance.
 - **A real airport database** — world airport and runway data imports automatically on first launch, backing route search, runway-length checks, and range validation against your fleet.
-- **A deep economy simulation** *(coming in a later update)* — passenger demand, ticket pricing, fuel and fees, maintenance, loans, and leases all driving your airline's finances. Flights currently record zero revenue and cost, deliberately, until this lands.
+- **A deep economy simulation** — passenger demand and price elasticity decide who actually books your fare (load factor is capped around 92% no matter how cheap you go), and every flight posts itemised ticket revenue, fuel (charged on uplift, not burn), landing/handling/parking/passenger fees, maintenance accrual, and crew cost to your airline's append-only ledger. There's no fare cap — the simulation is the guardrail: price too high and passengers, and eventually the market itself, evaporate rather than rewarding you for gouging a captive handful of them. A slew or teleport during tracking voids that sector's revenue outright, never quietly discounts it. Starting capital, your first lease deposit, and any startup loan post once, when you found your airline — recurring monthly costs (lease, salary, insurance) aren't billed on a schedule yet, so today's game is easier than the model intends; virtual pilots, aircraft purchasing, and that recurring billing *(coming in a later update)* will plug into the same engine.
 - **Virtual pilots** *(coming in a later update)* — hire pilots who fly your scheduled routes on the real-world clock, even while FSOps is closed.
 - **Buying and leasing aircraft, and maintenance** *(coming in a later update)* — grow your fleet beyond your starter aircraft and keep it airworthy.
 - **In-game panel** *(coming in a later update)* — see live airline stats without leaving MSFS.
@@ -52,6 +52,7 @@ FSOps/
 │   ├── FSOps.Core/       # Domain model, money/planning/finance logic (no framework deps)
 │   │   ├── Airlines/     #   Airline creation defaults, registration generation
 │   │   ├── Airports/     #   Airport search ranking, size categorisation
+│   │   ├── Economy/      #   Demand, fares, fuel pricing, flight costs, itemised ledger postings
 │   │   ├── Entities/     #   Domain entities (Airline, Route, FleetAircraft, Flight, FlightEvent, ...)
 │   │   ├── Finance/      #   Loan calculations
 │   │   ├── Flights/      #   Flight-phase state machine, landing quality, aircraft-type matching

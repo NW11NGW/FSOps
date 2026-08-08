@@ -1,8 +1,10 @@
 using System.Text.RegularExpressions;
 using FSOps.Core.Airlines;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Finance;
 using FSOps.Core.Money;
+using FSOps.Core.Planning;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using Microsoft.EntityFrameworkCore;
@@ -11,16 +13,23 @@ namespace FSOps.Server.Endpoints;
 
 public static class AirlineEndpoints
 {
+    // The names allowed in strategyProfile request bodies, generated from the enum itself so a
+    // new profile (like Balanced) only ever needs adding in one place - Enums.cs - rather than
+    // also being remembered in every validation message.
+    private static string StrategyProfileOptionsText => string.Join(", ", Enum.GetNames<AirlineStrategyProfile>());
+
     public static void MapAirlineEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapPost("/airline", CreateAsync);
         group.MapGet("/airline", GetAsync);
         group.MapPut("/airline", UpdateAsync);
         group.MapGet("/airline/summary", GetSummaryAsync);
+        group.MapGet("/airline/strategy-profiles", GetStrategyProfiles);
         group.MapDelete("/airline", DeleteAsync);
     }
 
-    private static async Task<IResult> CreateAsync(CreateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    private static async Task<IResult> CreateAsync(
+        CreateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
     {
         var name = (request.Name ?? string.Empty).Trim();
         if (name.Length is < 2 or > 40)
@@ -61,7 +70,7 @@ public static class AirlineEndpoints
 
         if (!Enum.TryParse<AirlineStrategyProfile>(request.StrategyProfile, ignoreCase: true, out var strategyProfile))
         {
-            return Results.BadRequest(new { error = "strategyProfile must be one of: International, Domestic, LowCost, Premium." });
+            return Results.BadRequest(new { error = $"strategyProfile must be one of: {StrategyProfileOptionsText}." });
         }
 
         var accentColour = (request.AccentColour ?? string.Empty).Trim();
@@ -143,7 +152,10 @@ public static class AirlineEndpoints
             AirlineId = airline.Id,
             AircraftTypeId = aircraftType.Id,
             Registration = registration,
-            Ownership = AircraftOwnership.Owned,
+            // A new airline leases its starter aircraft rather than buying outright - see
+            // docs/PLAN.md "Economic balance". Buying becomes a mid-game milestone funded by
+            // retained profit or a deliberate loan, not the opening move.
+            Ownership = AircraftOwnership.Leased,
             AirframeHours = 0,
             HoursSinceACheck = 0,
             HoursSinceCCheck = 0,
@@ -153,32 +165,47 @@ public static class AirlineEndpoints
             CreatedUtc = now,
         };
 
+        var lease = new Lease
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = airline.Id,
+            FleetAircraftId = fleetAircraft.Id,
+            MonthlyRate = aircraftType.MonthlyLeaseRate,
+            StartUtc = now,
+            IsActive = true,
+            CreatedUtc = now,
+        };
+
         var pilot = new Pilot
         {
             Id = Guid.NewGuid(),
             AirlineId = airline.Id,
             Name = currentUser.DisplayName,
             IsPlayer = true,
-            MonthlySalary = AirlineCreationDefaults.StartingPilotMonthlySalary,
+            MonthlySalary = economyConfig.AirlineStartup.StartingPilotMonthlySalary,
             HoursFlown = 0,
             SkillRating = 50,
             Status = PilotStatus.Available,
             CreatedUtc = now,
         };
 
+        // The deposit scales with the chosen aircraft type's own lease rate rather than being a
+        // flat figure, so it stays sensible whichever starter family the player picks.
+        var leaseDeposit = Math.Round(aircraftType.MonthlyLeaseRate * (decimal)economyConfig.AirlineStartup.LeaseDepositMonths, 2, MidpointRounding.AwayFromZero);
+
         var ledgerEntries = new List<LedgerTransaction>
         {
             new()
             {
                 Id = Guid.NewGuid(), AirlineId = airline.Id, Utc = now,
-                Category = LedgerCategory.StartingCapital, Amount = AirlineCreationDefaults.StartingCapital,
+                Category = LedgerCategory.StartingCapital, Amount = economyConfig.AirlineStartup.StartingCapital,
                 Description = "Starting capital",
             },
             new()
             {
                 Id = Guid.NewGuid(), AirlineId = airline.Id, Utc = now,
-                Category = LedgerCategory.AircraftPurchase, Amount = -aircraftType.PurchasePrice,
-                Description = $"Purchase: {aircraftType.Name} ({registration})",
+                Category = LedgerCategory.LeasePayment, Amount = -leaseDeposit,
+                Description = $"Lease deposit ({economyConfig.AirlineStartup.LeaseDepositMonths:0.#} months): {aircraftType.Name} ({registration})",
             },
         };
 
@@ -195,6 +222,7 @@ public static class AirlineEndpoints
 
         db.Airlines.Add(airline);
         db.FleetAircraft.Add(fleetAircraft);
+        db.Leases.Add(lease);
         db.Pilots.Add(pilot);
         db.LedgerTransactions.AddRange(ledgerEntries);
         if (loan is not null)
@@ -278,14 +306,49 @@ public static class AirlineEndpoints
         {
             if (!Enum.TryParse<AirlineStrategyProfile>(request.StrategyProfile, ignoreCase: true, out var strategyProfile))
             {
-                return Results.BadRequest(new { error = "strategyProfile must be one of: International, Domestic, LowCost, Premium." });
+                return Results.BadRequest(new { error = $"strategyProfile must be one of: {StrategyProfileOptionsText}." });
             }
 
+            // Going forward only: this changes future suggested fares and demand, and the
+            // advisories a new route preview may raise. Completed flights, posted ledger lines
+            // and fares already stored on existing routes are historical fact and are never
+            // touched - LedgerTransaction and FlightEvent are append-only, and existing Route
+            // rows keep whatever fare they were created with.
             airline.StrategyProfile = strategyProfile;
         }
 
         await db.SaveChangesAsync(ct);
         return Results.Ok(airline);
+    }
+
+    /// <summary>
+    /// Per-strategy metadata for the profile picker (onboarding and Settings -&gt; Airline), sourced
+    /// from the same economy-config.json the pricing/demand engine reads and the same advisory
+    /// rules RoutePreviewCalculator actually applies - so the UI can never describe a strategy
+    /// differently to how it behaves. No airline lookup: this is static reference data, needed
+    /// before an airline exists (onboarding) as much as after (settings). Derived from
+    /// Enum.GetValues so a sixth profile appears automatically rather than needing this endpoint
+    /// remembered too.
+    /// </summary>
+    private static IResult GetStrategyProfiles(EconomyConfig economyConfig)
+    {
+        var profiles = Enum.GetValues<AirlineStrategyProfile>()
+            .Select(profile =>
+            {
+                var strategy = economyConfig.GetStrategy(profile);
+                var rules = RoutePreviewCalculator.AdvisoryRulesFor(profile);
+                return new StrategyProfileInfo(
+                    profile.ToString(),
+                    strategy.ReferenceFareMultiplier,
+                    strategy.Elasticity,
+                    strategy.BaselineLoadFactor,
+                    strategy.CostMultiplier,
+                    rules.WarnsOnInternationalSector,
+                    rules.WarnsOnShortDomesticHop);
+            })
+            .ToList();
+
+        return Results.Ok(profiles);
     }
 
     internal static async Task<IResult> GetSummaryAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -390,3 +453,19 @@ public record UpdateAirlineRequest(
     string? StrategyProfile,
     string? IcaoCode,
     string? HomeAirportIcao);
+
+/// <summary>
+/// The figures behind one strategy profile, straight from economy-config.json plus the route
+/// advisories RoutePreviewCalculator actually raises for it - everything the profile picker needs
+/// to describe the profile honestly. ReferenceFareMultiplier/CostMultiplier are relative to 1.0 =
+/// baseline; BaselineLoadFactor is a fraction (0.73 = 73%); Elasticity is demand's sensitivity to
+/// fare (higher = more sensitive, seats empty faster as fare rises above the reference).
+/// </summary>
+public record StrategyProfileInfo(
+    string Profile,
+    decimal ReferenceFareMultiplier,
+    double Elasticity,
+    double BaselineLoadFactor,
+    double CostMultiplier,
+    bool WarnsOnInternationalSector,
+    bool WarnsOnShortDomesticHop);

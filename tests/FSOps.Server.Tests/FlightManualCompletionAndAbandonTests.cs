@@ -1,3 +1,4 @@
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Server.Endpoints;
 using FSOps.Server.Services;
@@ -59,8 +60,9 @@ public class FlightManualCompletionAndAbandonTests
         ctx.Db.Flights.Add(flight);
         await ctx.Db.SaveChangesAsync();
 
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, null!);
-        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, CancellationToken.None);
+        var economyConfig = EconomyConfig.Default();
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfig, null!);
+        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfig, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -72,6 +74,86 @@ public class FlightManualCompletionAndAbandonTests
 
         var updatedFlight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
         Assert.Equal(FlightStatus.Completed, updatedFlight.Status);
+    }
+
+    /// <summary>
+    /// The regression this exists to guard: a flight manually completed within seconds of starting
+    /// (OutUtc left unset, so CompleteManualAsync stamps both Out and In at essentially "now") used
+    /// to accrue maintenance/crew cost from that near-zero real elapsed time - a few pence instead
+    /// of a realistic sector's worth. Both must now come from the flight's PLANNED block time
+    /// instead, exactly like the real-telemetry completion path uses the flight's actual measured
+    /// Out/In gap for the same purpose.
+    /// </summary>
+    [Fact]
+    public async Task CompleteManualAsync_CompletedSecondsAfterStarting_StillAccruesARealisticSectorsWorthOfMaintenanceAndCrewCost()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        fleetAircraft.Status = FleetAircraftStatus.InFlight;
+
+        var route = new Route
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            DepartureIcao = "EGGD",
+            ArrivalIcao = "EGPH",
+            FlightNumber = "101",
+            DistanceNm = 280,
+            BaseFare = 90m,
+            IsActive = true,
+            CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.Routes.Add(route);
+
+        var now = DateTimeOffset.UtcNow;
+        var flight = new Flight
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            RouteId = route.Id,
+            FleetAircraftId = fleetAircraft.Id,
+            PilotId = Guid.NewGuid(),
+            Status = FlightStatus.InProgress,
+            PlannedDepartureUtc = now,
+            PlannedBlockMinutes = 120, // a 2-hour sector - what the real elapsed time must be ignored in favour of.
+            // OutUtc deliberately left unset, exactly as a genuine "started, then immediately hit
+            // complete-with-estimates" flight would arrive here - CompleteManualAsync stamps both
+            // Out and In at essentially the same instant below.
+            PaxBooked = 150,
+            FuelPlannedKg = 3000,
+            TitleFlown = "Test Aircraft",
+            CreatedUtc = now,
+        };
+        ctx.Db.Flights.Add(flight);
+        await ctx.Db.SaveChangesAsync();
+
+        var economyConfig = EconomyConfig.Default();
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfig, null!);
+        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfig, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var updatedFlight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
+        // The real elapsed wall-clock gap is a few milliseconds - if maintenance/crew were still
+        // driven by that, InUtc - OutUtc would round to zero hours and both lines would be at or
+        // near £0.
+        Assert.True((updatedFlight.InUtc!.Value - updatedFlight.OutUtc!.Value).TotalSeconds < 5);
+
+        var plannedHours = flight.PlannedBlockMinutes / 60.0;
+        var expectedMaintenance = economyConfig.Costs.MaintenanceAccrualPerHour * (decimal)plannedHours;
+        var expectedCrew = economyConfig.Costs.CrewCostPerHour * (decimal)Math.Max(plannedHours, economyConfig.Costs.MinimumCrewDutyHours);
+
+        var ledgerLines = await ctx.Db.LedgerTransactions.Where(t => t.FlightId == flight.Id).ToListAsync();
+        var maintenanceLine = Assert.Single(ledgerLines, t => t.Category == LedgerCategory.Maintenance);
+        var crewLine = Assert.Single(ledgerLines, t => t.Category == LedgerCategory.Salary);
+
+        Assert.Equal(-expectedMaintenance, maintenanceLine.Amount);
+        Assert.Equal(-expectedCrew, crewLine.Amount);
+
+        // The regression, stated as a number rather than just "not the bug formula": a real sector
+        // of maintenance/crew cost is comfortably in the hundreds of pounds, not pennies.
+        Assert.True(maintenanceLine.Amount < -100m,
+            $"Expected a realistic maintenance accrual for a {flight.PlannedBlockMinutes}-minute planned sector, got {maintenanceLine.Amount:C2}.");
     }
 
     [Fact]
@@ -101,7 +183,7 @@ public class FlightManualCompletionAndAbandonTests
 
         // A bare service with no active tracking for this flight - GetActiveSnapshot returns null,
         // exactly as if the sim never sent a single sample before the user gave up and abandoned.
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, EconomyConfig.Default(), null!);
         var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));

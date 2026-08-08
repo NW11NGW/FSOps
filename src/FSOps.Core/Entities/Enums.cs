@@ -16,6 +16,7 @@ public enum AirlineStrategyProfile
     Domestic,
     LowCost,
     Premium,
+    Balanced,
 }
 
 public enum AircraftOwnership

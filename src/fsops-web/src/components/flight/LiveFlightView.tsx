@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useSettings } from '@/hooks/useSettings'
+import { formatCallsign } from '@/lib/callsign'
 import { cn } from '@/lib/utils'
 import type { Flight, LiveFlightSnapshot, TelemetryPayload } from '@/types/flight'
 import type { LonLat } from '@/types/route'
@@ -28,13 +29,16 @@ interface LiveFlightViewProps {
   arrival: LiveAirportPoint | null
   path: LonLat[]
   routeLabel: string
+  flightNumber: string | null
+  airlineIcaoCode: string | null
   onAbandon: () => Promise<void>
 }
 
 /** In-progress flight: phase, live map, readouts, elapsed vs planned block time, abandon action. */
-export function LiveFlightView({ flight, live, telemetry, hubConnected, departure, arrival, path, routeLabel, onAbandon }: LiveFlightViewProps) {
+export function LiveFlightView({ flight, live, telemetry, hubConnected, departure, arrival, path, routeLabel, flightNumber, airlineIcaoCode, onAbandon }: LiveFlightViewProps) {
   const { fmt } = useSettings()
   const [abandonOpen, setAbandonOpen] = useState(false)
+  const callsign = formatCallsign(airlineIcaoCode, flightNumber)
 
   const paused = !hubConnected || Boolean(live?.awaitingSimReconnect)
   const currentPhase = live?.phase ?? 'Preflight'
@@ -56,8 +60,15 @@ export function LiveFlightView({ flight, live, telemetry, hubConnected, departur
     <div className="space-y-4">
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 space-y-0">
-          <div>
-            <CardTitle className="font-mono text-lg">{routeLabel}</CardTitle>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="font-mono text-lg">{routeLabel}</CardTitle>
+              {callsign && (
+                <Badge variant="outline" className="font-mono">
+                  {callsign}
+                </Badge>
+              )}
+            </div>
             <p className="mt-0.5 text-sm text-muted-foreground">Flight in progress</p>
           </div>
           <Button type="button" variant="outline" size="sm" className="gap-1.5 text-danger hover:text-danger" onClick={() => setAbandonOpen(true)}>
@@ -107,7 +118,7 @@ export function LiveFlightView({ flight, live, telemetry, hubConnected, departur
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
             <StatTile label="Altitude" icon={Gauge} value={live ? fmt.altitude(live.altitudeMslFt) : undefined} />
             <StatTile label="IAS" icon={Navigation} value={live ? `${Math.round(live.indicatedAirspeedKt)} kt` : undefined} />
             <StatTile label="Ground speed" icon={Navigation} value={live ? `${Math.round(live.groundSpeedKt)} kt` : undefined} />

@@ -41,6 +41,8 @@ public sealed class SimConnectSource : ISimSource
     private string _aircraftTitle = string.Empty;
     private string _aircraftAtcModel = string.Empty;
     private string _aircraftAtcType = string.Empty;
+    /// <summary>Last connection-failure type+message, so an unchanging failure is only reported once.</summary>
+    private string? _lastFailureSignature;
 
     public SimConnectSource(SimConnectSourceOptions options, ILogger<SimConnectSource> logger)
     {
@@ -127,6 +129,10 @@ public sealed class SimConnectSource : ISimSource
                     if (connected)
                     {
                         ConnectionState = SimConnectionState.Connected;
+                        // Reset so that if the link later breaks for a new reason, that reason is
+                        // reported rather than suppressed as a repeat of something long resolved.
+                        _lastFailureSignature = null;
+                        _logger.LogInformation("SimConnect connected to the simulator.");
                     }
                     else
                     {
@@ -138,12 +144,19 @@ public sealed class SimConnectSource : ISimSource
                     _logger.LogWarning("SimConnect reported {ExceptionCode} (send #{SendId}).", e.ExceptionCode, e.SendID);
                 fsConnect.AircraftLoaded += (_, _) => RequestAircraftIdentity(fsConnect);
 
-                fsConnect.RegisterDataDefinition<TelemetryData>(Definition.Telemetry);
-                fsConnect.RegisterDataDefinition<AircraftIdentityData>(Definition.AircraftIdentity);
-
                 // Config index 0 - the local, same-machine connection. Throws if MSFS is not
                 // running or hasn't finished starting up yet.
+                //
+                // This MUST come before RegisterDataDefinition. FsConnect forwards a definition
+                // straight to the underlying SimConnect handle, which does not exist until the
+                // connection is open - registering first throws NullReferenceException on every
+                // attempt, whether or not the sim is running. That is exactly what happened here:
+                // the calls were the other way round, so the link never once established and the
+                // failure was invisible because it was only logged at Debug.
                 fsConnect.Connect(AppName, 0);
+
+                fsConnect.RegisterDataDefinition<TelemetryData>(Definition.Telemetry);
+                fsConnect.RegisterDataDefinition<AircraftIdentityData>(Definition.AircraftIdentity);
 
                 _lowAltitudeMode = false;
                 fsConnect.RequestDataOnSimObject(
@@ -160,8 +173,21 @@ public sealed class SimConnectSource : ISimSource
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // The overwhelmingly common case here is simply "MSFS is not running yet", which
-                // is not an error worth a full log entry every five seconds.
-                _logger.LogDebug(ex, "SimConnect connection attempt failed.");
+                // is not worth a log entry every five seconds. But staying silent forever hid a
+                // real defect for an entire chunk - the connection failed identically on every
+                // attempt and nothing ever said so. So: report the first failure, and any change
+                // of failure type, at Warning; only the repeats drop to Debug.
+                var signature = $"{ex.GetType().FullName}:{ex.Message}";
+                if (signature != _lastFailureSignature)
+                {
+                    _lastFailureSignature = signature;
+                    _logger.LogWarning(ex, "SimConnect connection attempt failed; retrying every {Seconds}s.",
+                        _options.ReconnectInterval.TotalSeconds);
+                }
+                else
+                {
+                    _logger.LogDebug(ex, "SimConnect connection attempt failed (repeat).");
+                }
             }
             finally
             {
@@ -256,7 +282,9 @@ public sealed class SimConnectSource : ISimSource
             data.FuelTotalWeightKg,
             _aircraftTitle,
             _aircraftAtcModel,
-            _aircraftAtcType);
+            _aircraftAtcType,
+            data.SimulationRate,
+            data.IsSlewActive != 0);
 
         _channel.Writer.TryWrite(sample);
 

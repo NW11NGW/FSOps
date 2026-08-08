@@ -25,13 +25,17 @@ export const WIZARD_STEPS = [
 
 export type WizardStepKey = (typeof WIZARD_STEPS)[number]['key']
 
+/**
+ * Only genuinely editorial text - the name and a one-line tagline - lives here. Everything about
+ * what a profile actually *does* (suggested fares, price sensitivity, load factor, costs, which
+ * route advisories it raises) is fetched from GET /airline/strategy-profiles instead, so it can
+ * never drift from the real economy-config.json values. See lib/strategyProfileCopy.ts and
+ * hooks/useStrategyProfiles.ts.
+ */
 export interface StrategyProfileMeta {
   id: StrategyProfile
   label: string
   tagline: string
-  routeLengths: string
-  fares: string
-  costs: string
 }
 
 export const STRATEGY_PROFILES: StrategyProfileMeta[] = [
@@ -39,33 +43,26 @@ export const STRATEGY_PROFILES: StrategyProfileMeta[] = [
     id: 'International',
     label: 'International',
     tagline: 'Long-haul network carrier',
-    routeLengths: 'Long-haul routes, 2,000+ nm — think intercontinental flying.',
-    fares: 'Higher fares, priced for range and prestige.',
-    costs: 'Higher fuel and crew costs; suits wide-body-friendly economics.',
   },
   {
     id: 'Domestic',
     label: 'Domestic',
     tagline: 'Short-haul regional workhorse',
-    routeLengths: 'Short-to-medium routes within a country or region.',
-    fares: 'Moderate fares with frequent, reliable service.',
-    costs: 'Lower per-flight costs; fast aircraft turnaround and utilisation.',
   },
   {
     id: 'LowCost',
     label: 'Low-cost',
     tagline: 'High-frequency budget carrier',
-    routeLengths: 'Short routes, flown often, point-to-point.',
-    fares: 'The lowest fares in the market — volume over margin.',
-    costs: 'Tight cost control everywhere; every empty seat hurts.',
   },
   {
     id: 'Premium',
     label: 'Premium',
     tagline: 'Business-focused yield leader',
-    routeLengths: 'Medium-to-long routes between major business hubs.',
-    fares: 'Premium fares from a smaller, higher-yield passenger base.',
-    costs: 'Higher service costs, offset by fewer but better-paying seats.',
+  },
+  {
+    id: 'Balanced',
+    label: 'Balanced',
+    tagline: 'The all-rounder — flies anything, no restrictions',
   },
 ]
 

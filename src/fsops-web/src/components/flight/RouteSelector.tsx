@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { useSettings } from '@/hooks/useSettings'
+import { formatCallsign } from '@/lib/callsign'
 import { cn } from '@/lib/utils'
 
 import type { RoutePairRow } from './routeRow'
@@ -15,12 +16,13 @@ interface RouteSelectorProps {
   onSelect: (pair: RoutePairRow) => void
   /** GET /flights/options isn't available - aircraft availability genuinely can't be determined. */
   optionsUnavailable: boolean
+  airlineIcaoCode: string | null
 }
 
-function matchesQuery(pair: RoutePairRow, query: string): boolean {
+function matchesQuery(pair: RoutePairRow, airlineIcaoCode: string | null, query: string): boolean {
   const legs = pair.other ? [pair.active, pair.other] : [pair.active]
   const haystack = legs
-    .flatMap((leg) => [leg.departureIcao, leg.arrivalIcao, leg.departureName, leg.arrivalName, leg.flightNumber])
+    .flatMap((leg) => [leg.departureIcao, leg.arrivalIcao, leg.departureName, leg.arrivalName, leg.flightNumber, formatCallsign(airlineIcaoCode, leg.flightNumber)])
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
@@ -31,11 +33,13 @@ function RoutePairCard({
   pair,
   selected,
   emphasised,
+  airlineIcaoCode,
   onSelect,
 }: {
   pair: RoutePairRow
   selected: boolean
   emphasised: boolean
+  airlineIcaoCode: string | null
   onSelect: () => void
 }) {
   const { fmt } = useSettings()
@@ -43,6 +47,7 @@ function RoutePairCard({
   const isFlyable = pair.isFlyable
   const aircraftUnknown = active.aircraftUnknown
   const directionLabel = pair.activeIsReturn ? 'Return available' : 'Outbound available'
+  const callsign = formatCallsign(airlineIcaoCode, active.flightNumber)
 
   return (
     <button
@@ -65,9 +70,9 @@ function RoutePairCard({
             <span className="font-mono text-sm font-semibold tracking-tight">
               {pair.headerDepartureIcao} <span className="text-muted-foreground">⇄</span> {pair.headerArrivalIcao}
             </span>
-            {active.flightNumber && (
+            {callsign && (
               <Badge variant="outline" className="font-mono">
-                {active.flightNumber}
+                {callsign}
               </Badge>
             )}
             {emphasised && (
@@ -121,10 +126,13 @@ function RoutePairCard({
  * other flyable and not-flyable pairs with the reason for each. Falls back to a flat,
  * aircraft-unknown list when GET /flights/options isn't deployed yet.
  */
-export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavailable }: RouteSelectorProps) {
+export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavailable, airlineIcaoCode }: RouteSelectorProps) {
   const [query, setQuery] = useState('')
 
-  const filtered = useMemo(() => (query.trim() ? pairs.filter((pair) => matchesQuery(pair, query)) : pairs), [pairs, query])
+  const filtered = useMemo(
+    () => (query.trim() ? pairs.filter((pair) => matchesQuery(pair, airlineIcaoCode, query)) : pairs),
+    [pairs, query, airlineIcaoCode],
+  )
 
   const readyNow = optionsUnavailable ? [] : filtered.filter((pair) => pair.isFlyable && pair.active.availableAircraft.length > 0)
   const readyNowIds = new Set(readyNow.map((pair) => pair.pairId))
@@ -170,7 +178,7 @@ export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavaila
             <p className="text-xs font-medium uppercase tracking-wide text-success">Ready now</p>
             <div className="space-y-2">
               {readyNow.map((pair) => (
-                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised onSelect={() => onSelect(pair)} />
+                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised airlineIcaoCode={airlineIcaoCode} onSelect={() => onSelect(pair)} />
               ))}
             </div>
           </div>
@@ -181,7 +189,7 @@ export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavaila
             {readyNow.length > 0 && <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Other routes</p>}
             <div className="space-y-2">
               {flyable.map((pair) => (
-                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised={false} onSelect={() => onSelect(pair)} />
+                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised={false} airlineIcaoCode={airlineIcaoCode} onSelect={() => onSelect(pair)} />
               ))}
             </div>
           </div>
@@ -192,7 +200,7 @@ export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavaila
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Not flyable right now</p>
             <div className="space-y-2">
               {notFlyable.map((pair) => (
-                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised={false} onSelect={() => onSelect(pair)} />
+                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised={false} airlineIcaoCode={airlineIcaoCode} onSelect={() => onSelect(pair)} />
               ))}
             </div>
           </div>

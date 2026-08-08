@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Flights;
 using FSOps.Data;
@@ -178,6 +179,7 @@ public class FlightCompletionAircraftLocationTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             null!,
             new NoOpHubContext(),
+            EconomyConfig.Default(),
             NullLogger<FlightLifecycleService>.Instance));
     }
 }

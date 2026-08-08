@@ -26,6 +26,11 @@ public class AircraftType
 
     public double FuelBurnKgPerHour { get; set; }
 
+    /// <summary>Maximum take-off weight, in tonnes - the input to every weight-based airport fee
+    /// (landing, handling, parking - see FlightCostCalculator). A real, published figure per
+    /// type, not derived from anything else on this record.</summary>
+    public double MtowTonnes { get; set; }
+
     public int MinRunwayFt { get; set; }
 
     public int ServiceCeilingFt { get; set; }

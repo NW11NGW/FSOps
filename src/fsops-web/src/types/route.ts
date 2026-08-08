@@ -27,6 +27,20 @@ export interface RoutePreviewValidation {
 /** Longitude/latitude pair, matching the backend's [lon, lat] point order (not [lat, lon]). */
 export type LonLat = [number, number]
 
+/**
+ * The live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per sector"
+ * readout - the real DemandCalculator/FareDemandModel engine, not the rough distance-only
+ * suggestedFare estimate above it. Null when there's no airline yet or the pick doesn't resolve
+ * to a real sector (same airport, no distance) - see RouteEndpoints.PreviewAsync.
+ */
+export interface RouteEconomicsPreview {
+  fare: number
+  referenceFare: number
+  expectedPassengers: number
+  loadFactorPercent: number
+  expectedRevenuePerSector: number
+}
+
 export interface RoutePreviewResponse {
   distanceNm: number
   initialBearingDeg: number
@@ -36,6 +50,7 @@ export interface RoutePreviewResponse {
   blockFuelKg: number
   fuelBreakdown: FuelBreakdown | null
   suggestedFare: number
+  economics: RouteEconomicsPreview | null
   greatCirclePath: LonLat[]
   validation: RoutePreviewValidation
 }
@@ -44,6 +59,10 @@ export interface RoutePreviewRequest {
   departureIcao: string
   arrivalIcao: string
   aircraftTypeId?: string
+  /** Base-currency fare to price the live economics readout against. Omitted (or non-positive)
+   *  falls back to the suggested fare server-side - no validation beyond that, per
+   *  docs/PLAN.md "Fare setting and demand response": the simulation is the guardrail. */
+  fare?: number
 }
 
 /**
