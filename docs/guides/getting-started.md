@@ -86,17 +86,18 @@ The first time FSOps runs, it needs to import world airport and runway data into
 
 ## 6. Found your airline
 
-FSOps opens straight into a full-screen setup wizard whenever no airline exists yet for your machine — on first run, and again any time you delete your airline from the settings danger zone (see the [user guide](user-guide.md#settings)). The wizard has seven steps:
+FSOps opens straight into a full-screen setup wizard whenever no airline exists yet for your machine — on first run, and again any time you delete your airline from the settings danger zone (see the [user guide](user-guide.md#settings)). The wizard has eight steps:
 
 1. **Welcome** — a short introduction to the wizard.
 2. **Identity** — your airline's name (2-40 characters) and a 2-3 letter ICAO code (e.g. `FSO`).
 3. **Home base** — search for and pick the airport your airline will be based at. It needs scheduled service or a runway of at least 5,000 ft.
-4. **Strategy** — choose International, Domestic, Low-cost, Premium, or Balanced (a neutral all-rounder). This shapes suggested fares, how sensitive demand is to your pricing, and which route-length advisories you'll see — see the [user guide](user-guide.md#creating-your-airline) for what each one means. It isn't a one-time choice: you can pick a different strategy at any time from Settings → Airline.
-5. **Aircraft** — pick an accent colour (a preset swatch or a custom hex value) used throughout the UI, and a starter aircraft family: Airbus A320 or Boeing 737-800.
-6. **Currency** — your display currency and your preferred distance, altitude, and weight units, time display, and clock format.
-7. **Review** — optionally add a startup loan (amount, term, and annual rate, with a live monthly payment estimate), review everything you've chosen, and select **Found your airline** to create it.
+4. **Playstyle** — choose Casual or True-life. This sets your starting capital and every fixed cost — starter lease rate, deposit term, insurance, maintenance downtime, and loan rate ceiling — see the [user guide](user-guide.md#playstyles) for what each one means. Unlike strategy, **this cannot be changed later** — switching means deleting the airline and starting a new one.
+5. **Strategy** — choose International, Domestic, Low-cost, Premium, or Balanced (a neutral all-rounder). This shapes suggested fares, how sensitive demand is to your pricing, and which route-length advisories you'll see — see the [user guide](user-guide.md#creating-your-airline) for what each one means. It isn't a one-time choice: you can pick a different strategy at any time from Settings → Airline.
+6. **Aircraft** — pick an accent colour (a preset swatch or a custom hex value) used throughout the UI, and a starter aircraft family: Airbus A320 or Boeing 737-800.
+7. **Currency** — your display currency and your preferred distance, altitude, and weight units, time display, and clock format.
+8. **Review** — optionally add a startup loan (amount and term; the annual rate is shown, not chosen — it's always your playstyle's capped rate, since a brand-new airline has no trading history to price a better one from — with a live monthly payment estimate), review everything you've chosen, and select **Found your airline** to create it.
 
-Creating your airline also leases your starter aircraft (a one-month deposit, posted to your ledger), hires you as your first pilot, and records your starting capital (and any loan proceeds) there too — you'll land in the main app with a fleet of one and cash in the bank.
+Creating your airline also leases your starter aircraft (a deposit posted to your ledger — one month under Casual, two under True-life), hires you as your first pilot, and records your starting capital (and any loan proceeds) there too — you'll land in the main app with a fleet of one and cash in the bank. From then on, that lease payment (plus insurance and salaries) posts again automatically every 30 days — see [The monthly billing cycle](user-guide.md#the-monthly-billing-cycle).
 
 ## 7. Connect to MSFS
 
@@ -112,14 +113,11 @@ If FSOps can't reach the simulator, see [troubleshooting](troubleshooting.md#msf
 
 ## What's not available yet
 
-Founding an airline, planning a route network, flying a fully tracked flight with a post-flight report card, and the economy that prices and pays for it all work today (see the [User Guide](user-guide.md)). The following are still being built and are **not** available yet:
+Founding an airline, planning a route network, flying a fully tracked flight with a post-flight report card, running a fleet (buying, leasing, used aircraft, loans, maintenance), and the monthly billing cycle that keeps charging you whether or not you fly, all work today (see the [User Guide](user-guide.md)). The following are still being built and are **not** available yet:
 
-- Recurring monthly billing — lease payments, salaries and insurance are only posted once, when you found your airline (or, for a lease deposit, when you add an aircraft). Nothing bills you again on a schedule yet, so the game is currently easier than its balance is tuned for
-- Persistent fuel state and fuel tankering — aircraft don't remember how much fuel is in their tanks between flights, so every flight is charged for the fuel its own sector needs, even a return leg that would realistically still be carrying fuel from the outbound
-- Hiring and assigning virtual pilots
-- Buying or leasing additional aircraft, and aircraft maintenance
+- Hiring and assigning virtual pilots — until this lands, nothing flies your routes for you automatically, but the monthly billing cycle charges you regardless
+- The Pilots, Finances and Statistics pages — currently placeholders in the app
 - The in-game MSFS panel
-- Statistics dashboards
 - A packaged installer — for now, FSOps is built and run from source (this guide)
 
 See the [User Guide](user-guide.md) for a fuller description of each of these and how they're intended to work once built.

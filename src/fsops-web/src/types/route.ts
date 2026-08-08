@@ -14,6 +14,29 @@ export interface FuelBreakdown {
   alternateFuelKg: number
   finalReserveFuelKg: number
   totalFuelKg: number
+  /** Extra fuel burned from carrying fuel beyond this sector's own normal requirement - zero
+   *  unless the tankering advisory computed this breakdown. Already folded into tripFuelKg/totalFuelKg. */
+  costOfCarryKg: number
+}
+
+/** Advisory-only "would tankering pay off" comparison - see docs/PLAN.md "the tankering
+ *  trade-off". Never automatic or enforced; the player decides. */
+export interface TankeringAdvisory {
+  departurePricePerKg: number
+  destinationPricePerKg: number
+  /** How much extra fuel would need to be uplifted here to also cover the return leg. */
+  extraFuelToCarryKg: number
+  /** Extra fuel burned carrying that load for this leg's airborne time. */
+  costOfCarryKg: number
+  costOfCarryAmount: number
+  /** Saving from buying the return leg's fuel here instead of at the destination, before cost of carry. */
+  grossSavingAmount: number
+  /** Saving after cost of carry - the number that actually matters. */
+  netSavingAmount: number
+  /** True when netSavingAmount > 0 - tankering here would pay off. */
+  recommended: boolean
+  /** True when uplifting the extra fuel would put the aircraft over its maximum take-off weight. */
+  exceedsMtow: boolean
 }
 
 export interface RoutePreviewValidation {
@@ -49,6 +72,11 @@ export interface RoutePreviewResponse {
   cruiseAltitudeFt: number
   blockFuelKg: number
   fuelBreakdown: FuelBreakdown | null
+  /** Current price per kg at the departure airport - see docs/PLAN.md "Persistent fuel state and tankering". */
+  fuelPricePerKg: number | null
+  /** Current price per kg at the destination airport - compare against fuelPricePerKg for the tankering hint. */
+  destinationFuelPricePerKg: number | null
+  tankeringAdvisory: TankeringAdvisory | null
   suggestedFare: number
   economics: RouteEconomicsPreview | null
   greatCirclePath: LonLat[]

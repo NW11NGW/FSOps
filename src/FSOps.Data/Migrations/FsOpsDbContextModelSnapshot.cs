@@ -110,6 +110,10 @@ namespace FSOps.Data.Migrations
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Playstyle")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<double>("ReputationScore")
                         .HasColumnType("REAL");
 
@@ -219,6 +223,12 @@ namespace FSOps.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset?>("DeletedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("FuelOnBoardKg")
+                        .HasColumnType("REAL");
+
+                    b.Property<DateTimeOffset?>("GroundedUntilUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<double>("HoursSinceACheck")

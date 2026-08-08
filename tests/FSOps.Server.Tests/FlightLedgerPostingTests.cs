@@ -33,11 +33,12 @@ public class FlightLedgerPostingTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var route = await SeedRouteAsync(ctx);
-        var economyConfig = EconomyConfig.Default();
-        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfig);
+        // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfigCatalog);
 
         var startResult = await FlightEndpoints.StartAsync(
-            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfig, CancellationToken.None);
+            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(startResult));
 
         var flight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.RouteId == route.Id);
@@ -85,8 +86,9 @@ public class FlightLedgerPostingTests
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
         var flight = await SeedInProgressFlightAsync(ctx, route, fleetAircraft.Id);
 
-        var economyConfig = EconomyConfig.Default();
-        var (lifecycle, _) = CreateLifecycleAndTelemetry(ctx, economyConfig);
+        // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var (lifecycle, _) = CreateLifecycleAndTelemetry(ctx, economyConfigCatalog);
 
         var tracker = new FlightLifecycleService.ActiveFlightTracker
         {
@@ -117,11 +119,12 @@ public class FlightLedgerPostingTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var route = await SeedRouteAsync(ctx);
-        var economyConfig = EconomyConfig.Default();
-        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfig);
+        // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfigCatalog);
 
         var startResult = await FlightEndpoints.StartAsync(
-            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfig, CancellationToken.None);
+            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(startResult));
 
         var flight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.RouteId == route.Id);
@@ -163,11 +166,12 @@ public class FlightLedgerPostingTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var route = await SeedRouteAsync(ctx);
-        var economyConfig = EconomyConfig.Default();
-        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfig);
+        // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfigCatalog);
 
         var startResult = await FlightEndpoints.StartAsync(
-            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfig, CancellationToken.None);
+            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(startResult));
 
         var flight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.RouteId == route.Id);
@@ -286,7 +290,7 @@ public class FlightLedgerPostingTests
     /// in these tests listens for the broadcast.
     /// </summary>
     private static (FlightLifecycleService Lifecycle, SimTelemetryService Telemetry) CreateLifecycleAndTelemetry(
-        RouteTestContext ctx, EconomyConfig economyConfig)
+        RouteTestContext ctx, EconomyConfigCatalog economyConfigCatalog)
     {
         var services = new ServiceCollection();
         services.AddDbContext<FsOpsDbContext>(o => o.UseSqlite(ctx.Connection));
@@ -295,7 +299,7 @@ public class FlightLedgerPostingTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfig, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

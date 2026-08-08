@@ -18,6 +18,11 @@ public static class AirlineEndpoints
     // also being remembered in every validation message.
     private static string StrategyProfileOptionsText => string.Join(", ", Enum.GetNames<AirlineStrategyProfile>());
 
+    // Same pattern as strategyProfile above, generated from AirlinePlaystyle itself so a third
+    // preset can never be added without every validation message (and every test that iterates
+    // Enum.GetValues<AirlinePlaystyle>()) picking it up automatically.
+    private static string PlaystyleOptionsText => string.Join(", ", Enum.GetNames<AirlinePlaystyle>());
+
     public static void MapAirlineEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapPost("/airline", CreateAsync);
@@ -25,11 +30,13 @@ public static class AirlineEndpoints
         group.MapPut("/airline", UpdateAsync);
         group.MapGet("/airline/summary", GetSummaryAsync);
         group.MapGet("/airline/strategy-profiles", GetStrategyProfiles);
+        group.MapGet("/airline/playstyles", GetPlaystyles);
+        group.MapGet("/airline/ledger", GetLedgerAsync);
         group.MapDelete("/airline", DeleteAsync);
     }
 
     private static async Task<IResult> CreateAsync(
-        CreateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
+        CreateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var name = (request.Name ?? string.Empty).Trim();
         if (name.Length is < 2 or > 40)
@@ -73,6 +80,16 @@ public static class AirlineEndpoints
             return Results.BadRequest(new { error = $"strategyProfile must be one of: {StrategyProfileOptionsText}." });
         }
 
+        // Chosen once, here, and permanent for the airline's life - see docs/PLAN.md "Playstyle -
+        // Casual vs True-life". There is deliberately no update path for this later (see
+        // UpdateAsync, which never accepts it).
+        if (!Enum.TryParse<AirlinePlaystyle>(request.Playstyle, ignoreCase: true, out var playstyle))
+        {
+            return Results.BadRequest(new { error = $"playstyle must be one of: {PlaystyleOptionsText}." });
+        }
+
+        var economyConfig = economyConfigCatalog.Get(playstyle);
+
         var accentColour = (request.AccentColour ?? string.Empty).Trim();
         if (!Regex.IsMatch(accentColour, "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$"))
         {
@@ -112,18 +129,28 @@ public static class AirlineEndpoints
                 return Results.BadRequest(new { error = "startingLoan.termMonths must be between 1 and 360." });
             }
 
-            if (loanRequest.AnnualRatePct is < 0 or > 40)
-            {
-                return Results.BadRequest(new { error = "startingLoan.annualRatePct must be between 0 and 40." });
-            }
+            // The rate is ALWAYS computed, never accepted from the request - see docs/PLAN.md "Loan
+            // interest is set by the simulation, never by the player" and LoanRateCalculator's own
+            // doc. StartingLoanRequest deliberately has no annualRatePct field at all, so there is
+            // nothing here to validate or ignore; a caller that still sends one (an old client, or a
+            // deliberate probe) is simply talking to a schema that no longer has that property, and
+            // System.Text.Json drops unknown properties rather than erroring.
+            //
+            // A brand-new airline has no trading history yet - there is no ledger to compute a
+            // trailing cash flow from, because the airline this loan belongs to doesn't exist until
+            // later in this same method. That is passed through as exactly 0m (not looked up), which
+            // LoanRateCalculator's doc explains resolves to the playstyle's cap rate - the correct,
+            // maximum-risk-premium price for an unproven borrower.
+            var startingLoanRate = LoanRateCalculator.ComputeAnnualRatePct(
+                loanRequest.Amount, loanRequest.TermMonths, trailing30DayNetOperatingCashFlow: 0m, economyConfig.Loan);
 
             loan = new Loan
             {
                 Id = Guid.NewGuid(),
                 Principal = loanRequest.Amount,
-                AnnualInterestRate = loanRequest.AnnualRatePct,
+                AnnualInterestRate = startingLoanRate,
                 TermMonths = loanRequest.TermMonths,
-                MonthlyPayment = LoanCalculator.MonthlyPayment(loanRequest.Amount, loanRequest.AnnualRatePct, loanRequest.TermMonths),
+                MonthlyPayment = LoanCalculator.MonthlyPayment(loanRequest.Amount, startingLoanRate, loanRequest.TermMonths),
                 RemainingBalance = loanRequest.Amount,
                 StartUtc = DateTimeOffset.UtcNow,
                 IsPaidOff = false,
@@ -139,6 +166,7 @@ public static class AirlineEndpoints
             IcaoCode = icaoCode,
             HomeAirportIcao = homeAirportIcao,
             StrategyProfile = strategyProfile,
+            Playstyle = playstyle,
             AccentColour = accentColour,
             ReputationScore = 50,
             OwnerUserId = currentUser.UserId,
@@ -165,12 +193,23 @@ public static class AirlineEndpoints
             CreatedUtc = now,
         };
 
+        // The founding lease uses the playstyle's own lease rate for this type, not
+        // AircraftType.MonthlyLeaseRate - that catalogue column is shared across every airline
+        // regardless of playstyle and regardless of when its database was seeded, so it can't hold
+        // two different figures for the same aircraft type at once (see EconomyConfig.LeaseRates'
+        // doc comment). Everything from here on (the deposit below, and every monthly lease payment
+        // EconomyClockService posts) reads from this Lease row, so the playstyle distinction is
+        // captured once, at creation, and never needs re-deriving. Same resolution FleetEndpoints
+        // uses for every later lease, so a second A320 is never cheaper than the first just because
+        // it came from a different endpoint.
+        var starterLeaseRate = economyConfig.LeaseRateFor(aircraftType.IcaoType);
+
         var lease = new Lease
         {
             Id = Guid.NewGuid(),
             AirlineId = airline.Id,
             FleetAircraftId = fleetAircraft.Id,
-            MonthlyRate = aircraftType.MonthlyLeaseRate,
+            MonthlyRate = starterLeaseRate,
             StartUtc = now,
             IsActive = true,
             CreatedUtc = now,
@@ -189,9 +228,10 @@ public static class AirlineEndpoints
             CreatedUtc = now,
         };
 
-        // The deposit scales with the chosen aircraft type's own lease rate rather than being a
-        // flat figure, so it stays sensible whichever starter family the player picks.
-        var leaseDeposit = Math.Round(aircraftType.MonthlyLeaseRate * (decimal)economyConfig.AirlineStartup.LeaseDepositMonths, 2, MidpointRounding.AwayFromZero);
+        // The deposit scales with the playstyle's own starter lease rate (not
+        // aircraftType.MonthlyLeaseRate - see starterLeaseRate's own comment above) so it stays
+        // sensible whichever starter family the player picks and whichever playstyle they chose.
+        var leaseDeposit = Math.Round(starterLeaseRate * (decimal)economyConfig.AirlineStartup.LeaseDepositMonths, 2, MidpointRounding.AwayFromZero);
 
         var ledgerEntries = new List<LedgerTransaction>
         {
@@ -330,8 +370,14 @@ public static class AirlineEndpoints
     /// Enum.GetValues so a sixth profile appears automatically rather than needing this endpoint
     /// remembered too.
     /// </summary>
-    private static IResult GetStrategyProfiles(EconomyConfig economyConfig)
+    private static IResult GetStrategyProfiles(EconomyConfigCatalog economyConfigCatalog)
     {
+        // Strategy-profile figures (fare/elasticity/load-factor/cost multipliers) live in the
+        // shared base of economy-config.json, not either playstyle's override block - see
+        // EconomyConfigCatalog's class doc - so they are identical whichever playstyle resolves
+        // them. Casual is picked here purely as a concrete instance to read them from; there is no
+        // airline in scope yet for this endpoint (it backs onboarding as much as Settings).
+        var economyConfig = economyConfigCatalog.Get(AirlinePlaystyle.Casual);
         var profiles = Enum.GetValues<AirlineStrategyProfile>()
             .Select(profile =>
             {
@@ -349,6 +395,48 @@ public static class AirlineEndpoints
             .ToList();
 
         return Results.Ok(profiles);
+    }
+
+    /// <summary>
+    /// Per-playstyle metadata for the onboarding picker and the read-only Settings display, sourced
+    /// straight from economy-config.json's resolved "casual"/"trueLife" configs so the UI can never
+    /// quote a figure that has drifted from what airline creation actually charges. Derived from
+    /// Enum.GetValues so a third playstyle would need to be added here to appear at all - the same
+    /// self-documenting pattern as <see cref="GetStrategyProfiles"/>. No airline lookup: needed
+    /// before an airline exists (onboarding) as much as after (Settings, where it is shown but
+    /// never editable).
+    /// </summary>
+    private static IResult GetPlaystyles(EconomyConfigCatalog economyConfigCatalog)
+    {
+        var playstyles = Enum.GetValues<AirlinePlaystyle>()
+            .Select(playstyle =>
+            {
+                var config = economyConfigCatalog.Get(playstyle);
+                return new PlaystyleInfo(
+                    playstyle.ToString(),
+                    Description: playstyle switch
+                    {
+                        AirlinePlaystyle.Casual =>
+                            "Forgiving fixed costs so one leg a day already runs a growing airline. A missed flight is skipped quietly and maintenance downtime is compressed - a nuisance, not a fortnight off. The honest choice for playing in short, occasional sessions.",
+                        AirlinePlaystyle.TrueLife =>
+                            "Real-world lease, insurance and deposit figures - a single aircraft flown casually runs at a real loss, so the airline genuinely depends on hiring virtual pilots to fly standing schedules. A missed flight is cancelled at a real cost, and maintenance grounds an aircraft for realistic stretches (a C-check is about a fortnight). The honest choice if you want to run something closer to an actual carrier.",
+                        _ => throw new InvalidOperationException($"No description written for playstyle '{playstyle}'."),
+                    },
+                    Immutable: true,
+                    ImmutableReason: "Chosen once at creation and permanent for the life of this airline - changing it later would either bankrupt a healthy airline or trivialise everything already earned. Switching means deleting the airline and starting a new one.",
+                    config.AirlineStartup.StartingCapital,
+                    config.AirlineStartup.LeaseDepositMonths,
+                    // "A320"/"B738" - the exact ICAO types CreateAsync's starterIcaoType resolves
+                    // the A320/B737 starter families to (see its own mapping above), so this always
+                    // quotes the same rate the founding lease would actually charge.
+                    config.LeaseRateFor("A320"),
+                    config.LeaseRateFor("B738"),
+                    config.FleetFinance.MonthlyInsurancePerAircraft,
+                    config.Loan.CapAnnualRatePct);
+            })
+            .ToList();
+
+        return Results.Ok(playstyles);
     }
 
     internal static async Task<IResult> GetSummaryAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -390,6 +478,33 @@ public static class AirlineEndpoints
         var pilotCount = await db.Pilots.CountAsync(p => p.AirlineId == airline.Id, ct);
 
         return new { airline, cashBalance, fleetCount, routeCount, pilotCount };
+    }
+
+    /// <summary>
+    /// The itemised ledger, newest first - so the player can see exactly what they were charged and
+    /// why, including the monthly lease/salary/insurance lines <see cref="FSOps.Server.Services.EconomyClockService"/>
+    /// posts. Backend visibility only (see docs/PLAN.md Chunk E1) - no Finances page consumes this
+    /// yet. <c>limit</c> caps the page size (default 100, max 1000); <c>cashBalance</c> and
+    /// <c>totalCount</c> are computed from the whole ledger, not just the returned page, so the UI
+    /// can show "showing 100 of 4,213" honestly. SQLite can't translate OrderBy over
+    /// DateTimeOffset, so the ledger is materialised first and ordered in memory - same rule as
+    /// FlightLifecycleService.RehydrateInProgressFlightAsync.
+    /// </summary>
+    private static async Task<IResult> GetLedgerAsync(int? limit, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.NoContent();
+        }
+
+        var take = Math.Clamp(limit ?? 100, 1, 1000);
+
+        var transactions = await db.LedgerTransactions.Where(t => t.AirlineId == airline.Id).ToListAsync(ct);
+        var cashBalance = transactions.Sum(t => t.Amount);
+        var ordered = transactions.OrderByDescending(t => t.Utc).Take(take).ToList();
+
+        return Results.Ok(new { cashBalance, totalCount = transactions.Count, transactions = ordered });
     }
 
     private static async Task<IResult> DeleteAsync(bool? confirm, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -440,12 +555,19 @@ public record CreateAirlineRequest(
     string? IcaoCode,
     string? HomeAirportIcao,
     string? StrategyProfile,
+    string? Playstyle,
     string? AccentColour,
     string? StarterAircraftFamily,
     string? CurrencyCode,
     StartingLoanRequest? StartingLoan);
 
-public record StartingLoanRequest(decimal Amount, int TermMonths, double AnnualRatePct);
+/// <summary>
+/// A loan taken at the same moment the airline is created. Deliberately has NO rate field - see
+/// docs/PLAN.md "Loan interest is set by the simulation, never by the player". The rate is always
+/// computed by <see cref="FSOps.Core.Finance.LoanRateCalculator"/>; there is nothing here for a
+/// caller to supply or for the endpoint to trust.
+/// </summary>
+public record StartingLoanRequest(decimal Amount, int TermMonths);
 
 public record UpdateAirlineRequest(
     string? Name,
@@ -469,3 +591,30 @@ public record StrategyProfileInfo(
     double CostMultiplier,
     bool WarnsOnInternationalSector,
     bool WarnsOnShortDomesticHop);
+
+/// <summary>
+/// The figures and honest description behind one playstyle, for the onboarding picker and the
+/// read-only Settings display - see docs/PLAN.md "Playstyle - Casual vs True-life". The two
+/// starter lease rates are shown separately (rather than a single figure) because the founding
+/// lease depends on which starter aircraft family the player picks alongside this.
+/// <para>
+/// <see cref="StartingLoanAnnualRatePct"/> is included so the onboarding review step can show the
+/// rate a startup loan will actually carry, never a player-editable field - see docs/PLAN.md "Loan
+/// interest is set by the simulation, never by the player". It always equals
+/// <see cref="LoanConfig.CapAnnualRatePct"/>: a brand-new airline has no trading history, so
+/// <see cref="LoanRateCalculator"/> always prices its starting loan at the playstyle's
+/// ceiling (see that class's own doc) - this is simply that same, single source of truth, quoted
+/// here rather than re-derived in the frontend.
+/// </para>
+/// </summary>
+public record PlaystyleInfo(
+    string Playstyle,
+    string Description,
+    bool Immutable,
+    string ImmutableReason,
+    decimal StartingCapital,
+    double LeaseDepositMonths,
+    decimal StarterLeaseRateA320,
+    decimal StarterLeaseRateB737,
+    decimal MonthlyInsurancePerAircraft,
+    double StartingLoanAnnualRatePct);

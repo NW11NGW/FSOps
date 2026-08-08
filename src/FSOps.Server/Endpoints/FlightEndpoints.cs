@@ -12,6 +12,14 @@ namespace FSOps.Server.Endpoints;
 
 public static class FlightEndpoints
 {
+    /// <summary>
+    /// How stale a telemetry sample can be at flight start and still count as "the sim just told
+    /// us the real fuel figure" for reconciliation - generous enough to cover the gap between a
+    /// pilot finishing the pre-flight fuel load and pressing "start flight" in FSOps, tight enough
+    /// that a sample from hours ago (sim since disconnected) never gets treated as current.
+    /// </summary>
+    private static readonly TimeSpan TelemetryReconciliationWindow = TimeSpan.FromMinutes(10);
+
     public static void MapFlightEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapPost("/flights/start", StartAsync);
@@ -25,13 +33,20 @@ public static class FlightEndpoints
 
     internal static async Task<IResult> StartAsync(
         StartFlightRequest request, FsOpsDbContext db, ICurrentUser currentUser,
-        FlightLifecycleService lifecycle, SimTelemetryService telemetry, EconomyConfig economyConfig, CancellationToken ct)
+        FlightLifecycleService lifecycle, SimTelemetryService telemetry, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
             return Results.BadRequest(new { error = "Create an airline before starting a flight." });
         }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+
+        // Same lazy-release as OptionsAsync - an aircraft whose grounding has already elapsed must
+        // be selectable the moment a player tries to fly it, not only once the Fly screen has been
+        // reloaded since the release moment.
+        await MaintenanceReleaser.ReleaseDueAsync(db, airline.Id, DateTimeOffset.UtcNow, ct);
 
         if (await db.Flights.AnyAsync(f => f.AirlineId == airline.Id && f.Status == FlightStatus.InProgress, ct))
         {
@@ -124,24 +139,54 @@ public static class FlightEndpoints
         db.Flights.Add(flight);
         fleetAircraft.Status = FleetAircraftStatus.InFlight;
 
-        // Fuel is charged when it's bought, not when it's burned - see docs/PLAN.md "Persistent
-        // fuel state and tankering". FleetAircraft has no persisted tank state yet, so this treats
-        // every flight as uplifting fuel at the departure airport, right now, rather than
-        // detecting a real uplift event and carrying fuel over between flights. Posted
-        // unconditionally, in the same SaveChangesAsync as the flight row below, so it stands even
-        // if the flight is later abandoned (fuel already bought is never refunded).
+        // Fuel is a persisted asset on FleetAircraft.FuelOnBoardKg, charged when it's bought
+        // (uplifted), never on burn - see docs/PLAN.md "Persistent fuel state and tankering".
+        // Whatever's left in the tank from the last flight carries forward, so a return leg (or
+        // any sector) flown on fuel already on board posts no fuel charge at all here.
         //
-        // Charged on FuelBreakdown.ChargedFuelKg (trip + taxi + contingency), NOT TotalFuelKg: the
-        // alternate and final-reserve allowances are loaded for safety and normally stay in the
-        // tanks unburned, so billing the full block figure every sector would charge, in full,
-        // for roughly 2,400 kg that's never actually consumed and then vanishes (no persisted tank
-        // state to carry it forward) - see FuelBreakdown.ChargedFuelKg's doc for the full
-        // rationale. FuelPlannedKg below still records the full realistic block-fuel figure a
-        // pilot would actually load, for the flight brief and report card - only the charge is
-        // limited to what the sector actually burns.
+        // RECONCILIATION (real path): if the sim is connected and has reported a sample recently,
+        // that reading is the one true source of "how much fuel is actually in the tank right
+        // now" - see FuelUpliftDetector. A rise since the tracked figure is charged as an uplift,
+        // at THIS airport's price (reconciliation happens at flight start, so "this airport" is
+        // the departure airport); a fall is silently absorbed as consumed, never credited. This is
+        // what catches fuel that changed while FSOps wasn't watching - the sim restarted, a menu
+        // fuel set, or (most commonly) the pilot topping off the tank before pressing "start
+        // flight" here. Once tracking begins, further live uplifts/defuels on the ground are
+        // caught the same way by FlightLifecycleService.ProcessSample.
+        //
+        // NO-TELEMETRY FALLBACK: with nothing to observe (sim not connected, or manual completion
+        // is this flight's only realistic path), this makes the same conservative assumption the
+        // interim fuel-honesty fix made: top up to exactly this sector's own normal requirement
+        // (FuelBreakdown.ChargedFuelKg - trip, taxi, contingency; deliberately NOT the
+        // alternate/reserve a real pilot would also load) if the tank doesn't already hold that
+        // much. This keeps every pre-existing balance figure unchanged for a fresh/untracked
+        // aircraft - a bigger top-up here would double-count a benefit (carrying genuinely-bought
+        // reserve fuel forward) that only a real, observed uplift is entitled to.
         var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
-        flight.TotalCost = FlightEconomicsPoster.PostFuelUplift(
-            db, flight, economyConfig, departure, plan.FuelBreakdown.ChargedFuelKg, now, worldSeed);
+        var fuelUpliftCost = 0m;
+        var recentSample = telemetry.LastSample;
+        var sampleIsRecent = telemetry.LastSampleUtc is { } lastSampleUtc && now - lastSampleUtc <= TelemetryReconciliationWindow;
+
+        if (recentSample is not null && sampleIsRecent)
+        {
+            var change = FuelUpliftDetector.Classify(fleetAircraft.FuelOnBoardKg, recentSample.TotalFuelKg);
+            if (change == GroundFuelChangeKind.Uplift)
+            {
+                var deltaKg = FuelUpliftDetector.MagnitudeKg(fleetAircraft.FuelOnBoardKg, recentSample.TotalFuelKg);
+                fuelUpliftCost = FlightEconomicsPoster.PostFuelUplift(db, flight, economyConfig, departure, deltaKg, now, worldSeed);
+            }
+
+            // Uplift, defuel, or no change - the tracked figure now matches reality either way.
+            fleetAircraft.FuelOnBoardKg = recentSample.TotalFuelKg;
+        }
+        else if (fleetAircraft.FuelOnBoardKg < plan.FuelBreakdown.ChargedFuelKg)
+        {
+            var shortfallKg = plan.FuelBreakdown.ChargedFuelKg - fleetAircraft.FuelOnBoardKg;
+            fuelUpliftCost = FlightEconomicsPoster.PostFuelUplift(db, flight, economyConfig, departure, shortfallKg, now, worldSeed);
+            fleetAircraft.FuelOnBoardKg += shortfallKg;
+        }
+
+        flight.TotalCost = fuelUpliftCost;
 
         if (typeMismatch)
         {
@@ -163,7 +208,7 @@ public static class FlightEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes);
+        lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes, fleetAircraft.FuelOnBoardKg);
 
         return Results.Created($"/api/v1/flights/{flight.Id}", ToFlightDto(flight));
     }
@@ -195,7 +240,7 @@ public static class FlightEndpoints
     }
 
     internal static async Task<IResult> CompleteManualAsync(
-        Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, EconomyConfig economyConfig, CancellationToken ct)
+        Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var flight = await LoadOwnedFlightAsync(db, currentUser, id, ct);
         if (flight is null)
@@ -246,6 +291,11 @@ public static class FlightEndpoints
         var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
         var flightHours = flight.PlannedBlockMinutes / 60.0;
 
+        // Fetched before the fleet-aircraft block (rather than alongside arrivalAirport/aircraftType
+        // below) because MaintenancePoster needs it too - see the matching comment in
+        // FlightLifecycleService's telemetry completion path, which this manual path mirrors.
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
+
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
         if (fleetAircraft is not null)
         {
@@ -259,7 +309,22 @@ public static class FlightEndpoints
                 fleetAircraft.LocationIcao = route.ArrivalIcao;
             }
 
-            fleetAircraft.AirframeHours += flightHours;
+            if (airline is not null)
+            {
+                MaintenancePoster.PostFlightHours(db, fleetAircraft, airline, economyConfigCatalog.Get(airline.Playstyle), flightHours, now);
+            }
+            else
+            {
+                fleetAircraft.AirframeHours += flightHours;
+            }
+
+            // No reliable telemetry means no reliable fuel reading either (that's the whole
+            // reason this path exists) - rather than let the persisted asset drift from
+            // best-effort arithmetic, treat it as consumed and let the next flight's own
+            // StartAsync reconciliation (or its no-telemetry fallback) start the tank fresh. This
+            // stays conservative and honest instead of guessing at how much of the fuel bought at
+            // start actually got burned.
+            fleetAircraft.FuelOnBoardKg = 0;
         }
 
         // Manual completion posts ticket revenue and normal sector costs, but never a landing
@@ -267,12 +332,12 @@ public static class FlightEndpoints
         // FlightEconomicsResult), and this path exists precisely because no reliable telemetry
         // was ever captured to score one. Skips quietly (no ledger lines) if any of the data an
         // economics calculation needs isn't resolvable - better to post nothing than guess.
-        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
         var arrivalAirport = route is not null ? await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct) : null;
         var aircraftType = fleetAircraft is not null ? await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId], ct) : null;
 
         if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
         {
+            var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
             await FlightEconomicsPoster.PostCompletionAsync(
                 db, flight, airline, route, aircraftType, arrivalAirport, economyConfig, flightHours, now, ct);
         }
@@ -326,7 +391,17 @@ public static class FlightEndpoints
             .OrderBy(t => t.Utc)
             .Select(t => new { t.Id, t.Utc, Category = t.Category.ToString(), t.Amount, t.Description });
 
-        return Results.Ok(new { flight = ToFlightDto(flight), events, ledgerTransactions });
+        // The persisted asset's CURRENT value - accurate as "fuel remaining after this flight"
+        // when it's the aircraft's most recent one (the common case: viewing the report card right
+        // after landing), but drifts once a later flight has flown. Null if the aircraft record is
+        // gone (sold/removed) rather than guessing - see docs/PLAN.md "Persistent fuel state and
+        // tankering".
+        var aircraftFuelOnBoardKg = await db.FleetAircraft
+            .Where(f => f.Id == flight.FleetAircraftId)
+            .Select(f => (double?)f.FuelOnBoardKg)
+            .FirstOrDefaultAsync(ct);
+
+        return Results.Ok(new { flight = ToFlightDto(flight), events, ledgerTransactions, aircraftFuelOnBoardKg });
     }
 
     private static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -352,13 +427,20 @@ public static class FlightEndpoints
     /// route flyable even though the outbound EGGD-&gt;EGPH route isn't (its aircraft is gone).
     /// Routes with nothing available get a human-readable reason instead.
     /// </summary>
-    private static async Task<IResult> OptionsAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
+    internal static async Task<IResult> OptionsAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
             return Results.Ok(Array.Empty<object>());
         }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+
+        // A grounding whose downtime has already elapsed is released before this list is built, so
+        // "in maintenance" here only ever means genuinely still grounded, never stale state a
+        // background pass hasn't caught up to yet - see MaintenanceReleaser's class doc.
+        await MaintenanceReleaser.ReleaseDueAsync(db, airline.Id, DateTimeOffset.UtcNow, ct);
 
         // Materialise first - the SQLite provider can't translate ORDER BY over DateTimeOffset.
         var routes = (await db.Routes.Where(r => r.AirlineId == airline.Id && r.IsActive).ToListAsync(ct))
@@ -418,7 +500,13 @@ public static class FlightEndpoints
                 }
                 else if (inMaintenance is not null)
                 {
-                    reason = $"Your aircraft at {route.DepartureIcao} is in maintenance.";
+                    // "Why and until when", not merely "in maintenance" - see docs/PLAN.md's E1
+                    // brief. GroundedUntilUtc should always be set whenever Status is InMaintenance
+                    // (MaintenancePoster sets both together), but a plain fallback covers the
+                    // theoretical gap rather than showing a broken/missing date to the player.
+                    reason = inMaintenance.GroundedUntilUtc is { } until
+                        ? $"Your aircraft at {route.DepartureIcao} is in maintenance until {until:yyyy-MM-dd HH:mm} UTC."
+                        : $"Your aircraft at {route.DepartureIcao} is in maintenance.";
                     consideredAircraft = inMaintenance;
                 }
                 else
@@ -503,9 +591,16 @@ public static class FlightEndpoints
         if (lastSnapshot is null)
         {
             // No telemetry was ever received for this attempt - the aircraft never left where it
-            // already was recorded, so there's nothing to resolve.
+            // already was recorded, and its fuel is whatever StartAsync's reconciliation already
+            // set - so there's nothing further to resolve.
             return;
         }
+
+        // The most recent reading actually observed for this attempt - more accurate than
+        // whatever was known at flight start, since the aircraft may have burned fuel (or been
+        // topped up again) before it was abandoned. Fuel already bought is never refunded, so
+        // this only ever syncs the tracked figure to reality, never reverses a charge.
+        fleetAircraft.FuelOnBoardKg = Math.Max(0, lastSnapshot.FuelRemainingKg);
 
         var candidateAirports = await AirportProximityQueries.NearbyAsync(db, lastSnapshot.LatitudeDeg, lastSnapshot.LongitudeDeg, ct);
         var landing = LandingAirportResolver.Resolve(

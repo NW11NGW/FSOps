@@ -4,6 +4,7 @@ using FSOps.Core.Planning;
 using FSOps.Core.Routes;
 using FSOps.Data;
 using FSOps.Server.Auth;
+using FSOps.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Route = FSOps.Core.Entities.Route;
 
@@ -36,7 +37,7 @@ public static class RouteEndpoints
     /// below, not a substitute for them.
     /// </summary>
     private static async Task<IResult> PreviewAsync(
-        RoutePreviewRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
+        RoutePreviewRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         try
         {
@@ -75,6 +76,12 @@ public static class RouteEndpoints
             var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
             var aircraftType = await ResolveAircraftTypeAsync(db, request.AircraftTypeId, airline, warnings, ct);
 
+            // Preview can run before an airline exists (onboarding's route picker) - Casual is a
+            // safe, neutral default there since nothing this endpoint reads (fares, demand, fuel,
+            // costs) actually varies by playstyle; only AirlineStartup/FleetFinance do, and neither
+            // is touched here. See EconomyConfigCatalog's class doc.
+            var economyConfig = economyConfigCatalog.Get(airline?.Playstyle ?? AirlinePlaystyle.Casual);
+
             if (departure is null || arrival is null || aircraftType is null)
             {
                 return Results.Ok(EmptyPreview(departureIcao, arrivalIcao, warnings));
@@ -83,6 +90,15 @@ public static class RouteEndpoints
             var result = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile);
             warnings.AddRange(result.Validation.Warnings);
 
+            // Fuel price must be visible before departure so tankering is an informed decision -
+            // see docs/PLAN.md "Persistent fuel state and tankering". Priced "today" (UtcNow) since
+            // this is what the player would pay uplifting right now, not at the scheduled departure
+            // time. World seed falls back the same way FlightEconomicsPoster does - see its doc.
+            var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
+            var priceNowUtc = DateTimeOffset.UtcNow;
+            var fuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, departure.Icao, departure.Country, priceNowUtc, worldSeed);
+            var destinationFuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, arrival.Icao, arrival.Country, priceNowUtc, worldSeed);
+
             // The live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
             // sector" readout - the real DemandCalculator/FareDemandModel engine, not the rough
             // distance-only estimate above. Needs an airline (for strategy profile and
@@ -90,6 +106,9 @@ public static class RouteEndpoints
             // distance pick rather than guessing at either. No fare validation beyond ">0" per
             // docs/PLAN.md "Fare setting and demand response" - the simulation is the guardrail.
             object? economics = null;
+            // Also feeds the tankering advisory's MTOW check below - falls back to full capacity
+            // (the more conservative assumption) when there's no live demand-modelled booking yet.
+            var expectedPassengersForMtowCheck = aircraftType.PaxCapacity;
             if (airline is not null && !result.Validation.SameAirport && result.DistanceNm > 0)
             {
                 var fare = request.Fare is decimal requestedFare && requestedFare > 0 ? requestedFare : result.SuggestedFare;
@@ -109,6 +128,36 @@ public static class RouteEndpoints
                     loadFactorPercent = Math.Round(booking.LoadFactor * 100, 1),
                     expectedRevenuePerSector = booking.Revenue,
                 };
+                expectedPassengersForMtowCheck = booking.PaxBooked;
+            }
+
+            // Advisory only, never automatic or enforced - see docs/PLAN.md "the tankering
+            // trade-off". Modelled as "uplift enough extra here, on top of what this leg needs
+            // anyway, to also cover a same-distance return leg" - routes in this app are always
+            // bidirectional pairs (see docs/PLAN.md "Routes are always bidirectional pairs"), so
+            // the return leg's own normal requirement is the same great-circle distance's own
+            // FuelBreakdown.TotalFuelKg, computed above for this very preview.
+            object? tankeringAdvisory = null;
+            if (!result.Validation.SameAirport && result.DistanceNm > 0 && result.FuelBreakdown.TotalFuelKg > 0)
+            {
+                var airborneHours = (result.BlockTimeBreakdown.ClimbMinutes + result.BlockTimeBreakdown.CruiseMinutes + result.BlockTimeBreakdown.DescentMinutes) / 60.0;
+
+                var advisory = TankeringAdvisor.Evaluate(
+                    economyConfig, fuelPricePerKg, destinationFuelPricePerKg, result.FuelBreakdown.TotalFuelKg,
+                    airborneHours, result.FuelBreakdown.TotalFuelKg, expectedPassengersForMtowCheck, aircraftType.MtowTonnes);
+
+                tankeringAdvisory = new
+                {
+                    departurePricePerKg = advisory.DeparturePricePerKg,
+                    destinationPricePerKg = advisory.DestinationPricePerKg,
+                    extraFuelToCarryKg = Math.Round(advisory.ReturnLegFuelRequirementKg, 0),
+                    costOfCarryKg = Math.Round(advisory.CostOfCarryKg, 0),
+                    costOfCarryAmount = advisory.CostOfCarryAmount,
+                    grossSavingAmount = advisory.GrossSavingAmount,
+                    netSavingAmount = advisory.NetSavingAmount,
+                    recommended = advisory.Recommended,
+                    exceedsMtow = advisory.ExceedsMtow,
+                };
             }
 
             return Results.Ok(new
@@ -120,6 +169,9 @@ public static class RouteEndpoints
                 cruiseAltitudeFt = result.CruiseAltitudeFt,
                 blockFuelKg = Math.Round(result.FuelBreakdown.TotalFuelKg, 0),
                 fuelBreakdown = result.FuelBreakdown,
+                fuelPricePerKg,
+                destinationFuelPricePerKg,
+                tankeringAdvisory,
                 suggestedFare = result.SuggestedFare,
                 economics,
                 greatCirclePath = result.GreatCirclePath.Select(p => new[] { p.Lon, p.Lat }),
@@ -148,6 +200,9 @@ public static class RouteEndpoints
         cruiseAltitudeFt = 0,
         blockFuelKg = 0.0,
         fuelBreakdown = (object?)null,
+        fuelPricePerKg = (decimal?)null,
+        destinationFuelPricePerKg = (decimal?)null,
+        tankeringAdvisory = (object?)null,
         suggestedFare = 0m,
         economics = (object?)null,
         greatCirclePath = Array.Empty<double[]>(),
@@ -205,13 +260,15 @@ public static class RouteEndpoints
     /// mandatory), it's reused as the return leg instead of being rejected as a conflict.
     /// </summary>
     internal static async Task<IResult> CreateAsync(
-        CreateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
+        CreateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
             return Results.BadRequest(new { error = "Create an airline before adding routes." });
         }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
 
         var departureIcao = (request.DepartureIcao ?? string.Empty).Trim().ToUpperInvariant();
         var arrivalIcao = (request.ArrivalIcao ?? string.Empty).Trim().ToUpperInvariant();
@@ -270,13 +327,15 @@ public static class RouteEndpoints
     /// unless the caller supplies their own.
     /// </summary>
     private static async Task<IResult> CreateReturnLegAsync(
-        Guid id, CreateReturnLegRequest? request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
+        Guid id, CreateReturnLegRequest? request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
             return Results.NotFound();
         }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
 
         var outbound = await db.Routes.FirstOrDefaultAsync(r => r.Id == id && r.AirlineId == airline.Id, ct);
         if (outbound is null)
@@ -521,13 +580,15 @@ public static class RouteEndpoints
         return Results.Ok(await ToRouteDtoAsync(route, db, ct));
     }
 
-    internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfig economyConfig, CancellationToken ct)
+    internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
             return Results.Ok(Array.Empty<object>());
         }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
 
         // SQLite's EF provider can't translate ORDER BY over DateTimeOffset into SQL, so the
         // (small, per-airline) route list is ordered client-side after fetching.

@@ -28,11 +28,12 @@ public class AirlineSummaryRouteCountTests
     public async Task GetSummaryAsync_ThreeRoundTrips_ReportsRouteCountThree_WhileRoutesTableHasSixLegs()
     {
         using var ctx = await RouteTestContext.CreateAsync();
-        var economyConfig = EconomyConfig.Default();
+        // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
 
-        await RouteEndpoints.CreateAsync(new CreateRouteRequest("EGGD", "EGPH", null, null, null), ctx.Db, ctx.CurrentUser, economyConfig, CancellationToken.None);
-        await RouteEndpoints.CreateAsync(new CreateRouteRequest("EGGD", "EGSS", null, null, null), ctx.Db, ctx.CurrentUser, economyConfig, CancellationToken.None);
-        await RouteEndpoints.CreateAsync(new CreateRouteRequest("EGGD", "EGPF", null, null, null), ctx.Db, ctx.CurrentUser, economyConfig, CancellationToken.None);
+        await RouteEndpoints.CreateAsync(new CreateRouteRequest("EGGD", "EGPH", null, null, null), ctx.Db, ctx.CurrentUser, economyConfigCatalog, CancellationToken.None);
+        await RouteEndpoints.CreateAsync(new CreateRouteRequest("EGGD", "EGSS", null, null, null), ctx.Db, ctx.CurrentUser, economyConfigCatalog, CancellationToken.None);
+        await RouteEndpoints.CreateAsync(new CreateRouteRequest("EGGD", "EGPF", null, null, null), ctx.Db, ctx.CurrentUser, economyConfigCatalog, CancellationToken.None);
 
         // Six directional rows in the table...
         Assert.Equal(6, await ctx.Db.Routes.CountAsync());

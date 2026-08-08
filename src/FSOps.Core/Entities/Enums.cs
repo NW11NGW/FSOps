@@ -19,6 +19,19 @@ public enum AirlineStrategyProfile
     Balanced,
 }
 
+/// <summary>
+/// Chosen once, at airline creation, and permanent for the airline's life (see docs/PLAN.md
+/// "Playstyle - Casual vs True-life"). A playstyle is a named set of overrides in
+/// economy-config.json (starter lease, insurance, lease deposit, starting capital) - never a code
+/// path, so nothing in the economy engine itself branches on this value. It is resolved once, at
+/// the point a config is needed for a specific airline, via EconomyConfigCatalog.
+/// </summary>
+public enum AirlinePlaystyle
+{
+    Casual,
+    TrueLife,
+}
+
 public enum AircraftOwnership
 {
     Owned,

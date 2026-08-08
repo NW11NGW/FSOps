@@ -12,6 +12,9 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [My currency looks wrong](#my-currency-looks-wrong)
 - [Strategy profile figures won't load](#strategy-profile-figures-wont-load)
 - [My fare or revenue numbers look different than yesterday](#my-fare-or-revenue-numbers-look-different-than-yesterday)
+- [An aircraft is grounded for maintenance](#an-aircraft-is-grounded-for-maintenance)
+- [A larger-than-usual charge appeared after leaving FSOps closed](#a-larger-than-usual-charge-appeared-after-leaving-fsops-closed)
+- [A loan's interest rate is higher than I expected](#a-loans-interest-rate-is-higher-than-i-expected)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
@@ -74,7 +77,7 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Cause:** This happens for one of two reasons: departure and arrival are the same airport, or the route is beyond your aircraft's **practical operating range** — roughly **0.85×** its published range once fuel reserves are accounted for, not the raw catalogue figure. A route just over the raw range but under the 0.85× cutoff will still be refused.
 
-**Solution:** Pick a different airport pair, or add an aircraft with more range to your fleet (once fleet management is available — see the [user guide](user-guide.md#buying-vs-leasing-aircraft)). Amber advisory warnings (short runway, strategy mismatch) look similar but don't block creation — only the red message does.
+**Solution:** Pick a different airport pair, or add an aircraft with more range to your fleet from the Fleet page (see the [user guide](user-guide.md#buying-leasing-and-financing-aircraft)). Amber advisory warnings (short runway, strategy mismatch) look similar but don't block creation — only the red message does.
 
 ## My currency looks wrong
 
@@ -99,6 +102,30 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 **Cause:** This is expected, not a bug. Passenger demand for a route factors in the month (a seasonality curve — August, for example, is a stronger month than February) and the day of the week, and fuel prices drift day to day by a small, deterministic amount per airport (see [The economy simulation](user-guide.md#the-economy-simulation)). Flying the same route on a different real-world day can genuinely produce different numbers.
 
 **Solution:** Nothing to fix — if you want to sanity-check a figure, note the date you're comparing against, since demand and fuel price are both date-dependent by design.
+
+## An aircraft is grounded for maintenance
+
+**Symptom:** An aircraft shows **In maintenance** on the Fleet page, or a route shows as not flyable on the Fly screen with a reason like "Your aircraft at EGGD is in maintenance until 2026-08-09 14:00 UTC."
+
+**Cause:** Every aircraft needs an A-check every 500 flight hours and a C-check every 4,000 (see [Maintenance](user-guide.md#maintenance) in the user guide). A check due grounds the aircraft for a stated period — a few hours to a day under Casual, up to a fortnight for a True-life C-check — while it's serviced. This is expected behaviour, not a bug; a used aircraft (bought at a discount, already worn) reaches its first check sooner than a fresh airframe would.
+
+**Solution:** Wait it out — the aircraft is released automatically the moment its downtime elapses, no action needed, and the exact return time is always shown. If you need to keep flying that route in the meantime, use a different aircraft in your fleet if you have one, or add another from the Fleet page.
+
+## A larger-than-usual charge appeared after leaving FSOps closed
+
+**Symptom:** Opening FSOps after a break shows a bigger drop in cash balance than a single month's lease/insurance/salary would explain, or several lease/insurance/salary lines with the same or nearby dates in the ledger.
+
+**Cause:** This is expected. Lease payments, salaries, insurance and loan repayments post automatically every 30 days of real-world wall-clock time (see [The monthly billing cycle](user-guide.md#the-monthly-billing-cycle)), whether or not FSOps is running. If FSOps was closed for, say, 90 days, the next time it starts it catches up on all three months' worth of charges at once rather than skipping the time that was missed — that catch-up is capped at 24 periods (about two years) per pass, so an extremely long gap catches up over a few passes a minute apart rather than in one burst, but you'll still see it land as a lump rather than trickling in.
+
+**Solution:** Nothing to fix — check your airline's ledger (or the log files) for the dated lines to confirm they line up with the length of the gap. This can't be avoided by changing your system clock either: the billing cycle only ever counts genuinely elapsed wall-clock time.
+
+## A loan's interest rate is higher than I expected
+
+**Symptom:** A loan — especially a startup loan taken while founding an airline — carries the highest rate your playstyle allows (5% APR for Casual, 8% for True-life) rather than something closer to the base rate.
+
+**Cause:** The rate is never something you choose — it's computed automatically from how much of your airline's trailing 30-day net operating cash flow the loan's monthly payment would consume, scaling from your playstyle's base rate up to its cap the more of that capacity it uses (see [Buying, leasing and financing aircraft](user-guide.md#buying-leasing-and-financing-aircraft)). A **brand-new airline has no trading history yet — its cash flow is exactly zero at the moment it's founded — so a startup loan is always priced at the cap.** That's the correct price for an unproven borrower, not a bug.
+
+**Solution:** Nothing to fix for a startup loan; it's always at the cap by design. For a loan taken later in the Fleet page, the rate falls as your airline's trailing cash flow grows from flying — if you want a lower rate, build up a few weeks of profitable flying first, or ask for a smaller amount or a longer term, both of which lower the payment relative to your capacity.
 
 ## Where the database lives
 

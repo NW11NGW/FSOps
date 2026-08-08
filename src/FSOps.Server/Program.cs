@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text.Json.Serialization;
 using FSOps.Core;
 using FSOps.Core.Economy;
+using FSOps.Core.Entities;
+using FSOps.Core.Time;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using FSOps.Server.Endpoints;
@@ -61,16 +63,24 @@ builder.Services.AddScoped<ICurrentUser, LocalUser>();
 builder.Services.AddFsOpsData();
 
 // The single place economy-config.json is ever loaded from - every tuning constant the economy
-// engine uses (fares, demand, fuel, costs). AppContext.BaseDirectory (not ContentRootPath) so
-// this resolves the same way under "dotnet run" and a published exe, matching the world-data
-// seed path above. Falls back to EconomyConfig.Default() if the file is missing (e.g. a stripped
-// deployment); either way, Validate() has already run by the time this returns, so a bad config
-// fails fast at startup rather than producing silently wrong numbers mid-flight.
+// engine uses (fares, demand, fuel, costs), plus the "casual"/"trueLife" playstyle overrides (see
+// docs/PLAN.md "Playstyle - Casual vs True-life"). AppContext.BaseDirectory (not ContentRootPath)
+// so this resolves the same way under "dotnet run" and a published exe, matching the world-data
+// seed path above. Falls back to EconomyConfigCatalog.Default() if the file is missing (e.g. a
+// stripped deployment); either way, both playstyles' Validate() has already run by the time this
+// returns, so a bad config fails fast at startup rather than producing silently wrong numbers
+// mid-flight.
 builder.Services.AddSingleton(_ =>
 {
     var path = Path.Combine(AppContext.BaseDirectory, "economy-config.json");
-    return File.Exists(path) ? EconomyConfig.FromJson(File.ReadAllText(path)) : EconomyConfig.Default();
+    return File.Exists(path) ? EconomyConfigCatalog.FromJson(File.ReadAllText(path)) : EconomyConfigCatalog.Default();
 });
+// Deliberately NOT registered: a flat EconomyConfig singleton. One existed briefly as a
+// compatibility shim while the playstyle work landed, and it always resolved to Casual - which
+// meant anything injecting it silently billed a True-life airline at Casual rates. Every economy
+// figure must be resolved per-airline via EconomyConfigCatalog.Get(airline.Playstyle); a resolved
+// EconomyConfig is then passed down as a plain argument. If a constructor ever fails to resolve
+// EconomyConfig, that is the correct failure - inject the catalog instead, do not re-add this.
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
@@ -102,6 +112,12 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SimTelemetryServic
 builder.Services.AddSingleton<FlightLifecycleService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<FlightLifecycleService>());
 builder.Services.AddHostedService<HeartbeatService>();
+
+// Posts monthly lease/salary/insurance charges on the real-world clock, with startup catch-up for
+// however long the app was closed - see EconomyClockService's class doc and
+// docs/PLAN.md "Status after the progression-loop rebalance".
+builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddHostedService<EconomyClockService>();
 
 var app = builder.Build();
 
@@ -143,6 +159,7 @@ apiV1.MapRouteEndpoints();
 apiV1.MapSettingsEndpoints();
 apiV1.MapSimEndpoints();
 apiV1.MapFlightEndpoints();
+apiV1.MapFleetEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");
 

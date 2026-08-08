@@ -26,6 +26,8 @@ export interface Runway {
 
 export interface AirportDetail extends AirportSummary {
   runways: Runway[]
+  /** Current price per kg at this airport - see docs/PLAN.md "Persistent fuel state and tankering". */
+  fuelPricePerKg: number
 }
 
 export interface WorldDataStatus {

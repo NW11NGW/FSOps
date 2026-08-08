@@ -60,9 +60,9 @@ public class FlightManualCompletionAndAbandonTests
         ctx.Db.Flights.Add(flight);
         await ctx.Db.SaveChangesAsync();
 
-        var economyConfig = EconomyConfig.Default();
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfig, null!);
-        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfig, CancellationToken.None);
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -127,9 +127,11 @@ public class FlightManualCompletionAndAbandonTests
         ctx.Db.Flights.Add(flight);
         await ctx.Db.SaveChangesAsync();
 
-        var economyConfig = EconomyConfig.Default();
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfig, null!);
-        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfig, CancellationToken.None);
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
+        var economyConfig = economyConfigCatalog.Get(AirlinePlaystyle.Casual);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -183,7 +185,7 @@ public class FlightManualCompletionAndAbandonTests
 
         // A bare service with no active tracking for this flight - GetActiveSnapshot returns null,
         // exactly as if the sim never sent a single sample before the user gave up and abandoned.
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, EconomyConfig.Default(), null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, EconomyConfigCatalog.Default(), null!);
         var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));

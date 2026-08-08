@@ -1,11 +1,14 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, and flying a fully tracked flight all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
+This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, and the monthly billing cycle that keeps it all honest all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
 
 ## Table of contents
 
 - [Current build](#current-build)
 - [Creating your airline](#creating-your-airline)
+  - [Playstyles](#playstyles)
+  - [Strategy profiles](#strategy-profiles)
+  - [Starter aircraft](#starter-aircraft)
 - [Settings](#settings)
   - [Airline](#airline)
 - [Building routes](#building-routes)
@@ -23,20 +26,31 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 - [Reading the post-flight report card](#reading-the-post-flight-report-card)
   - [Flight integrity](#flight-integrity)
 - [The economy simulation](#the-economy-simulation)
-- [Hiring and assigning virtual pilots](#hiring-and-assigning-virtual-pilots)
-- [Buying vs leasing aircraft](#buying-vs-leasing-aircraft)
+- [The monthly billing cycle](#the-monthly-billing-cycle)
+- [Fuel and tankering](#fuel-and-tankering)
+- [Buying, leasing and financing aircraft](#buying-leasing-and-financing-aircraft)
 - [Maintenance](#maintenance)
+- [Hiring and assigning virtual pilots](#hiring-and-assigning-virtual-pilots)
 - [Statistics dashboards](#statistics-dashboards)
 - [In-game panel](#in-game-panel)
 - [A worked example, start to finish](#a-worked-example-start-to-finish)
 
 ## Current build
 
-Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, and fly a route with full live tracking against MSFS, ending in a post-flight report card that shows exactly what it earned and cost. Virtual pilots, fleet purchasing, maintenance, and statistics are still being built; each is marked below.
+Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, and run a fleet — buying, leasing, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying. Virtual pilots, and the Pilots/Finances/Statistics pages, are still being built; each is marked below.
 
 ## Creating your airline
 
 FSOps opens straight into a full-screen setup wizard whenever no airline exists for your machine yet. See [Getting Started](getting-started.md#6-found-your-airline) for the step-by-step flow. This section covers what each choice actually means.
+
+### Playstyles
+
+Alongside strategy, the wizard asks you to choose a **playstyle** — Casual or True-life. Unlike strategy, this is **permanent for the life of your airline**: there's no setting to change it afterwards, only deleting the airline and starting over (going Casual → True-life would multiply your fixed costs roughly twelvefold overnight; the reverse would trivialise everything you'd already earned). Playstyle sets your starting capital, every aircraft type's lease rate, your lease deposit term, monthly insurance, maintenance downtime, and the ceiling on loan interest rates — it shapes how your airline is *run*, not just how fast it earns.
+
+- **Casual** — forgiving fixed costs, so flying occasionally still runs a growing airline. Starting capital **£2,000,000**, a one-month lease deposit, and a deliberately game-balanced starter lease of **£30,000/month** for either starter type (A320 or 737-800) — see [Starter aircraft](#starter-aircraft) below for why that figure is low. Monthly insurance is **£6,000** per aircraft. A-check maintenance grounds an aircraft for **4 hours**, a C-check for **24 hours** — a nuisance and a bill, not a chunk of your evening lost. Loan interest is capped at **5% APR**. The honest choice for playing in short, occasional sessions.
+- **True-life** — real-world figures throughout. Starting capital **£2,500,000**, a two-month lease deposit, and realistic starter lease rates (roughly **£380,000/month** for an A320, **£390,000/month** for a 737-800). Monthly insurance is **£50,000** per aircraft. A-check downtime is **24 hours**, C-check is **336 hours** (about a fortnight). Loan interest is capped at **8% APR**. At these rates, a single aircraft flown only occasionally runs at a genuine loss — True-life's progression is built to depend on hiring virtual pilots to fly standing schedules once that feature lands, not on flying it yourself alone. The honest choice if you want to run something closer to an actual carrier.
+
+Every other figure in the economy — fares, demand, fuel prices, landing/handling fees, the maintenance cycle itself, and the used-aircraft discount — is identical between the two; only the numbers above differ. The onboarding cards and Settings → Airline both fetch these figures live from FSOps' own configuration, so they can't drift out of sync with what founding an airline (or leasing an aircraft later) actually charges.
 
 ### Strategy profiles
 
@@ -52,7 +66,7 @@ Fuel and landing fees never change by strategy — they're physical, regulatory 
 
 ### Starter aircraft
 
-You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-800 (189 seats, 3,115 nm range) as your airline's first aircraft. It's **leased**, not bought — founding your airline posts a one-month lease deposit (**£30,000** for either type) from your starting capital (or top-up loan) rather than the aircraft's full multi-million-pound price, which is what makes starting an airline affordable. This starter lease rate is a deliberate game-balance figure rather than a realistic one (a real A320 or 737-800 lease runs closer to £350,000–£420,000 a month) — see [The economy simulation](#the-economy-simulation) for why. Recurring lease payments aren't billed on a schedule yet, so beyond that first deposit nothing further is charged for it today. It determines which routes you can create until you add more aircraft to your fleet: a route beyond this aircraft's practical range can't be created (see [Building routes](#building-routes)).
+You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-800 (189 seats, 3,115 nm range) as your airline's first aircraft. It's **leased**, not bought — founding your airline posts a lease deposit from your starting capital (or top-up loan) rather than the aircraft's full multi-million-pound price, which is what makes starting an airline affordable. The deposit and the ongoing monthly rate both depend on your [playstyle](#playstyles): under Casual it's a one-month deposit on a deliberately game-balanced **£30,000/month** rate for either starter type — a real A320 or 737-800 lease runs closer to £380,000–£390,000 a month, which is exactly what True-life charges instead, on a two-month deposit. Founding your airline is only the first lease payment; from then on, the same monthly rate posts automatically every 30 days as part of the [monthly billing cycle](#the-monthly-billing-cycle) — nothing about the starter aircraft is a one-off charge. Its range determines which routes you can create until you add more aircraft to your fleet: a route beyond this aircraft's practical range can't be created (see [Building routes](#building-routes)).
 
 ## Settings
 
@@ -60,7 +74,7 @@ Reachable from the main navigation once your airline exists. Most of Settings ap
 
 ### Airline
 
-Your airline's name, accent colour, and strategy all live here and can be changed at any time (home base is shown for reference but is fixed once you've founded your airline):
+Your airline's name, accent colour, and strategy all live here and can be changed at any time (home base and playstyle are shown for reference but are fixed once you've founded your airline — see [Playstyles](#playstyles) for why):
 
 - **Name** — 2 to 40 characters, the same limits as at founding.
 - **Accent colour** — a preset swatch or a custom hex value, used throughout the UI for highlights and selected states.
@@ -248,48 +262,65 @@ For a given route and day, FSOps first decides how many people would ever want t
 Every completed flight posts itemised lines to your airline's append-only ledger:
 
 - **Ticket revenue** — passengers actually booked × your fare. Never anything to do with how fast, early, or smoothly you flew.
-- **Fuel** — charged once, at flight start, for the fuel your route's plan says this sector needs (trip + taxi + contingency fuel — not the alternate and final-reserve allowance, which normally stays in the tanks unburned), at that airport's price on the day. Fuel is charged on what's bought, never on what's actually burned, and never refunded if the flight is later abandoned.
+- **Fuel** — charged at flight start, at that airport's price on the day, but only for what's actually uplifted. Fuel is a real quantity carried on the aircraft between flights now (see [Fuel and tankering](#fuel-and-tankering)), so if enough is already in the tank from the last flight, no fuel line posts at all; otherwise you're charged to top up to this sector's own requirement (trip + taxi + contingency — not the alternate and final-reserve allowance, which normally stays in the tanks unburned). Fuel is charged on what's bought, never on what's actually burned, and never refunded if the flight is later abandoned.
 - **Landing and handling/parking/passenger fees** — scaled by the arriving aircraft's weight (MTOW) and the arrival airport's size. Landing fees are identical for every airline (a regulatory charge); handling, parking and passenger fees also carry your strategy's cost multiplier (Low-cost runs 15% below the baseline, Premium 35% above it).
 - **A flat turnaround/gate fee** — deliberately *not* scaled by aircraft size, so a trivial sector in a tiny aircraft can't dodge every other cost.
 - **Maintenance accrual and crew cost** — both scale with block time, with crew paid for at least a one-hour minimum duty block regardless of how short the sector actually was.
 
 A flight completed with estimates (after an interruption — see [Ending a flight](#ending-a-flight-and-what-happens-if-it-gets-interrupted)) posts ticket revenue and normal costs but never a landing-quality bonus, since nothing was actually measured on it, and there's no landing-quality bonus in the model in the first place — payment has never depended on how well you landed. A flight where slew or a position jump was detected posts no ticket revenue at all (see [Flight integrity](#flight-integrity)) — though fuel already bought before departure stays charged, exactly as it would in reality.
 
-### What's honest to say about the current balance
+How to do it: no separate action — the economy runs automatically off the routes you fly and the fares you set. Virtual pilots will plug into this same ledger once they land — earning and spending money the same way a player-flown sector does, no separate "virtual economy."
 
-Two things are worth knowing plainly rather than discovering by surprise:
+## The monthly billing cycle
 
-- **There's no recurring billing yet.** Your lease deposit, starting capital, and any startup loan post once, at the moment you found your airline. Lease payments, salaries and insurance aren't posted on a schedule — nothing bills you again automatically as time passes. This means the game is currently easier than its balance is actually tuned for; recurring billing is planned but not yet built.
-- **Fuel isn't tracked between flights.** Aircraft don't have a stored fuel quantity, so every flight — including the return leg of a route you only just flew outbound — is charged for the fuel its own sector needs from scratch. A round trip doesn't yet get a cheaper return leg from fuel already sitting in the tanks, and there's no fuel tankering (carrying extra fuel from a cheap airport to skip buying at an expensive one) yet either.
+Founding your airline, or adding an aircraft to your fleet later, only posts the up-front cost (a lease deposit, or a purchase price). From then on, three kinds of cost post automatically every **30 days of real-world wall-clock time** — a "month" here is a rolling 30-day window from whenever the last one was billed, not a calendar month:
 
-How to do it: no separate action — the economy runs automatically off the routes you fly and the fares you set. Virtual pilots, aircraft purchasing, maintenance scheduling, and recurring monthly billing will plug into the same ledger as they land (see below) — each will earn and spend money the same way a player-flown sector does, no separate "virtual economy."
+- **Lease payments** — the monthly rate for every leased aircraft in your fleet, itemised per aircraft.
+- **Pilot salaries** — your own salary as the founding pilot, and any others once hiring pilots lands.
+- **Insurance** — a flat monthly figure per aircraft in your fleet, whether leased or owned (Casual £6,000, True-life £50,000 — see [Playstyles](#playstyles)).
+- **Loan repayments** — every outstanding loan (a startup loan, or one taken later from the Fleet page) amortises here: part interest, part principal, same as a real loan, until it's paid off.
+
+This runs whether or not FSOps is open. If you close FSOps for a few days and reopen it, the billing cycle catches up on everything that fell due while it was closed, all at once, rather than skipping it — so **don't be surprised by a larger-than-usual charge the next time you open FSOps after a break**. It can't be tricked by winding your system clock forward either: the cycle tracks a strictly forward-moving watermark and only ever bills for time that has genuinely passed. Since nothing currently flies your routes for you (virtual pilots aren't built yet — see [below](#hiring-and-assigning-virtual-pilots)), an airline you aren't actively flying still loses money every month from these charges alone.
+
+## Fuel and tankering
+
+Every aircraft in your fleet carries a real fuel quantity between flights, shown on the [Fleet page](#buying-leasing-and-financing-aircraft) as **fuel on board**. Fuel is only ever charged when it's actually bought (uplifted):
+
+- Landing with fuel still in the tank and flying again later — including the return leg of a route you just flew outbound — costs nothing further for whatever's already on board. You're only charged to top up the difference if the tank doesn't already hold enough for the next sector.
+- If FSOps is watching live telemetry when you start a flight, it reconciles against whatever the sim actually reports in the tank — so refuelling in the sim before pressing **Start flight** (or a fuel change the app didn't see, like a sim restart) is picked up and charged correctly at that airport's price.
+
+**Tankering** — deliberately uplifting more fuel than this sector needs, to skip buying at a pricier airport later — is advisory only. When the Fly screen's flight brief detects that your destination's fuel is meaningfully more expensive than your departure airport's, it shows what uplifting extra here to cover the return leg would save, net of the extra fuel you'd burn just from carrying the extra weight (about 3% of the excess mass, per hour it stays on board — a real "cost of carry" rule of thumb). It also warns if the extra fuel would push you over the aircraft's maximum take-off weight. One honest limit: landing fees are charged on the aircraft type's certificated MTOW, exactly as in reality, so tankering doesn't raise the landing fee you'll pay at the other end — burning off the extra weight in the air is the only real counterweight to tankering, same as a real airline.
+
+## Buying, leasing and financing aircraft
+
+The **Fleet** page (main navigation) shows every aircraft you own or lease — registration, type, current location, status, airframe hours, hours to the next A- and C-check, condition, ownership, fuel on board, and, for a grounded aircraft, exactly why and until when. From here you can grow your fleet beyond your starter aircraft:
+
+- **Lease** — a deposit (one month under Casual, two under True-life — see [Playstyles](#playstyles)) plus the type's monthly rate, billed going forward through the [monthly cycle](#the-monthly-billing-cycle). A leased aircraft always arrives fresh: 100% condition, zero hours.
+- **Buy new** — the aircraft's full purchase price, paid once, with no ongoing lease payment. It's yours outright, at 100% condition with zero hours — but airline aircraft genuinely cost tens of millions, so this is a milestone funded by retained profit or a loan, not an opening move.
+- **Buy used** — 55% of the new price, but it starts already worn: 70% of the way to both its next A-check and its next C-check, and at 70% condition rather than 100%. The saving is real, but you're buying it back through an earlier trip to maintenance, not for free.
+
+**Loans** are available from the same page (**Take out a loan**). You choose an amount and a term; the interest rate is never something you pick — it's computed automatically from how much of your airline's trailing 30-day net operating cash flow (excluding one-off injections like starting capital or another loan's own proceeds) the new loan's payment would consume, scaling from the playstyle's base rate up to its hard cap (5% Casual, 8% True-life) the more of your capacity it uses. A **brand-new airline has no trading history yet, so its cash flow is exactly zero at creation — which means a startup loan is always priced at the cap.** That's not a bug: it's the correct price for an unproven borrower with no track record. As your airline's cash flow grows from flying, a later loan can price in below the cap. The loan dialog always shows the real rate, monthly repayment and total interest before you commit — never an estimate that could disagree with what taking the loan actually charges.
+
+## Maintenance
+
+Every aircraft needs an **A-check every 500 flight hours** and a **C-check every 4,000** — the same cycle, and the same cost, for both playstyles: an A-check runs **£45,000**, a C-check **£320,000**, posted straight to your ledger when it triggers. An A-check is a routine inspection: it restores 35 percentage points of condition (capped at 100) and grounds the aircraft for a stated period. A C-check is a full overhaul: it restores condition to 100 outright, and grounds the aircraft for longer. Condition decays by a small amount for every flight hour flown in between, so an aircraft flown hard between checks arrives at its next one more worn than one flown lightly.
+
+How long a check grounds the aircraft depends on your [playstyle](#playstyles):
+
+| | Casual | True-life |
+|---|---|---|
+| A-check downtime | 4 hours | 24 hours |
+| C-check downtime | 24 hours | 336 hours (about 14 days) |
+
+While grounded, the aircraft shows **In maintenance** on the Fleet page with the exact time it'll be back, and any route that would need it shows as not flyable on the Fly screen with the same reason and return time — see [Troubleshooting](troubleshooting.md#an-aircraft-is-grounded-for-maintenance) if you weren't expecting it. It's released automatically the moment its downtime elapses; nothing needs to be pressed. A used aircraft (see [above](#buying-leasing-and-financing-aircraft)) starts 70% of the way into both cycles, so its first check comes around much sooner than a fresh airframe's would.
 
 ## Hiring and assigning virtual pilots
 
 **Coming in a later update.**
 
-What this is: as your airline grows, you won't want to fly every route yourself. Virtual pilots are hires who fly your scheduled routes automatically, on the real-world clock — including while FSOps itself is closed.
+What this is: as your airline grows, you won't want to fly every route yourself. Virtual pilots are hires who fly your scheduled routes automatically, on the real-world clock — including while FSOps itself is closed. Until this lands, nothing flies your routes for you, but the [monthly billing cycle](#the-monthly-billing-cycle) charges you regardless — an idle airline loses money today.
 
 How to do it: from a pilots screen, you'll hire a pilot and assign them to one or more routes with a schedule. From that point, their flights complete in the background over real time and feed into your airline's economy and statistics the same way a flight you flew yourself would, just without the landing-quality detail that only comes from a flight tracked live through the sim.
-
-## Buying vs leasing aircraft
-
-**Coming in a later update**, beyond your starter aircraft — which is already leased today, as part of founding your airline (see [Starter aircraft](#starter-aircraft)). What's missing is growing your fleet beyond that one aircraft.
-
-What this is: aircraft are the other half of running routes — you'll need them assigned to a route before it can be flown, by you or by a virtual pilot. FSOps is expected to support two ways to acquire one:
-
-- **Buying** — a larger upfront cost, but the aircraft is yours outright with no ongoing payment.
-- **Leasing** — lower upfront cost, spread as an ongoing expense against your airline's cash flow, but without ownership.
-
-How to do it: from a fleet screen, you'll browse available aircraft, compare buy vs lease terms, and add the one you choose to your fleet before assigning it to a route.
-
-## Maintenance
-
-**Coming in a later update.**
-
-What this is: aircraft accumulate wear through use — and harder landings are expected to accelerate it. Unmaintained aircraft are expected to become less reliable and more expensive to operate over time.
-
-How to do it: from a fleet or maintenance screen, you'll be able to see each aircraft's condition and schedule maintenance, which costs money and takes the aircraft out of service for a period, in exchange for restoring its condition.
 
 ## Statistics dashboards
 
@@ -311,7 +342,7 @@ How to do it: no action needed once built; the panel will be available from MSFS
 
 This walks through founding an airline, building a route, and flying it, with real figures — not invented ones. The plan-panel numbers below (distance, block time, fuel, fare) are fixed by the aircraft and the two airports, so they'll always come out the same. The demand and revenue numbers came from actually running FSOps and creating this exact airline and route on **8 August 2026** — your own numbers for the same route will differ, because demand factors in the month and day of the week (see [The economy simulation](#the-economy-simulation)), and fuel price drifts by a small amount day to day. Treat the shape of the example as reliable and the exact pounds-and-pence as illustrative.
 
-**Founding the airline.** Through the setup wizard: name it "Avon Air", ICAO code `AVN`, home base Bristol Airport (EGGD), strategy **Domestic**, starter aircraft a Boeing 737-800 (189 seats, service ceiling 41,000 ft), currency GBP. No startup loan. Founding the airline leases the 737-800 (a one-month deposit of **£30,000** comes straight out of your starting capital) and hires you as its first pilot — you land on the Dashboard with a fleet of one at EGGD and a cash balance of **£1,970,000** (£2,000,000 starting capital minus that deposit).
+**Founding the airline.** Through the setup wizard: name it "Avon Air", ICAO code `AVN`, home base Bristol Airport (EGGD), playstyle **Casual**, strategy **Domestic**, starter aircraft a Boeing 737-800 (189 seats, service ceiling 41,000 ft), currency GBP. No startup loan. Founding the airline leases the 737-800 (a one-month deposit of **£30,000** comes straight out of your starting capital — Casual's rate for either starter type; see [Playstyles](#playstyles)) and hires you as its first pilot — you land on the Dashboard with a fleet of one at EGGD and a cash balance of **£1,970,000** (£2,000,000 starting capital minus that deposit). From here on, the same £30,000 lease, plus £6,000 monthly insurance on the aircraft and your own salary, will post again automatically every 30 days through the [monthly billing cycle](#the-monthly-billing-cycle) — it isn't a one-off charge.
 
 **Building a route.** On the Routes page, departure EGGD (Bristol), arrival EGPH (Edinburgh) — a short domestic hop of **275.2 nm**. The plan panel shows:
 
@@ -330,4 +361,4 @@ As you fly, the phase timeline advances through Taxi out, Takeoff, Climb, Cruise
 
 **Reading the report card.** Landing quality shows a touchdown rate of around **-180 fpm** — inside the -200 fpm smooth-touchdown range — with a peak of **1.2 g**, **0 bounces**, and a centreline deviation of about **14 metres**. The phase timeline now shows OOOI clock times instead of a progress indicator. "Actual vs. planned" shows the 3-minutes-ahead and roughly-190-kg-under-plan deltas described above. No flight integrity card appears — nothing was flagged. Since the 737-800 you flew matched the route's expected family, there's no aircraft-type card either.
 
-**Financial outcome** shows every line this sector actually posted: **ticket revenue +£11,310.00** (174 pax × £65.00 — booked passengers come from the demand model, not from how the flight actually went), **fuel** already charged at departure (not repeated here), **landing fee -£750.50** (£9.50/tonne × the 737-800's 79-tonne MTOW at Large-airport Edinburgh), **handling -£513.50**, **parking -£94.80**, **passenger charges -£2,088.00** (£12.00 × 174 pax), a flat **turnaround/gate fee -£450.00**, **maintenance accrual -£217.00** (£210/hour × the 62 minutes you actually flew, not the planned 65), and **crew cost -£351.33** (£340/hour, same actual duration). Net for the sector comes out to roughly **£4,850**, give or take about £120 either way depending on that day's exact fuel price — a genuinely profitable leg, which is the point: at a sensible fare, one round trip like this a day comfortably covers a single leased 737-800, with plenty left over (the whole first month's lease deposit, £30,000, back inside about six or seven such flights). Fly Edinburgh back to Bristol next to complete the round trip — expect very similar numbers, since the two Large airports and the distance are symmetric either direction.
+**Financial outcome** shows every line this sector actually posted: **ticket revenue +£11,310.00** (174 pax × £65.00 — booked passengers come from the demand model, not from how the flight actually went), **fuel** already charged at departure (not repeated here), **landing fee -£750.50** (£9.50/tonne × the 737-800's 79-tonne MTOW at Large-airport Edinburgh), **handling -£513.50**, **parking -£94.80**, **passenger charges -£2,088.00** (£12.00 × 174 pax), a flat **turnaround/gate fee -£450.00**, **maintenance accrual -£217.00** (£210/hour × the 62 minutes you actually flew, not the planned 65), and **crew cost -£351.33** (£340/hour, same actual duration). Net for the sector comes out to roughly **£4,850**, give or take about £120 either way depending on that day's exact fuel price — a genuinely profitable leg. That covers the per-sector economics; the £30,000 monthly lease and other fixed costs above are billed separately on their own 30-day cycle, not out of this sector's revenue directly. Fly Edinburgh back to Bristol next to complete the round trip — expect similar passenger and revenue figures, since the two Large airports and the distance are symmetric either direction, but not necessarily the same fuel charge: fuel now persists on the aircraft between flights (see [Fuel and tankering](#fuel-and-tankering)), so the return leg is only charged for whatever's needed to top up beyond what's still physically in the tank after landing at Edinburgh, which depends on exactly how much was uplifted for the outbound sector.

@@ -12,6 +12,15 @@ public class Airline
 
     public AirlineStrategyProfile StrategyProfile { get; set; }
 
+    /// <summary>
+    /// Chosen at creation, permanent for the airline's life - see docs/PLAN.md "Playstyle - Casual
+    /// vs True-life". There is deliberately no way to change this after creation (see
+    /// AirlineEndpoints.UpdateAsync, which never touches it); switching means deleting the airline
+    /// and starting a new one, since a mid-game change would either bankrupt a healthy airline
+    /// (Casual -&gt; True-life) or trivialise everything already earned (the reverse).
+    /// </summary>
+    public AirlinePlaystyle Playstyle { get; set; }
+
     public string AccentColour { get; set; } = "#3b82f6";
 
     public double ReputationScore { get; set; } = 50;

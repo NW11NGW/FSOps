@@ -1,27 +1,35 @@
 namespace FSOps.Core.Planning;
 
+/// <param name="CostOfCarryKg">
+/// Extra fuel burned purely because fuel carried beyond this sector's own normal requirement was
+/// on board (see <see cref="BlockFuelEstimator.Estimate"/>'s <c>extraCarriedFuelKg</c> parameter
+/// and <see cref="FSOps.Core.Economy.EconomyConfig"/>'s <c>Fuel.CostOfCarryRatePerHour</c>) - fuel
+/// tankering's counterweight, alongside weight-based landing fees. Zero for every call that
+/// doesn't pass extra carried fuel, which is every call site except the tankering advisory - see
+/// BlockFuelEstimatorWeightPenaltyTests for the guarantee that a normal (non-tankering) flight's
+/// figures are completely unaffected by this field's existence. Already folded into
+/// <see cref="TripFuelKg"/> and therefore into <see cref="TotalFuelKg"/>/<see cref="FuelBreakdown.ChargedFuelKg"/>
+/// - broken out here purely so the UI can show the player what carrying the extra cost them.
+/// </param>
 public record FuelBreakdown(
     double TripFuelKg,
     double TaxiFuelKg,
     double ContingencyFuelKg,
     double AlternateFuelKg,
     double FinalReserveFuelKg,
-    double TotalFuelKg)
+    double TotalFuelKg,
+    double CostOfCarryKg = 0)
 {
     /// <summary>
-    /// Fuel a normal sector actually burns - trip fuel, taxi, and contingency - as opposed to
-    /// <see cref="AlternateFuelKg"/> and <see cref="FinalReserveFuelKg"/>, which are loaded for
-    /// safety and, on a normal flight, stay in the tanks rather than being consumed. This is the
-    /// figure the interim per-sector billing model charges (see
-    /// FSOps.Server.Services.FlightEconomicsPoster.PostFuelUplift and docs/PLAN.md "Persistent
-    /// fuel state and tankering" - "you pay for fuel when you BUY it, not when you burn it").
-    /// Charging the full <see cref="TotalFuelKg"/> every sector would bill for reserve/alternate
-    /// fuel that's never actually consumed and simply vanishes, since <c>FleetAircraft</c> has no
-    /// persisted tank state yet to carry it over between flights. Once persisted fuel state and
-    /// real uplift detection land, this property is superseded entirely - the charge will be
-    /// whatever was genuinely uplifted, and this simplification goes away. <see cref="TotalFuelKg"/>
-    /// itself is untouched by this and stays the full, realistic block-fuel figure a pilot would
-    /// actually load - that's a separate concept (what to load) from this one (what gets billed).
+    /// Fuel a normal sector actually burns - trip fuel (including any cost-of-carry penalty),
+    /// taxi, and contingency - as opposed to <see cref="AlternateFuelKg"/> and
+    /// <see cref="FinalReserveFuelKg"/>, which are loaded for safety and, on a normal flight,
+    /// stay in the tanks rather than being consumed. Historically this was the interim per-sector
+    /// billing figure (see docs/PLAN.md "Status after the fuel-honesty fix"); now that fuel is a
+    /// persisted, uplift-charged asset (see FSOps.Server.Services.FlightEconomicsPoster and
+    /// FlightEndpoints.StartAsync's reconciliation), this is retained as the "no-telemetry
+    /// fallback" charge - the conservative assumption used only when there's no telemetry to
+    /// observe a real uplift from.
     /// </summary>
     public double ChargedFuelKg => TripFuelKg + TaxiFuelKg + ContingencyFuelKg;
 }
@@ -40,14 +48,27 @@ public static class BlockFuelEstimator
     private const double ContingencyRate = 0.05;
     private const double FinalReserveMinutes = 30;
 
-    public static FuelBreakdown Estimate(BlockTimeBreakdown blockTime, double fuelBurnKgPerHour)
+    /// <summary>
+    /// <paramref name="extraCarriedFuelKg"/> and <paramref name="costOfCarryRatePerHour"/> both
+    /// default to zero, so every existing call site (route preview, the flight brief's planned
+    /// figure) is completely unaffected - see BlockFuelEstimatorWeightPenaltyTests. Only the
+    /// tankering advisory passes non-zero values, to estimate what carrying extra fuel for this
+    /// sector's whole airborne time would cost.
+    /// </summary>
+    public static FuelBreakdown Estimate(
+        BlockTimeBreakdown blockTime, double fuelBurnKgPerHour, double extraCarriedFuelKg = 0, double costOfCarryRatePerHour = 0)
     {
         var airborneMinutes = blockTime.ClimbMinutes + blockTime.CruiseMinutes + blockTime.DescentMinutes;
-        var tripFuelKg = fuelBurnKgPerHour * airborneMinutes / 60.0;
+        var airborneHours = airborneMinutes / 60.0;
+        var baseTripFuelKg = fuelBurnKgPerHour * airborneHours;
+        var costOfCarryKg = extraCarriedFuelKg > 0 && costOfCarryRatePerHour > 0
+            ? extraCarriedFuelKg * costOfCarryRatePerHour * airborneHours
+            : 0;
+        var tripFuelKg = baseTripFuelKg + costOfCarryKg;
         var contingencyKg = tripFuelKg * ContingencyRate;
         var finalReserveKg = fuelBurnKgPerHour * FinalReserveMinutes / 60.0;
         var totalKg = tripFuelKg + TaxiFuelKg + contingencyKg + AlternateFuelKg + finalReserveKg;
 
-        return new FuelBreakdown(tripFuelKg, TaxiFuelKg, contingencyKg, AlternateFuelKg, finalReserveKg, totalKg);
+        return new FuelBreakdown(tripFuelKg, TaxiFuelKg, contingencyKg, AlternateFuelKg, finalReserveKg, totalKg, costOfCarryKg);
     }
 }

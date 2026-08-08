@@ -26,7 +26,8 @@ export function WelcomeStep() {
         ))}
       </ul>
       <p className="mt-8 text-sm text-muted-foreground">
-        Takes about two minutes. Almost everything here can be changed later in Settings.
+        Takes about two minutes. Almost everything here can be changed later in Settings — your home base and
+        playstyle are the two exceptions, so take a moment on those.
       </p>
     </div>
   )

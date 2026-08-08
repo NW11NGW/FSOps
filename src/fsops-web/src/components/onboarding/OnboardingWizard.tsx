@@ -11,6 +11,7 @@ import { WizardProgress } from './WizardProgress'
 import { AircraftStep } from './steps/AircraftStep'
 import { HomeBaseStep } from './steps/HomeBaseStep'
 import { IdentityStep } from './steps/IdentityStep'
+import { PlaystyleStep } from './steps/PlaystyleStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { StrategyStep } from './steps/StrategyStep'
 import { CurrencyStep } from './steps/CurrencyStep'
@@ -164,6 +165,7 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
               {step.key === 'welcome' && <WelcomeStep />}
               {step.key === 'identity' && <IdentityStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'homeBase' && <HomeBaseStep data={data} onChange={update} errorMessage={submitError} />}
+              {step.key === 'playstyle' && <PlaystyleStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'strategy' && <StrategyStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'aircraft' && <AircraftStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'currency' && <CurrencyStep data={data} onChange={update} errorMessage={submitError} />}

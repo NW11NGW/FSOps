@@ -14,8 +14,14 @@ interface TopBarProps {
 }
 
 export function TopBar({ hubStatus, simConnected, airlineSummary }: TopBarProps) {
-  const { fmt } = useSettings()
+  const { fmt, status: settingsStatus } = useSettings()
   const { status, data } = airlineSummary
+
+  // Wait for BOTH the balance and the settings before showing money. The settings hook defaults to
+  // USD until /settings returns, so checking only the airline summary meant a GBP balance rendered
+  // briefly with a "$" - a wrong currency symbol on a real figure, which is worse than showing
+  // nothing for another moment.
+  const moneyReady = status !== 'loading' && settingsStatus !== 'loading'
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
@@ -30,7 +36,7 @@ export function TopBar({ hubStatus, simConnected, airlineSummary }: TopBarProps)
           title={data ? 'Current cash balance' : 'Cash balance unavailable'}
         >
           <span>Cash</span>
-          {status === 'loading' ? (
+          {!moneyReady ? (
             <Skeleton className="h-3 w-14" />
           ) : data ? (
             <span className="text-foreground">{fmt.money(data.cashBalance)}</span>

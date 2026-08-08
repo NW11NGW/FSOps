@@ -10,6 +10,7 @@ public class AirlineConfiguration : IEntityTypeConfiguration<Airline>
     {
         builder.HasKey(a => a.Id);
         builder.Property(a => a.StrategyProfile).HasConversion<string>();
+        builder.Property(a => a.Playstyle).HasConversion<string>();
         builder.HasIndex(a => a.OwnerUserId);
         builder.HasQueryFilter(a => a.DeletedUtc == null);
     }

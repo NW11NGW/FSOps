@@ -130,6 +130,10 @@ internal sealed class RouteTestContext : IDisposable
             MinRunwayFt = 5500,
             ServiceCeilingFt = 39000,
             PurchasePrice = 100_000_000m,
+            // Deliberately NOT the Casual (30,000) or True-life (380,000) A320 rate from
+            // economy-config.json - lease pricing must never read this column (see
+            // EconomyConfig.LeaseRates' doc comment), so tests that assert a specific charged rate
+            // resolve it from EconomyConfigCatalog, not from this field.
             MonthlyLeaseRate = 500_000m,
             MatchPatterns = "[]",
         };

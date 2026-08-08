@@ -9,29 +9,40 @@ namespace FSOps.Data.Import;
 /// every variant in a family shares the same detection patterns rather than trying to tell
 /// specific sub-variants apart from a freeform TITLE string.
 ///
-/// <para><b>PurchasePrice is a realistic transaction value, not a manufacturer list price.</b>
-/// Airlines never pay list: real-world launch customers routinely negotiate 45-55% off, so each
-/// figure here is set from <c>MonthlyLeaseRate</c> using a real-world lease-rate factor of about
-/// 0.8% of the aircraft's value per month (a standard operating-lease convention) rather than
-/// picked independently - this keeps purchase price and lease rate mutually consistent for the
-/// same airframe, and lands every type at roughly half its old list-price figure. See
-/// docs/PLAN.md "Economic balance" for why the old list prices made buying unreachable.</para>
+/// <para><b><c>MonthlyLeaseRate</c> on this entity is NOT read for pricing anywhere in the app -
+/// it is a legacy/reference column only, kept so an old database's schema stays valid without a
+/// migration.</b> Every lease the app actually charges (the founding lease in
+/// <c>AirlineEndpoints.CreateAsync</c> and leasing an additional aircraft from
+/// <c>FleetEndpoints.LeaseAsync</c>/<c>ListAircraftTypesAsync</c> alike) resolves the rate from
+/// <c>economy-config.json</c>'s playstyle-aware <c>EconomyConfig.LeaseRates</c>, keyed by ICAO
+/// type, via <c>EconomyConfig.LeaseRateFor</c>. This column cannot be the source of truth: it is
+/// one row per aircraft type shared by every airline's database regardless of playstyle, so it
+/// can never hold both the Casual and True-life figure for the same type at once, and because the
+/// seeder only runs once (against an empty table), a database created before a rebalance would
+/// silently keep the old number forever while a fresh one got the new one - exactly the
+/// same-app-prices-differently bug that made this column stop being authoritative. The values
+/// below are left in place purely as a historical/informational default (roughly what the figure
+/// was at seed time); do not read them for anything that affects money.</para>
 ///
-/// <para><b>Exception: the A320 and B738 entries' <c>MonthlyLeaseRate</c> is a deliberate
-/// game-balance number, not a real one - the 0.8%-of-value convention above no longer applies to
-/// those two rows.</b> They are the only two aircraft offered as the starter type at airline
-/// creation (see <c>AirlineEndpoints.CreateAsync</c>'s <c>starterIcaoType</c> mapping), and the
-/// progression loop the user confirmed 2026-08-08 (docs/PLAN.md "The progression loop") requires
-/// one aircraft flown casually (roughly one leg a day) to be genuinely profitable and a second
-/// aircraft's lease deposit affordable within about 7-10 flights. That is arithmetically
-/// impossible at anything close to a real A320/737-800 lease (their family siblings below are
-/// still priced realistically - only the two starter rows changed): 30,000 is roughly 8% of what
-/// this airframe actually leases for. <c>PurchasePrice</c> on these two rows is deliberately left
-/// untouched at its realistic, lease-rate-implied value (NOT recomputed from the new lease rate) -
-/// buying outright stays a genuine later milestone funded by retained profit or a loan, per the
-/// user's explicit decision. Do NOT "fix" this rate back toward realism - that reopens exactly the
-/// unplayable-grind problem the decision was made to close. See docs/PLAN.md "Status after the
-/// progression-loop rebalance" for the full numbers and the accepted trade-off.</para>
+/// <para><b>PurchasePrice is a realistic transaction value, not a manufacturer list price</b>, and
+/// - unlike MonthlyLeaseRate above - IS still the value actually charged (see FleetEndpoints.BuyAsync
+/// and EconomyConfig.UsedAircraft, which derives the used-aircraft discount from it). Airlines
+/// never pay list: real-world launch customers routinely negotiate 45-55% off, so each figure here
+/// was originally set from a real-world lease-rate factor of about 0.8% of the aircraft's value per
+/// month (a standard operating-lease convention) applied to each type's ORIGINAL realistic lease
+/// rate - this kept purchase price and lease rate mutually consistent for the same airframe at
+/// seed time, and landed every type at roughly half its old list-price figure. See docs/PLAN.md
+/// "Economic balance" for why the old list prices made buying unreachable.</para>
+///
+/// <para><b>Exception: the A320 and B738 rows' <c>PurchasePrice</c> is deliberately left at its
+/// realistic, original-lease-rate-implied value</b> even though those two rows' (inert)
+/// <c>MonthlyLeaseRate</c> was cut to a deliberate game-balance figure (Casual: see
+/// <c>EconomyConfig.LeaseRates</c>) - buying outright stays a genuine later milestone funded by
+/// retained profit or a loan, per docs/PLAN.md "The progression loop", not something the
+/// game-balanced lease rate should also cheapen. PurchasePrice is shared across both playstyles
+/// (see <c>EconomyConfig.UsedAircraft</c>'s class doc) since real transaction values don't depend
+/// on how realistically the buyer chose to be billed elsewhere - there is no per-playstyle
+/// divergence risk here the way there was for lease rates.</para>
 /// </summary>
 public static class AircraftTypeSeeder
 {
@@ -59,7 +70,8 @@ public static class AircraftTypeSeeder
                 Id = Guid.NewGuid(), IcaoType = "A320", Family = "A320", Manufacturer = "Airbus",
                 Name = "Airbus A320", PaxCapacity = 180, RangeNm = 3300, CruiseTasKts = 447,
                 FuelBurnKgPerHour = 2500, MtowTonnes = 78.0, MinRunwayFt = 5500, ServiceCeilingFt = 39000, PurchasePrice = 47_500_000m,
-                // Game-balance lease, not realistic (real rate ~380,000) - see the class doc.
+                // Inert - see the class doc. Actual Casual/True-life rates live in
+                // economy-config.json's LeaseRates["A320"] (30,000 / 380,000).
                 MonthlyLeaseRate = 30_000m, MatchPatterns = A320FamilyPatterns,
             },
             new()
@@ -81,7 +93,8 @@ public static class AircraftTypeSeeder
                 Id = Guid.NewGuid(), IcaoType = "B738", Family = "B737", Manufacturer = "Boeing",
                 Name = "Boeing 737-800", PaxCapacity = 189, RangeNm = 3115, CruiseTasKts = 453,
                 FuelBurnKgPerHour = 2600, MtowTonnes = 79.0, MinRunwayFt = 5500, ServiceCeilingFt = 41000, PurchasePrice = 48_750_000m,
-                // Game-balance lease, not realistic (real rate ~390,000) - see the class doc.
+                // Inert - see the class doc. Actual Casual/True-life rates live in
+                // economy-config.json's LeaseRates["B738"] (30,000 / 390,000).
                 MonthlyLeaseRate = 30_000m, MatchPatterns = B737FamilyPatterns,
             },
             new()

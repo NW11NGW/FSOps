@@ -179,7 +179,7 @@ public class FlightCompletionAircraftLocationTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             null!,
             new NoOpHubContext(),
-            EconomyConfig.Default(),
+            EconomyConfigCatalog.Default(),
             NullLogger<FlightLifecycleService>.Instance));
     }
 }

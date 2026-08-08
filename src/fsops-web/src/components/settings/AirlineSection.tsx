@@ -3,13 +3,16 @@ import { useOutletContext } from 'react-router-dom'
 import { Check, Info } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { PlaystyleCard } from '@/components/shared/PlaystyleCard'
 import { StrategyProfileCard } from '@/components/shared/StrategyProfileCard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { STRATEGY_PROFILES } from '@/components/onboarding/wizardData'
+import { PLAYSTYLE_META, STRATEGY_PROFILES } from '@/components/onboarding/wizardData'
+import { usePlaystyles } from '@/hooks/usePlaystyles'
+import { useSettings } from '@/hooks/useSettings'
 import { useStrategyProfiles } from '@/hooks/useStrategyProfiles'
 import { ACCENT_PALETTE } from '@/lib/accentPalette'
 import { ApiError, put } from '@/lib/api'
@@ -23,6 +26,8 @@ export function AirlineSection() {
   const { airlineSummary } = useOutletContext<LiveContext>()
   const airline = airlineSummary.data?.airline ?? null
   const { status: strategyStatus, profiles: strategyProfiles, refetch: refetchStrategyProfiles } = useStrategyProfiles()
+  const { status: playstyleStatus, playstyles } = usePlaystyles()
+  const { currentCurrency } = useSettings()
 
   const [name, setName] = useState('')
   const [accentColour, setAccentColour] = useState('#0EA5E9')
@@ -139,6 +144,39 @@ export function AirlineSection() {
               <p className="text-sm text-muted-foreground">
                 {airline.homeAirportIcao} <span className="text-xs">(fixed for now)</span>
               </p>
+            </div>
+
+            <div className="space-y-3 border-t border-border pt-6">
+              <div>
+                <Label>Playstyle</Label>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Chosen when this airline was founded — permanent, not editable here.
+                </p>
+              </div>
+
+              {playstyleStatus === 'error' ? (
+                <p className="text-sm text-muted-foreground">
+                  {airline.playstyle === 'TrueLife' ? 'True-life' : 'Casual'}{' '}
+                  <span className="text-xs">(figures unavailable right now)</span>
+                </p>
+              ) : (
+                <div className="max-w-sm">
+                  <PlaystyleCard
+                    meta={
+                      PLAYSTYLE_META.find((p) => p.id === airline.playstyle) ?? {
+                        id: airline.playstyle,
+                        label: airline.playstyle,
+                        tagline: '',
+                      }
+                    }
+                    info={
+                      playstyleStatus === 'ready' ? playstyles.find((p) => p.playstyle === airline.playstyle) : undefined
+                    }
+                    currency={currentCurrency}
+                    selected
+                  />
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 border-t border-border pt-6">

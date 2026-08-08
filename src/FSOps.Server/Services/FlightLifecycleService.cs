@@ -52,7 +52,7 @@ public sealed class FlightLifecycleService : IHostedService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SimTelemetryService _telemetry;
     private readonly IHubContext<LiveHub> _hub;
-    private readonly EconomyConfig _economyConfig;
+    private readonly EconomyConfigCatalog _economyConfigCatalog;
     private readonly ILogger<FlightLifecycleService> _logger;
 
     private readonly Channel<FlightEvent> _eventQueue = Channel.CreateBounded<FlightEvent>(
@@ -66,12 +66,12 @@ public sealed class FlightLifecycleService : IHostedService
 
     public FlightLifecycleService(
         IServiceScopeFactory scopeFactory, SimTelemetryService telemetry, IHubContext<LiveHub> hub,
-        EconomyConfig economyConfig, ILogger<FlightLifecycleService> logger)
+        EconomyConfigCatalog economyConfigCatalog, ILogger<FlightLifecycleService> logger)
     {
         _scopeFactory = scopeFactory;
         _telemetry = telemetry;
         _hub = hub;
-        _economyConfig = economyConfig;
+        _economyConfigCatalog = economyConfigCatalog;
         _logger = logger;
     }
 
@@ -107,8 +107,15 @@ public sealed class FlightLifecycleService : IHostedService
         }
     }
 
-    /// <summary>Starts live tracking for a flight the caller has already created and saved.</summary>
-    public void BeginTracking(Guid flightId, Guid airlineId, Guid fleetAircraftId, string arrivalIcao, int plannedBlockMinutes)
+    /// <summary>
+    /// Starts live tracking for a flight the caller has already created and saved.
+    /// <paramref name="startingFuelKg"/> is whatever <c>FlightEndpoints.StartAsync</c> resolved
+    /// the aircraft's fuel to be after its own start-of-flight reconciliation - the baseline live
+    /// ground-fuel detection (see <see cref="ProcessSample"/>) compares against, so a genuine
+    /// uplift is never double-charged (once at start reconciliation, again at the first live
+    /// sample) and a quiet gate sit produces no false positive.
+    /// </summary>
+    public void BeginTracking(Guid flightId, Guid airlineId, Guid fleetAircraftId, string arrivalIcao, int plannedBlockMinutes, double startingFuelKg)
     {
         var tracker = new ActiveFlightTracker
         {
@@ -118,6 +125,7 @@ public sealed class FlightLifecycleService : IHostedService
             ArrivalIcao = arrivalIcao,
             PlannedBlockMinutes = plannedBlockMinutes,
             Machine = new FlightPhaseStateMachine(),
+            LastGroundFuelKg = startingFuelKg,
         };
 
         lock (_lock)
@@ -169,7 +177,10 @@ public sealed class FlightLifecycleService : IHostedService
         }
     }
 
-    private void ProcessSample(ActiveFlightTracker tracker, TelemetrySample sample)
+    /// <summary>Internal (rather than private) purely so tests can drive it directly with a
+    /// synthetic <see cref="TelemetrySample"/> sequence instead of needing a live telemetry pump -
+    /// see FuelGroundDetectionTests.</summary>
+    internal void ProcessSample(ActiveFlightTracker tracker, TelemetrySample sample)
     {
         if (tracker.PendingReconnect)
         {
@@ -181,6 +192,29 @@ public sealed class FlightLifecycleService : IHostedService
 
         tracker.StartFuelKg ??= sample.TotalFuelKg;
         tracker.LastFuelKg = sample.TotalFuelKg;
+
+        // A rise in total fuel while on the ground is a refuelling event; a fall is defuelling -
+        // see docs/PLAN.md "Persistent fuel state and tankering" and FuelUpliftDetector's doc for
+        // why defuelling is a non-event rather than a credit. Only evaluated on the ground -
+        // airborne fuel loss is just normal burn, not a ground event. tracker.LastGroundFuelKg is
+        // seeded by BeginTracking from FlightEndpoints.StartAsync's own reconciliation, so the
+        // very first ground sample of a flight is never mistaken for a fresh uplift.
+        if (sample.OnGround)
+        {
+            if (tracker.LastGroundFuelKg is { } previousGroundFuelKg)
+            {
+                var kind = FuelUpliftDetector.Classify(previousGroundFuelKg, sample.TotalFuelKg);
+                if (kind != GroundFuelChangeKind.None)
+                {
+                    var deltaKg = FuelUpliftDetector.MagnitudeKg(previousGroundFuelKg, sample.TotalFuelKg);
+                    FireAndForget(
+                        () => HandleGroundFuelChangeAsync(tracker, sample, kind, deltaKg),
+                        $"post ground fuel change for flight {tracker.FlightId}");
+                }
+            }
+
+            tracker.LastGroundFuelKg = sample.TotalFuelKg;
+        }
 
         var flightSample = MapSample(sample);
         var result = tracker.Machine.Advance(flightSample);
@@ -285,6 +319,57 @@ public sealed class FlightLifecycleService : IHostedService
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Posts (or, for a defuel, silently absorbs) a ground fuel change detected live by
+    /// <see cref="ProcessSample"/>. Normally reached via <see cref="FireAndForget"/>, exactly like
+    /// <see cref="FinalizeFlightAsync"/>, so a slow DB write never stalls telemetry processing -
+    /// internal (rather than private) so tests can await it directly instead of racing a
+    /// fire-and-forget background task, the same pattern <see cref="FinalizeFlightAsync"/> already
+    /// uses. Resolves the airport from the sample's own position (not necessarily the departure or
+    /// arrival airport - a turnaround uplift after landing happens at the arrival, and this stays
+    /// correct even for a diversion) rather than assuming which leg of the ground phase the
+    /// aircraft is in.
+    /// </summary>
+    internal async Task HandleGroundFuelChangeAsync(ActiveFlightTracker tracker, TelemetrySample sample, GroundFuelChangeKind kind, double deltaKg)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FsOpsDbContext>();
+
+        var flight = await db.Flights.FirstOrDefaultAsync(f => f.Id == tracker.FlightId);
+        var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == tracker.FleetAircraftId);
+        if (flight is null || fleetAircraft is null || flight.RevenuePosted)
+        {
+            // Already finalised (a late sample racing Shutdown, most likely) - never touch a
+            // flight's fuel line once it's closed out.
+            return;
+        }
+
+        // The persisted asset always tracks reality exactly, regardless of direction - see the
+        // "never let the tracked figure silently drift" reconciliation rule in docs/PLAN.md.
+        fleetAircraft.FuelOnBoardKg = sample.TotalFuelKg;
+
+        if (kind == GroundFuelChangeKind.Uplift)
+        {
+            var candidateAirports = await AirportProximityQueries.NearbyAsync(db, sample.LatitudeDeg, sample.LongitudeDeg, CancellationToken.None);
+            var resolved = LandingAirportResolver.Resolve(candidateAirports, (sample.LatitudeDeg, sample.LongitudeDeg), tracker.ArrivalIcao);
+            var upliftAirport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == resolved.Icao);
+            var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == tracker.AirlineId);
+
+            if (upliftAirport is not null && airline is not null)
+            {
+                var economyConfig = _economyConfigCatalog.Get(airline.Playstyle);
+                var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, CancellationToken.None);
+                var cost = FlightEconomicsPoster.PostFuelUplift(
+                    db, flight, economyConfig, upliftAirport, deltaKg, sample.TimestampUtc, worldSeed);
+                flight.TotalCost += cost;
+            }
+        }
+        // Defuel: no ledger line is posted (see FuelUpliftDetector's doc on why this is a
+        // deliberate non-event) - the FuelOnBoardKg write above already reflects the new reality.
+
+        await db.SaveChangesAsync();
     }
 
     private async Task RehydrateInProgressFlightAsync(CancellationToken ct)
@@ -432,7 +517,29 @@ public sealed class FlightLifecycleService : IHostedService
             }
 
             var flightHours = BlockTimeCalculator.BlockHours(machine.OutUtc, machine.InUtc);
-            fleetAircraft.AirframeHours += flightHours;
+
+            // Fetched early (rather than alongside route/arrivalAirport/aircraftType below) because
+            // MaintenancePoster needs it regardless of whether this sector turns out to be payable -
+            // airframe hours and any resulting A/C-check must still be applied even if, say, the
+            // route was deleted mid-flight and the ticket revenue posting below has to skip.
+            var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId);
+            if (airline is not null)
+            {
+                MaintenancePoster.PostFlightHours(
+                    db, fleetAircraft, airline, _economyConfigCatalog.Get(airline.Playstyle), flightHours, completionUtc);
+            }
+            else
+            {
+                fleetAircraft.AirframeHours += flightHours;
+            }
+
+            // The persisted fuel asset the NEXT flight (or this aircraft's return leg) starts
+            // from - see docs/PLAN.md "Persistent fuel state and tankering". Prefers the live
+            // snapshot's last reported reading (what a real telemetry-tracked flight leaves
+            // behind); falls back to tracker.LastFuelKg for a synthetic/test tracker built
+            // without ever running a sample through ProcessSample.
+            var finalFuelKg = tracker.LatestSnapshot?.FuelRemainingKg ?? tracker.LastFuelKg;
+            fleetAircraft.FuelOnBoardKg = Math.Max(0, finalFuelKg);
 
             // Landing/handling/parking/passenger/turnaround fees are charged at wherever the
             // aircraft actually landed (landing.Icao), not necessarily the planned arrival - a
@@ -442,14 +549,14 @@ public sealed class FlightLifecycleService : IHostedService
             // Quietly skips if any of the data it needs can't be resolved - better to post
             // nothing than guess.
             var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId);
-            var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId);
             var arrivalAirport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == landing.Icao);
             var aircraftType = await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId]);
 
             if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
             {
+                var economyConfig = _economyConfigCatalog.Get(airline.Playstyle);
                 await FlightEconomicsPoster.PostCompletionAsync(
-                    db, flight, airline, route, aircraftType, arrivalAirport, _economyConfig, flightHours, completionUtc, CancellationToken.None);
+                    db, flight, airline, route, aircraftType, arrivalAirport, economyConfig, flightHours, completionUtc, CancellationToken.None);
             }
 
             if (landing.Decision == LandingAirportDecision.Diverted)
@@ -592,6 +699,17 @@ public sealed class FlightLifecycleService : IHostedService
         public double? StartFuelKg { get; set; }
 
         public double LastFuelKg { get; set; }
+
+        /// <summary>
+        /// Baseline for live ground-fuel-change detection (see
+        /// <see cref="FlightLifecycleService.ProcessSample"/>) - the last fuel reading taken while
+        /// on the ground. Seeded by <see cref="BeginTracking"/> from
+        /// <c>FlightEndpoints.StartAsync</c>'s own reconciliation; null after a rehydrate (see
+        /// <see cref="RehydrateInProgressFlightAsync"/>), since the true baseline at that point is
+        /// unknown - the first ground sample after reconnecting simply establishes it rather than
+        /// firing a (potentially spurious) event.
+        /// </summary>
+        public double? LastGroundFuelKg { get; set; }
 
         public DateTimeOffset LastSnapshotUtc { get; set; } = DateTimeOffset.MinValue;
 

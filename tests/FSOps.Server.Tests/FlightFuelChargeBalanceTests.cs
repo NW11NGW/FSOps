@@ -129,7 +129,9 @@ public class FlightFuelChargeBalanceTests
             });
         }
 
-        var economyConfig = EconomyConfig.Default();
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        // ctx.Airline.Playstyle defaults to Casual (never set explicitly by RouteTestContext).
+        var economyConfig = economyConfigCatalog.Get(ctx.Airline.Playstyle);
         var departure = await ctx.Db.Airports.SingleAsync(a => a.Icao == "EGGD");
         var distanceNm = GreatCircle.DistanceNm(departure.Latitude, departure.Longitude, latitudeDeg, longitudeDeg);
         // The suggested fare is now the ONE TRUE SOURCE, ReferenceFareCalculator - see
@@ -164,7 +166,7 @@ public class FlightFuelChargeBalanceTests
 
         await ctx.Db.SaveChangesAsync();
 
-        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfig);
+        var (lifecycle, telemetry) = CreateLifecycleAndTelemetry(ctx, economyConfigCatalog);
 
         // Snapshot BEFORE StartAsync - it's the one that posts the fuel charge, so a "before"
         // snapshot taken after it would silently exclude fuel from the cash delta below and
@@ -172,7 +174,7 @@ public class FlightFuelChargeBalanceTests
         var cashBefore = await CashBalanceAsync(ctx);
 
         var startResult = await FlightEndpoints.StartAsync(
-            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfig, CancellationToken.None);
+            new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status201Created, ((IStatusCodeHttpResult)startResult).StatusCode);
 
         var flight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.RouteId == route.Id);
@@ -240,7 +242,7 @@ public class FlightFuelChargeBalanceTests
     /// the SimTelemetryService it needs) whose db-scope resolves a fresh FsOpsDbContext against the
     /// same live in-memory SQLite connection RouteTestContext seeded.</summary>
     private static (FlightLifecycleService Lifecycle, SimTelemetryService Telemetry) CreateLifecycleAndTelemetry(
-        RouteTestContext ctx, EconomyConfig economyConfig)
+        RouteTestContext ctx, EconomyConfigCatalog economyConfigCatalog)
     {
         var services = new ServiceCollection();
         services.AddDbContext<FsOpsDbContext>(o => o.UseSqlite(ctx.Connection));
@@ -249,7 +251,7 @@ public class FlightFuelChargeBalanceTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfig, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

@@ -90,6 +90,11 @@ export interface FlightDetail {
   flight: Flight
   events: FlightEvent[]
   ledgerTransactions: FlightLedgerLine[]
+  /** The fleet aircraft's CURRENT persisted fuel (FleetAircraft.FuelOnBoardKg) - reads as "fuel
+   *  remaining after this flight" for the common case of viewing the report card right after
+   *  landing, but drifts once a later flight has flown this aircraft. Null if the aircraft record
+   *  is gone. See docs/PLAN.md "Persistent fuel state and tankering". */
+  aircraftFuelOnBoardKg: number | null
 }
 
 /** Mismatch FlightEvent payload (see FlightEndpoints.StartAsync). */

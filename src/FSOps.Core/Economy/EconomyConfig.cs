@@ -53,10 +53,69 @@ public sealed class EconomyConfig
     /// other number in this file.</summary>
     public AirlineStartupConfig AirlineStartup { get; init; } = new();
 
+    /// <summary>
+    /// The monthly lease rate for every leasable aircraft type, keyed by ICAO type code (e.g.
+    /// "A320", "B738") - the single source of truth for every lease price the app ever charges,
+    /// the founding lease (AirlineEndpoints.CreateAsync) and leasing an additional aircraft from
+    /// the Fleet screen (FleetEndpoints.LeaseAsync) alike. Resolved per playstyle by
+    /// <see cref="EconomyConfigCatalog"/>, same as every other AirlineStartup/FleetFinance figure.
+    /// Deliberately NOT <see cref="AircraftType.MonthlyLeaseRate"/> - that is a single column
+    /// shared by every airline's database row regardless of playstyle and regardless of when the
+    /// database was created (the seeder only runs once, against an empty table), so it can never
+    /// hold "the Casual rate" and "the True-life rate" for the same type at once, and a database
+    /// seeded before a rebalance would silently disagree with one seeded after it. See
+    /// AircraftTypeSeeder.cs's class doc for why that column is no longer read for pricing.
+    /// </summary>
+    public IReadOnlyList<LeaseRateConfig> LeaseRates { get; init; } = Array.Empty<LeaseRateConfig>();
+
+    [JsonIgnore]
+    private Dictionary<string, decimal>? _leaseRateLookup;
+
+    /// <summary>
+    /// The monthly lease rate for one aircraft type. Throws if the config has no entry for it - a
+    /// missing rate is a config authoring bug (the seeded catalogue has a type economy-config.json
+    /// never heard of), not something to silently default to whatever a database column happens to
+    /// hold. This is the ONLY sanctioned way to price a lease anywhere in the app.
+    /// </summary>
+    public decimal LeaseRateFor(string icaoType)
+    {
+        _leaseRateLookup ??= LeaseRates.ToDictionary(r => r.IcaoType, r => r.MonthlyRate, StringComparer.OrdinalIgnoreCase);
+
+        if (!_leaseRateLookup.TryGetValue(icaoType, out var rate))
+        {
+            throw new InvalidOperationException(
+                $"economy-config.json has no lease rate configured for aircraft type '{icaoType}'.");
+        }
+
+        return rate;
+    }
+
     /// <summary>Recurring monthly costs that are not tied to any single flight. Currently just
     /// insurance; lease and salary are already recurring via <see cref="Lease.MonthlyRate"/> and
     /// <see cref="Pilot.MonthlySalary"/> and do not need duplicating here.</summary>
     public FleetFinanceConfig FleetFinance { get; init; } = new();
+
+    /// <summary>A/C-check cycle, cost and downtime - see docs/PLAN.md "Maintenance" and
+    /// "Playstyle - Casual vs True-life"'s behaviour table. The interval hours, costs and condition
+    /// figures are shared across playstyles (same cycle, same costs - see the plan's table); only
+    /// the two downtime figures differ, resolved from the "casual"/"trueLife" override blocks by
+    /// EconomyConfigCatalog, same pattern as AirlineStartup/FleetFinance.</summary>
+    public MaintenanceConfig Maintenance { get; init; } = new();
+
+    /// <summary>
+    /// Risk-based loan pricing - see docs/PLAN.md "Loan interest is set by the simulation, never by
+    /// the player". Entirely playstyle-owned (like FleetFinance/LeaseRates, not merged field-by-
+    /// field with a shared base): resolved from the "casual"/"trueLife" override blocks by
+    /// EconomyConfigCatalog. The only sanctioned way to price a loan anywhere in the app is
+    /// <see cref="FSOps.Core.Finance.LoanRateCalculator.ComputeAnnualRatePct"/>, which reads this.
+    /// </summary>
+    public LoanConfig Loan { get; init; } = new();
+
+    /// <summary>Purchasing a used, rather than new, airframe - see docs/PLAN.md "Used aircraft -
+    /// cheap to buy, expensive to run". Shared across playstyles: the discount and the wear a used
+    /// airframe starts with are a property of the used-aircraft market, not a game-balance figure
+    /// that differs by how realistically the player wants to be billed.</summary>
+    public UsedAircraftConfig UsedAircraft { get; init; } = new();
 
     public IReadOnlyList<StrategyProfileConfig> StrategyProfiles { get; init; } = Array.Empty<StrategyProfileConfig>();
 
@@ -141,10 +200,121 @@ public sealed class EconomyConfig
                 $"AirlineStartup.StartingPilotMonthlySalary must be positive, was {AirlineStartup.StartingPilotMonthlySalary}.");
         }
 
+        if (LeaseRates.Count == 0)
+        {
+            throw new InvalidOperationException("economy-config.json defines no lease rates.");
+        }
+
+        var seenLeaseRateIcaoTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var leaseRate in LeaseRates)
+        {
+            if (string.IsNullOrWhiteSpace(leaseRate.IcaoType))
+            {
+                throw new InvalidOperationException("A LeaseRates entry has a blank icaoType.");
+            }
+
+            if (!seenLeaseRateIcaoTypes.Add(leaseRate.IcaoType))
+            {
+                throw new InvalidOperationException($"LeaseRates has more than one entry for icaoType '{leaseRate.IcaoType}'.");
+            }
+
+            if (leaseRate.MonthlyRate <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"LeaseRates entry '{leaseRate.IcaoType}' must have a positive monthlyRate, was {leaseRate.MonthlyRate}.");
+            }
+        }
+
         if (FleetFinance.MonthlyInsurancePerAircraft < 0)
         {
             throw new InvalidOperationException(
                 $"FleetFinance.MonthlyInsurancePerAircraft cannot be negative, was {FleetFinance.MonthlyInsurancePerAircraft}.");
+        }
+
+        if (Maintenance.ACheckIntervalHours <= 0)
+        {
+            throw new InvalidOperationException($"Maintenance.ACheckIntervalHours must be positive, was {Maintenance.ACheckIntervalHours}.");
+        }
+
+        if (Maintenance.CCheckIntervalHours <= Maintenance.ACheckIntervalHours)
+        {
+            throw new InvalidOperationException(
+                $"Maintenance.CCheckIntervalHours ({Maintenance.CCheckIntervalHours}) must be greater than Maintenance.ACheckIntervalHours ({Maintenance.ACheckIntervalHours}).");
+        }
+
+        if (Maintenance.ACheckCost < 0 || Maintenance.CCheckCost < 0)
+        {
+            throw new InvalidOperationException("Maintenance.ACheckCost and Maintenance.CCheckCost cannot be negative.");
+        }
+
+        if (Maintenance.ConditionDecayPerHour < 0)
+        {
+            throw new InvalidOperationException($"Maintenance.ConditionDecayPerHour cannot be negative, was {Maintenance.ConditionDecayPerHour}.");
+        }
+
+        if (Maintenance.ACheckConditionRestorePercent is < 0 or > 100)
+        {
+            throw new InvalidOperationException(
+                $"Maintenance.ACheckConditionRestorePercent must be in [0,100], was {Maintenance.ACheckConditionRestorePercent}.");
+        }
+
+        // Strictly positive, not just non-negative: a check that grounds the aircraft for zero
+        // hours is not a grounding at all, and a missing playstyle override block in
+        // economy-config.json would otherwise resolve to exactly that (0) without this catching it.
+        if (Maintenance.ACheckDowntimeHours <= 0 || Maintenance.CCheckDowntimeHours <= 0)
+        {
+            throw new InvalidOperationException("Maintenance.ACheckDowntimeHours and Maintenance.CCheckDowntimeHours must be positive.");
+        }
+
+        if (Maintenance.CCheckDowntimeHours <= Maintenance.ACheckDowntimeHours)
+        {
+            throw new InvalidOperationException(
+                $"Maintenance.CCheckDowntimeHours ({Maintenance.CCheckDowntimeHours}) must be greater than Maintenance.ACheckDowntimeHours ({Maintenance.ACheckDowntimeHours}).");
+        }
+
+        if (Loan.BaseAnnualRatePct <= 0)
+        {
+            throw new InvalidOperationException($"Loan.BaseAnnualRatePct must be positive, was {Loan.BaseAnnualRatePct}.");
+        }
+
+        // Strictly greater, not just non-negative: a cap equal to the base rate would leave no room
+        // for risk-based scaling at all, and a missing playstyle override block would otherwise
+        // resolve both to 0 without this catching it (same defensive pattern as the maintenance
+        // downtime check above).
+        if (Loan.CapAnnualRatePct <= Loan.BaseAnnualRatePct)
+        {
+            throw new InvalidOperationException(
+                $"Loan.CapAnnualRatePct ({Loan.CapAnnualRatePct}) must be greater than Loan.BaseAnnualRatePct ({Loan.BaseAnnualRatePct}).");
+        }
+
+        if (UsedAircraft.PriceMultiplier is <= 0 or >= 1)
+        {
+            throw new InvalidOperationException(
+                $"UsedAircraft.PriceMultiplier must be in (0,1) - a used airframe must cost less than new, was {UsedAircraft.PriceMultiplier}.");
+        }
+
+        if (UsedAircraft.StartingHoursSinceACheckFraction is < 0 or >= 1)
+        {
+            throw new InvalidOperationException(
+                $"UsedAircraft.StartingHoursSinceACheckFraction must be in [0,1), was {UsedAircraft.StartingHoursSinceACheckFraction}.");
+        }
+
+        if (UsedAircraft.StartingHoursSinceCCheckFraction is < 0 or >= 1)
+        {
+            throw new InvalidOperationException(
+                $"UsedAircraft.StartingHoursSinceCCheckFraction must be in [0,1), was {UsedAircraft.StartingHoursSinceCCheckFraction}.");
+        }
+
+        if (UsedAircraft.StartingConditionPercent is <= 0 or > 100)
+        {
+            throw new InvalidOperationException(
+                $"UsedAircraft.StartingConditionPercent must be in (0,100], was {UsedAircraft.StartingConditionPercent}.");
+        }
+
+        if (UsedAircraft.StartingAirframeHours < 0)
+        {
+            throw new InvalidOperationException(
+                $"UsedAircraft.StartingAirframeHours cannot be negative, was {UsedAircraft.StartingAirframeHours}.");
         }
 
         if (Demand.NoAirMarketBelowNm <= 0 || Demand.NoAirMarketBelowNm >= Demand.SweetSpotMinNm)
@@ -260,9 +430,53 @@ public sealed class EconomyConfig
                 LeaseDepositMonths = 1.0,
                 StartingPilotMonthlySalary = 9_000m,
             },
+            // Casual figures - mirrors AircraftTypeSeeder.cs's catalogue for the four realistic
+            // types (A319/A321/B737/B739 - never game-balanced) and the deliberate game-balance
+            // figure for the two starter types (A320/B738 - see that file's class doc). True-life's
+            // own list (EconomyConfigCatalog.Default()) overrides only the two starter entries.
+            LeaseRates = new List<LeaseRateConfig>
+            {
+                new("A319", 350_000m),
+                new("A320", 30_000m),
+                new("A321", 420_000m),
+                new("B737", 340_000m),
+                new("B738", 30_000m),
+                new("B739", 410_000m),
+            },
             FleetFinance = new FleetFinanceConfig
             {
                 MonthlyInsurancePerAircraft = 6_000m,
+            },
+            Maintenance = new MaintenanceConfig
+            {
+                ACheckIntervalHours = 500,
+                CCheckIntervalHours = 4_000,
+                ACheckCost = 45_000m,
+                CCheckCost = 320_000m,
+                ConditionDecayPerHour = 0.12,
+                ACheckConditionRestorePercent = 35,
+                // Casual downtime figures - Default() mirrors the "casual" block since Casual is
+                // the base config's own playstyle. True-life's own downtime (~1 day / ~14 days) is
+                // applied separately in EconomyConfigCatalog.Default()'s Resolve() call.
+                ACheckDowntimeHours = 4,
+                CCheckDowntimeHours = 24,
+            },
+            // Casual figures - mirrors economy-config.json's "casual" block. See LoanConfig's own
+            // doc for why 2.5/5.0: a friendly base rate with a low ceiling, consistent with Casual
+            // being the forgiving playstyle everywhere else. True-life's own figures (4.0/8.0) are
+            // applied separately in EconomyConfigCatalog.Default()'s Resolve() call.
+            Loan = new LoanConfig
+            {
+                BaseAnnualRatePct = 2.5,
+                CapAnnualRatePct = 5.0,
+            },
+            UsedAircraft = new UsedAircraftConfig
+            {
+                PriceMultiplier = 0.55m,
+                StartingHoursSinceACheckFraction = 0.7,
+                StartingHoursSinceCCheckFraction = 0.7,
+                StartingConditionPercent = 70,
+                StartingAirframeHours = 18_000,
             },
             StrategyProfiles = new List<StrategyProfileConfig>
             {
@@ -320,6 +534,9 @@ public sealed record AirlineStartupConfig
 
     public decimal StartingPilotMonthlySalary { get; init; } = 9_000m;
 }
+
+/// <summary>One aircraft type's monthly lease rate - see <see cref="EconomyConfig.LeaseRates"/>.</summary>
+public sealed record LeaseRateConfig(string IcaoType, decimal MonthlyRate);
 
 /// <summary>Recurring monthly fleet costs that are not per-flight and not already covered by
 /// <see cref="Lease.MonthlyRate"/> or <see cref="Pilot.MonthlySalary"/>. Together with the lease
@@ -413,6 +630,20 @@ public sealed class FuelConfig
     /// <summary>Trailing window (days) averaged to produce the walk - larger means smoother,
     /// slower-moving prices.</summary>
     public int NoiseWindowDays { get; init; } = 5;
+
+    /// <summary>
+    /// "Cost of carry" - the real-world rule of thumb for how much extra fuel it costs to haul
+    /// extra fuel: roughly this fraction of the EXTRA fuel mass (carried beyond what the sector
+    /// itself would normally need) burned per hour it stays on board. 0.03 = ~3% of the excess
+    /// mass per hour of carriage, e.g. 2,000 kg of tankered fuel carried for two hours burns
+    /// about 120 kg extra. This is fuel tankering's counterweight alongside weight-based landing
+    /// fees (see docs/PLAN.md "Persistent fuel state and tankering" - "carrying fuel costs
+    /// fuel"). Applied only to fuel carried BEYOND a sector's own normal requirement (see
+    /// BlockFuelEstimator.Estimate's extraCarriedFuelKg parameter) - a normal, non-tankering
+    /// flight's block fuel and cost are completely unaffected by this constant, which is the
+    /// gate BlockFuelEstimatorWeightPenaltyTests asserts.
+    /// </summary>
+    public double CostOfCarryRatePerHour { get; init; } = 0.03;
 }
 
 public sealed class CostConfig
@@ -457,4 +688,106 @@ public sealed class AirportSizeRateTable
         AirportSizeCategory.Small => Small,
         _ => Other,
     };
+}
+
+/// <summary>
+/// A/C-check cycle, cost and downtime - see docs/PLAN.md "Maintenance" and the "Playstyle" section's
+/// behaviour table. IntervalHours/Cost/ConditionDecay/ConditionRestore are shared across playstyles
+/// ("same cycle... and same costs" per the plan); only the two downtime figures differ and are
+/// resolved from each playstyle's own override block by EconomyConfigCatalog - see
+/// <see cref="EconomyConfigCatalog"/>'s class doc for why that split exists.
+/// </summary>
+public sealed class MaintenanceConfig
+{
+    /// <summary>Hours of airframe time between A-checks - a light, routine inspection.</summary>
+    public double ACheckIntervalHours { get; init; } = 500;
+
+    /// <summary>Hours of airframe time between C-checks - a major, comprehensive overhaul. Always
+    /// a whole multiple of <see cref="ACheckIntervalHours"/> in the shipped config (4000 = 8x500),
+    /// so a C-check due moment is always also an A-check due moment - see
+    /// <see cref="Economy.MaintenanceScheduler"/>, which resets both cycles together when that
+    /// happens rather than scheduling a redundant A-check moments later.</summary>
+    public double CCheckIntervalHours { get; init; } = 4_000;
+
+    /// <summary>DELIBERATE GAME-BALANCE FIGURE - shared by both playstyles per docs/PLAN.md's
+    /// behaviour table ("same costs"). Sized so it stays a genuine but affordable bill against a
+    /// casually-flown airline's accumulated monthly surplus by the time 500 airframe hours have
+    /// passed (see docs/PLAN.md's E1 balance guardrails) - not a real-world A-check bill, which
+    /// would run into six figures on its own.</summary>
+    public decimal ACheckCost { get; init; } = 45_000m;
+
+    /// <summary>DELIBERATE GAME-BALANCE FIGURE, shared by both playstyles - see
+    /// <see cref="ACheckCost"/>'s doc. Costs heavily relative to an A-check (per the plan's
+    /// behaviour table) without being unaffordable against the years of accumulated profit a
+    /// 4,000-hour airframe implies.</summary>
+    public decimal CCheckCost { get; init; } = 320_000m;
+
+    /// <summary>Condition percentage points lost per airframe hour flown. At the default 0.12,
+    /// a full 500-hour A-check interval flown back to back costs 60 points of condition (100 ->
+    /// 40) before the next check restores some of it - see <see cref="ACheckConditionRestorePercent"/>.</summary>
+    public double ConditionDecayPerHour { get; init; } = 0.12;
+
+    /// <summary>Condition percentage points an A-check restores (added, capped at 100) - a real
+    /// A-check is a routine inspection, not a full overhaul, so it only partially refreshes
+    /// condition. A C-check always resets condition to 100 outright (a full overhaul) - see
+    /// <see cref="Economy.MaintenanceScheduler"/>.</summary>
+    public double ACheckConditionRestorePercent { get; init; } = 35;
+
+    /// <summary>Hours the aircraft is grounded for an A-check - resolved per playstyle (Casual: a
+    /// handful of hours; True-life: about a day) by EconomyConfigCatalog's Resolve().</summary>
+    public double ACheckDowntimeHours { get; init; } = 4;
+
+    /// <summary>Hours the aircraft is grounded for a C-check - resolved per playstyle (Casual: about
+    /// a day; True-life: about a fortnight, 336h) by EconomyConfigCatalog's Resolve().</summary>
+    public double CCheckDowntimeHours { get; init; } = 24;
+}
+
+/// <summary>
+/// Risk-based loan pricing, resolved per playstyle - see docs/PLAN.md "Loan interest is set by the
+/// simulation, never by the player" and <see cref="FSOps.Core.Finance.LoanRateCalculator"/>, the
+/// only code allowed to turn this into an actual rate. <see cref="BaseAnnualRatePct"/> is what a
+/// loan that consumes almost none of the airline's borrowing capacity costs; <see
+/// cref="CapAnnualRatePct"/> is the hard ceiling docs/PLAN.md specifies (5% Casual / 8% True-life)
+/// that a loan consuming all of it (or more - an over-capacity request is clamped, not
+/// extrapolated past the cap) is charged. Every rate LoanRateCalculator produces for this
+/// playstyle falls in [BaseAnnualRatePct, CapAnnualRatePct] by construction.
+/// </summary>
+public sealed class LoanConfig
+{
+    public double BaseAnnualRatePct { get; init; } = 2.5;
+
+    public double CapAnnualRatePct { get; init; } = 5.0;
+}
+
+/// <summary>
+/// Buying a used, rather than new, airframe - see docs/PLAN.md "Used aircraft - cheap to buy,
+/// expensive to run". Shared across playstyles: what a used aircraft looks like on the market
+/// doesn't depend on how realistically the owning airline chose to be billed elsewhere.
+/// </summary>
+public sealed class UsedAircraftConfig
+{
+    /// <summary>Fraction of <see cref="AircraftType.PurchasePrice"/> a used airframe of this type
+    /// costs - e.g. 0.55 = 45% cheaper than new. The saving is repaid through the maintenance cycle
+    /// (see the fields below), not given away for free.</summary>
+    public decimal PriceMultiplier { get; init; } = 0.55m;
+
+    /// <summary>Fraction of <see cref="MaintenanceConfig.ACheckIntervalHours"/> a used airframe has
+    /// already accumulated toward its next A-check at the moment of purchase - e.g. 0.7 means its
+    /// next A-check is only 30% of the interval away, not a fresh 500 hours out.</summary>
+    public double StartingHoursSinceACheckFraction { get; init; } = 0.7;
+
+    /// <summary>Fraction of <see cref="MaintenanceConfig.CCheckIntervalHours"/> a used airframe has
+    /// already accumulated toward its next C-check - same idea as
+    /// <see cref="StartingHoursSinceACheckFraction"/>, one cycle up.</summary>
+    public double StartingHoursSinceCCheckFraction { get; init; } = 0.7;
+
+    /// <summary>Condition percentage a used airframe starts at, versus 100 for new - see
+    /// docs/PLAN.md "condition decays from a lower base".</summary>
+    public double StartingConditionPercent { get; init; } = 70;
+
+    /// <summary>Total lifetime airframe hours a used aircraft is shown as having already flown -
+    /// cosmetic/informational only (checks are driven by HoursSinceACheck/HoursSinceCCheck, not
+    /// this total), but part of making the age/condition trade-off visible before purchase per the
+    /// plan's requirement.</summary>
+    public double StartingAirframeHours { get; init; } = 18_000;
 }

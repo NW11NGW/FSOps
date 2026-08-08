@@ -40,7 +40,14 @@
       "South Africa": 1.10
     },
     "volatilityAmplitude": 0.06,
-    "noiseWindowDays": 5
+    "noiseWindowDays": 5,
+    // "Cost of carry" - real-world rule of thumb for extra burn from hauling extra fuel: ~3% of
+    // the EXTRA mass (carried beyond a sector's own normal requirement) burned per hour it's on
+    // board. Fuel tankering's counterweight alongside weight-based landing fees - see
+    // docs/PLAN.md "Persistent fuel state and tankering", "the trade-off". Applied only to fuel
+    // carried beyond a sector's own requirement, so a normal (non-tankering) flight's figures are
+    // completely unaffected - see BlockFuelEstimatorWeightPenaltyTests.
+    "costOfCarryRatePerHour": 0.03
   },
   "costs": {
     "landingFeeRate": { "large": 9.50, "medium": 5.00, "small": 2.25, "other": 1.00 },
@@ -52,27 +59,131 @@
     "crewCostPerHour": 340,
     "minimumCrewDutyHours": 1.0
   },
+  // A-checks every 500 airframe hours, C-checks every 4,000 - see docs/PLAN.md "Maintenance" and
+  // the Playstyle behaviour table. Interval/cost/condition figures are shared across both
+  // playstyles ("same cycle... and same costs"); only aCheckDowntimeHours/cCheckDowntimeHours
+  // differ, and come from each playstyle's own "maintenance" override block below.
+  // aCheckCost/cCheckCost are DELIBERATE GAME-BALANCE FIGURES, not real A/C-check bills (which run
+  // into six and seven figures) - sized to stay a genuine but affordable hit against a casually
+  // flown airline's accumulated monthly surplus by the time the hours come due. Do not "correct"
+  // them toward realistic figures for the same reason the starter lease rate isn't corrected - see
+  // docs/PLAN.md "The starter lease is a deliberate game-balance number".
+  "maintenance": {
+    "aCheckIntervalHours": 500,
+    "cCheckIntervalHours": 4000,
+    "aCheckCost": 45000,
+    "cCheckCost": 320000,
+    "conditionDecayPerHour": 0.12,
+    "aCheckConditionRestorePercent": 35
+  },
+  // Buying a used airframe - see docs/PLAN.md "Used aircraft - cheap to buy, expensive to run".
+  // Shared across playstyles: the used-aircraft market doesn't depend on which playstyle the buyer
+  // chose. priceMultiplier 0.55 = 45% cheaper than new; the saving is repaid by starting 70% of the
+  // way into both maintenance cycles and 30 condition points below a fresh airframe.
+  "usedAircraft": {
+    "priceMultiplier": 0.55,
+    "startingHoursSinceACheckFraction": 0.7,
+    "startingHoursSinceCCheckFraction": 0.7,
+    "startingConditionPercent": 70,
+    "startingAirframeHours": 18000
+  },
+  // Shared across both playstyles - the founding pilot's salary is already a realistic figure and
+  // needs no game-balance treatment (see docs/PLAN.md "The starter lease is a deliberate
+  // game-balance number"). Everything else that differs by playstyle (starting capital, lease
+  // deposit term, starter lease rate, insurance) lives in the "casual"/"trueLife" blocks below -
+  // see docs/PLAN.md "Playstyle - Casual vs True-life". A playstyle is a named set of overrides,
+  // not a code path: EconomyConfigCatalog resolves one fully-merged EconomyConfig per playstyle at
+  // load time, and nothing downstream branches on which one an airline chose.
   "airlineStartup": {
-    "startingCapital": 2000000,
-    // Reduced from 2.0 to 1.0 as part of the 2026-08-08 progression-loop rebalance: at the
-    // game-balanced starter lease (see fleetFinance below and AircraftTypeSeeder.cs), a 1-month
-    // deposit on the second aircraft is affordable within roughly 7-10 flights at a genuinely
-    // casual one-leg-a-day pace - see docs/PLAN.md "The progression loop" and "Status after the
-    // progression-loop rebalance". This is a pacing decision, not a fictional-number label like
-    // the two below - a single month's deposit is a normal real-world lease term too.
-    "leaseDepositMonths": 1.0,
     "startingPilotMonthlySalary": 9000
   },
-  // DELIBERATE GAME-BALANCE FIGURE, NOT A REAL-WORLD RATE. Reduced from 50,000 (roughly 12% of
-  // the realistic figure) alongside the starter A320/B738's MonthlyLeaseRate
-  // (src/FSOps.Data/Import/AircraftTypeSeeder.cs, also cut to ~8% of a real rate) as part of the
-  // 2026-08-08 progression-loop rebalance confirmed by the user: at real-world lease/insurance
-  // rates, a single aircraft flown casually (~1 leg/day) can never be profitable - the plan's own
-  // "The progression loop" section requires it to be. See docs/PLAN.md "Status after the
-  // progression-loop rebalance" for the full numbers this was derived from. Do NOT "correct" this
-  // toward a realistic figure - that reopens the unplayable-grind problem this fixed.
-  "fleetFinance": {
-    "monthlyInsurancePerAircraft": 6000
+  "casual": {
+    // Exactly what Chunk D shipped - unchanged by the playstyle split. Starting capital, the
+    // 1-month lease deposit and the game-balance starter lease/insurance are what let one aircraft
+    // flown casually (~1 leg/day) be genuinely profitable - see docs/PLAN.md "The progression
+    // loop" and "Status after the progression-loop rebalance". DELIBERATE GAME-BALANCE FIGURES,
+    // NOT REAL-WORLD RATES - do NOT "correct" leaseRates.A320/B738 or monthlyInsurancePerAircraft
+    // toward realistic numbers, that reopens the unplayable-grind problem the 2026-08-08 rebalance
+    // fixed. leaseDepositMonths itself is a pacing decision, not a fictional-number label - a
+    // single month's deposit is a normal real-world lease term too.
+    "airlineStartup": {
+      "startingCapital": 2000000,
+      "leaseDepositMonths": 1.0
+    },
+    // Every leasable type's monthly lease rate for this playstyle - the ONLY place lease pricing
+    // is read from (EconomyConfig.LeaseRateFor); AircraftType.MonthlyLeaseRate in the seeded
+    // catalogue is never used for pricing (see AircraftTypeSeeder.cs's class doc). A320/B738 are
+    // the deliberate game-balance figures the starter aircraft use; the other four types were
+    // never game-balanced, so they carry the same realistic rate as trueLife below.
+    "leaseRates": [
+      { "icaoType": "A319", "monthlyRate": 350000 },
+      { "icaoType": "A320", "monthlyRate": 30000 },
+      { "icaoType": "A321", "monthlyRate": 420000 },
+      { "icaoType": "B737", "monthlyRate": 340000 },
+      { "icaoType": "B738", "monthlyRate": 30000 },
+      { "icaoType": "B739", "monthlyRate": 410000 }
+    ],
+    "fleetFinance": {
+      "monthlyInsurancePerAircraft": 6000
+    },
+    // Downtime measured in hours, not days - "a nuisance and a bill, not a fortnight of not
+    // playing" (docs/PLAN.md's Playstyle behaviour table). Same cycle and cost as True-life above.
+    "maintenance": {
+      "aCheckDowntimeHours": 4,
+      "cCheckDowntimeHours": 24
+    },
+    // Risk-based loan pricing - see docs/PLAN.md "Loan interest is set by the simulation, never by
+    // the player". The player NEVER supplies a rate; LoanRateCalculator scales linearly from
+    // baseAnnualRatePct (a loan that barely touches the airline's borrowing capacity) up to
+    // capAnnualRatePct (a loan borrowed right up to the limit) - the cap is a hard ceiling that can
+    // never be exceeded, asserted by a boundary test. Casual's friendlier 2.5%-5.0% band matches its
+    // forgiving figures everywhere else in this block.
+    "loan": {
+      "baseAnnualRatePct": 2.5,
+      "capAnnualRatePct": 5.0
+    }
+  },
+  "trueLife": {
+    // Real-world figures - see docs/PLAN.md "Playstyle - Casual vs True-life". leaseRates.A320/B738
+    // are the realistic rates the Casual figures above were deliberately cut from (see
+    // AircraftTypeSeeder.cs's class doc); the other four types are unchanged from Casual since they
+    // were already realistic. leaseDepositMonths is the standard 2-month real-world lease deposit
+    // term. startingCapital (2,500,000) is sized from the arithmetic, not guessed: the larger of the
+    // two starter deposits (390,000 x 2 = 780,000 for the B738) plus roughly three months of one
+    // aircraft's fixed costs at the worse-case starter lease (390,000 + 50,000 insurance + 9,000
+    // salary = 449,000/month) as runway - "a deposit plus a few months of runway", per the plan, not
+    // the ~44 months Casual affords while flying nothing. At real lease/insurance rates a single
+    // aircraft flown casually (~1 leg/day) is deeply loss-making (break-even lands near 4-5
+    // sectors/day - see docs/PLAN.md's "Before" column), so True-life's progression genuinely
+    // depends on virtual pilots flying standing schedules, not on this starting capital alone.
+    "airlineStartup": {
+      "startingCapital": 2500000,
+      "leaseDepositMonths": 2.0
+    },
+    "leaseRates": [
+      { "icaoType": "A319", "monthlyRate": 350000 },
+      { "icaoType": "A320", "monthlyRate": 380000 },
+      { "icaoType": "A321", "monthlyRate": 420000 },
+      { "icaoType": "B737", "monthlyRate": 340000 },
+      { "icaoType": "B738", "monthlyRate": 390000 },
+      { "icaoType": "B739", "monthlyRate": 410000 }
+    ],
+    "fleetFinance": {
+      "monthlyInsurancePerAircraft": 50000
+    },
+    // Realistic downtime - A-check about a day, C-check about a fortnight (docs/PLAN.md's
+    // Playstyle behaviour table: "A second aircraft becomes genuinely necessary"). Same cycle and
+    // cost as Casual above.
+    "maintenance": {
+      "aCheckDowntimeHours": 24,
+      "cCheckDowntimeHours": 336
+    },
+    // Realistic borrowing costs - hard-capped at 8% per docs/PLAN.md's playstyle table, above
+    // Casual's 5% the same way every other True-life figure is realistic rather than game-balanced.
+    "loan": {
+      "baseAnnualRatePct": 4.0,
+      "capAnnualRatePct": 8.0
+    }
   },
   "strategyProfiles": [
     { "profile": "LowCost", "referenceFareMultiplier": 0.75, "baselineLoadFactor": 0.76, "elasticity": 1.60, "costMultiplier": 0.85 },

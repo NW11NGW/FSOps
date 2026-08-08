@@ -1,6 +1,9 @@
 using FSOps.Core.Airports;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Data;
+using FSOps.Server.Auth;
+using FSOps.Server.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace FSOps.Server.Endpoints;
@@ -52,7 +55,8 @@ public static class AirportEndpoints
         return Results.Ok(results);
     }
 
-    private static async Task<IResult> GetByIcaoAsync(string icao, FsOpsDbContext db, CancellationToken ct)
+    private static async Task<IResult> GetByIcaoAsync(
+        string icao, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var code = icao.Trim().ToUpperInvariant();
         var airport = await db.Airports
@@ -63,6 +67,14 @@ public static class AirportEndpoints
         {
             return Results.NotFound();
         }
+
+        // Fuel price on airport detail, same source RouteEndpoints.PreviewAsync's flight brief
+        // uses - see docs/PLAN.md "Persistent fuel state and tankering". Works before an airline
+        // exists too (Casual is a neutral default - fuel pricing doesn't vary by playstyle).
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        var economyConfig = economyConfigCatalog.Get(airline?.Playstyle ?? AirlinePlaystyle.Casual);
+        var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
+        var fuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, airport.Icao, airport.Country, DateTimeOffset.UtcNow, worldSeed);
 
         return Results.Ok(new
         {
@@ -77,6 +89,7 @@ public static class AirportEndpoints
             airport.SizeCategory,
             airport.HasScheduledService,
             airport.LongestRunwayFt,
+            fuelPricePerKg,
             Runways = airport.Runways.Select(r => new
             {
                 r.Designator,

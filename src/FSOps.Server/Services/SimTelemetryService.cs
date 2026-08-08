@@ -42,6 +42,27 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     public DateTimeOffset? LastSampleUtc { get; private set; }
 
     /// <summary>
+    /// The most recent sample the pump has seen, full stop - not throttled like the SignalR
+    /// broadcast. Lets a request-scoped caller (see <c>FlightEndpoints.StartAsync</c>'s fuel
+    /// reconciliation) read "what does the sim currently report" without subscribing to
+    /// <see cref="SampleReceived"/> itself. Null until the first sample of this run arrives.
+    /// </summary>
+    public TelemetrySample? LastSample { get; private set; }
+
+    /// <summary>
+    /// Test-only hook that sets <see cref="LastSample"/>/<see cref="LastSampleUtc"/> directly,
+    /// without running the real telemetry pump - internal (rather than private) purely so
+    /// fuel-reconciliation tests can drive <c>FlightEndpoints.StartAsync</c> as if a sim had just
+    /// reported a reading, deterministically and without a real-time replay. See
+    /// FuelReconciliationTests.
+    /// </summary>
+    internal void SetLastSampleForTests(TelemetrySample sample)
+    {
+        LastSampleUtc = sample.TimestampUtc;
+        LastSample = sample;
+    }
+
+    /// <summary>
     /// Fires for every sample, at full rate, unlike the throttled SignalR broadcast below - this
     /// is what <see cref="FlightLifecycleService"/> drives the flight phase state machine from.
     /// Handlers run synchronously on the telemetry pump's own loop, so they must be fast and must
@@ -88,6 +109,7 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
             await foreach (var sample in _source.Telemetry.ReadAllAsync(ct))
             {
                 LastSampleUtc = sample.TimestampUtc;
+                LastSample = sample;
                 SampleReceived?.Invoke(this, sample);
 
                 var now = DateTimeOffset.UtcNow;

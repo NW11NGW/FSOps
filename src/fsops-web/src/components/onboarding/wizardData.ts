@@ -1,5 +1,5 @@
 import { ACCENT_PALETTE } from '@/lib/accentPalette'
-import type { AircraftFamily, CreateAirlineInput, StrategyProfile } from '@/types/airline'
+import type { AircraftFamily, CreateAirlineInput, Playstyle, StrategyProfile } from '@/types/airline'
 import type { AirportSummary } from '@/types/airport'
 import type { AltitudeUnit, CurrencyInfo, DistanceUnit, TimeDisplay, WeightUnit } from '@/types/settings'
 
@@ -17,6 +17,7 @@ export const WIZARD_STEPS = [
   { key: 'welcome', label: 'Welcome' },
   { key: 'identity', label: 'Identity' },
   { key: 'homeBase', label: 'Home base' },
+  { key: 'playstyle', label: 'Playstyle' },
   { key: 'strategy', label: 'Strategy' },
   { key: 'aircraft', label: 'Aircraft' },
   { key: 'currency', label: 'Currency' },
@@ -66,6 +67,23 @@ export const STRATEGY_PROFILES: StrategyProfileMeta[] = [
   },
 ]
 
+/**
+ * Only genuinely editorial text lives here, same split as StrategyProfileMeta above - the actual
+ * starting-capital/lease-deposit/starter-lease/insurance figures are fetched from
+ * GET /airline/playstyles instead, so they can never drift from the real economy-config.json
+ * values. See components/shared/PlaystyleCard.tsx and hooks/usePlaystyles.ts.
+ */
+export interface PlaystyleMeta {
+  id: Playstyle
+  label: string
+  tagline: string
+}
+
+export const PLAYSTYLE_META: PlaystyleMeta[] = [
+  { id: 'Casual', label: 'Casual', tagline: 'A growing airline in short, occasional sessions' },
+  { id: 'TrueLife', label: 'True-life', tagline: 'Real-world figures — built around virtual pilots' },
+]
+
 export interface AircraftMeta {
   id: AircraftFamily
   label: string
@@ -98,6 +116,7 @@ export interface WizardData {
   name: string
   icaoCode: string
   homeAirport: AirportSummary | null
+  playstyle: Playstyle | null
   strategyProfile: StrategyProfile | null
   accentColour: string
   starterAircraftFamily: AircraftFamily | null
@@ -110,13 +129,13 @@ export interface WizardData {
   loanEnabled: boolean
   loanAmount: number
   loanTermMonths: number
-  loanRatePct: number
 }
 
 export const DEFAULT_WIZARD_DATA: WizardData = {
   name: '',
   icaoCode: '',
   homeAirport: null,
+  playstyle: null,
   strategyProfile: null,
   accentColour: (ACCENT_PALETTE[0] ?? { name: 'Sky', hex: '#0EA5E9' }).hex,
   starterAircraftFamily: null,
@@ -129,7 +148,6 @@ export const DEFAULT_WIZARD_DATA: WizardData = {
   loanEnabled: false,
   loanAmount: 5_000_000,
   loanTermMonths: 60,
-  loanRatePct: 6,
 }
 
 const ICAO_PATTERN = /^[A-Z]{2,3}$/
@@ -142,6 +160,10 @@ export function isIdentityValid(data: WizardData): boolean {
 
 export function isHomeBaseValid(data: WizardData): boolean {
   return data.homeAirport !== null
+}
+
+export function isPlaystyleValid(data: WizardData): boolean {
+  return data.playstyle !== null
 }
 
 export function isStrategyValid(data: WizardData): boolean {
@@ -158,13 +180,14 @@ export function isCurrencyValid(data: WizardData): boolean {
 
 export function isFinanceValid(data: WizardData): boolean {
   if (!data.loanEnabled) return true
-  return data.loanAmount > 0 && data.loanTermMonths > 0 && data.loanRatePct >= 0
+  return data.loanAmount > 0 && data.loanTermMonths > 0
 }
 
 export const STEP_VALIDATORS: Record<WizardStepKey, (data: WizardData) => boolean> = {
   welcome: () => true,
   identity: isIdentityValid,
   homeBase: isHomeBaseValid,
+  playstyle: isPlaystyleValid,
   strategy: isStrategyValid,
   aircraft: isAircraftValid,
   currency: isCurrencyValid,
@@ -172,7 +195,7 @@ export const STEP_VALIDATORS: Record<WizardStepKey, (data: WizardData) => boolea
 }
 
 export function buildCreateAirlineInput(data: WizardData): CreateAirlineInput {
-  if (!data.homeAirport || !data.strategyProfile || !data.starterAircraftFamily) {
+  if (!data.homeAirport || !data.playstyle || !data.strategyProfile || !data.starterAircraftFamily) {
     throw new Error('Wizard data is incomplete.')
   }
   return {
@@ -180,6 +203,7 @@ export function buildCreateAirlineInput(data: WizardData): CreateAirlineInput {
     icaoCode: data.icaoCode,
     homeAirportIcao: data.homeAirport.icao,
     strategyProfile: data.strategyProfile,
+    playstyle: data.playstyle,
     accentColour: data.accentColour,
     starterAircraftFamily: data.starterAircraftFamily,
     currencyCode: data.currencyCode,
@@ -188,14 +212,18 @@ export function buildCreateAirlineInput(data: WizardData): CreateAirlineInput {
           startingLoan: {
             amount: data.loanAmount,
             termMonths: data.loanTermMonths,
-            annualRatePct: data.loanRatePct,
           },
         }
       : {}),
   }
 }
 
-/** Standard amortising-loan monthly payment estimate for the live preview on the review step. */
+/**
+ * Standard amortising-loan monthly payment estimate for the live preview on the review step.
+ * annualRatePct is always the server-computed figure from GET /airline/playstyles
+ * (startingLoanAnnualRatePct) - never player-supplied - see docs/PLAN.md "Loan interest is set by
+ * the simulation, never by the player".
+ */
 export function estimateMonthlyPayment(amount: number, termMonths: number, annualRatePct: number): number {
   if (amount <= 0 || termMonths <= 0) return 0
   const monthlyRate = annualRatePct / 100 / 12
@@ -211,6 +239,7 @@ export function resolveErrorStepIndex(message: string): number {
 
   if (lower.includes('icao') || lower.includes('name')) return indexOf('identity')
   if (lower.includes('airport') || lower.includes('home base') || lower.includes('hub')) return indexOf('homeBase')
+  if (lower.includes('playstyle')) return indexOf('playstyle')
   if (lower.includes('strategy')) return indexOf('strategy')
   if (lower.includes('aircraft') || lower.includes('colour') || lower.includes('color')) return indexOf('aircraft')
   if (lower.includes('currency')) return indexOf('currency')

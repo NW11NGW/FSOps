@@ -137,6 +137,14 @@ public class EconomyConfigTests
             "leaseDepositMonths": 1.0,
             "startingPilotMonthlySalary": 9000
           },
+          "leaseRates": [
+            { "icaoType": "A319", "monthlyRate": 350000 },
+            { "icaoType": "A320", "monthlyRate": 30000 },
+            { "icaoType": "A321", "monthlyRate": 420000 },
+            { "icaoType": "B737", "monthlyRate": 340000 },
+            { "icaoType": "B738", "monthlyRate": 30000 },
+            { "icaoType": "B739", "monthlyRate": 410000 }
+          ],
           // DELIBERATE GAME-BALANCE FIGURE, NOT A REAL-WORLD RATE - see the real economy-config.json.
           "fleetFinance": { "monthlyInsurancePerAircraft": 6000 },
           "strategyProfiles": [
@@ -160,6 +168,7 @@ public class EconomyConfigTests
         Assert.Equal(9.50m, config.Costs.LandingFeeRate.Large);
         Assert.Equal(450m, config.Costs.TurnaroundFeeRate.Large);
         Assert.Equal(1.0, config.AirlineStartup.LeaseDepositMonths);
+        Assert.Equal(30_000m, config.LeaseRateFor("A320"));
         Assert.Equal(6_000m, config.FleetFinance.MonthlyInsurancePerAircraft);
 
         foreach (var profile in Enum.GetValues<AirlineStrategyProfile>())

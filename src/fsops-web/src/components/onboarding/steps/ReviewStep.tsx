@@ -2,6 +2,7 @@ import { AlertTriangle, Loader2, PenLine } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { usePlaystyles } from '@/hooks/usePlaystyles'
 import { useSettings } from '@/hooks/useSettings'
 import { formatMoney } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -9,6 +10,7 @@ import { cn } from '@/lib/utils'
 import {
   AIRCRAFT_OPTIONS,
   FALLBACK_CURRENCY,
+  PLAYSTYLE_META,
   STRATEGY_PROFILES,
   WIZARD_STEPS,
   estimateMonthlyPayment,
@@ -30,14 +32,25 @@ function findIndex(key: WizardStepKey) {
 
 export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessage }: ReviewStepProps) {
   const { currencies } = useSettings()
+  const { status: playstylesStatus, playstyles } = usePlaystyles()
   const currency = currencies.find((c) => c.code === data.currencyCode) ?? FALLBACK_CURRENCY
   const strategy = STRATEGY_PROFILES.find((s) => s.id === data.strategyProfile)
+  const playstyle = PLAYSTYLE_META.find((p) => p.id === data.playstyle)
   const aircraft = AIRCRAFT_OPTIONS.find((a) => a.id === data.starterAircraftFamily)
-  const monthlyPayment = data.loanEnabled
-    ? estimateMonthlyPayment(data.loanAmount, data.loanTermMonths, data.loanRatePct)
+
+  // The startup loan's rate is NEVER chosen by the player - see docs/PLAN.md "Loan interest is set
+  // by the simulation, never by the player". A brand-new airline has no trading history, so the
+  // backend always prices a starting loan at the playstyle's rate ceiling; startingLoanAnnualRatePct
+  // (from GET /airline/playstyles) is that same figure, quoted here rather than guessed.
+  const playstyleInfo = data.playstyle ? playstyles.find((p) => p.playstyle === data.playstyle) : undefined
+  const loanRatePct = playstyleInfo?.startingLoanAnnualRatePct ?? null
+  const loanRateAvailable = playstylesStatus === 'ready' && loanRatePct !== null
+  const effectiveLoanRatePct = loanRatePct ?? 0
+  const monthlyPayment = data.loanEnabled && loanRateAvailable
+    ? estimateMonthlyPayment(data.loanAmount, data.loanTermMonths, effectiveLoanRatePct)
     : 0
-  const loanFieldsInvalid =
-    data.loanEnabled && (data.loanAmount <= 0 || data.loanTermMonths <= 0 || data.loanRatePct < 0)
+  const totalInterest = data.loanEnabled && loanRateAvailable ? monthlyPayment * data.loanTermMonths - data.loanAmount : 0
+  const loanFieldsInvalid = data.loanEnabled && (data.loanAmount <= 0 || data.loanTermMonths <= 0)
 
   const rows: { label: string; value: string; stepKey: WizardStepKey }[] = [
     { label: 'Airline', value: `${data.name.trim()} (${data.icaoCode})`, stepKey: 'identity' },
@@ -46,6 +59,7 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
       value: data.homeAirport ? `${data.homeAirport.icao} — ${data.homeAirport.name}` : '—',
       stepKey: 'homeBase',
     },
+    { label: 'Playstyle', value: playstyle ? `${playstyle.label} (permanent)` : '—', stepKey: 'playstyle' },
     { label: 'Strategy', value: strategy?.label ?? '—', stepKey: 'strategy' },
     { label: 'Starter aircraft', value: aircraft?.label ?? '—', stepKey: 'aircraft' },
     { label: 'Currency', value: currency ? `${currency.code} (${currency.symbol})` : data.currencyCode, stepKey: 'currency' },
@@ -100,7 +114,7 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
         </div>
 
         {data.loanEnabled && (
-          <div className="mt-4 grid gap-4 rounded-lg border border-border bg-surface p-4 sm:grid-cols-3">
+          <div className="mt-4 grid gap-4 rounded-lg border border-border bg-surface p-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="loan-amount" className="text-xs">
                 Amount
@@ -127,31 +141,33 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
                 onChange={(event) => onChange({ loanTermMonths: Number(event.target.value) })}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="loan-rate" className="text-xs">
-                Annual rate (%)
-              </Label>
-              <Input
-                id="loan-rate"
-                type="number"
-                min={0}
-                step={0.1}
-                value={data.loanRatePct}
-                onChange={(event) => onChange({ loanRatePct: Number(event.target.value) })}
-              />
-            </div>
-            <div className="sm:col-span-3">
+            <div className="sm:col-span-2">
               {loanFieldsInvalid ? (
                 <p className="text-xs text-danger">Amount and term must be greater than zero.</p>
+              ) : !loanRateAvailable ? (
+                <p className="text-xs text-muted-foreground">
+                  {playstylesStatus === 'error' ? 'Could not load the rate for this loan.' : 'Pricing this loan…'}
+                </p>
               ) : (
                 currency && (
-                  <p className="text-sm text-muted-foreground">
-                    Estimated payment:{' '}
-                    <span className="font-medium tabular-nums text-foreground">
-                      {formatMoney(monthlyPayment, currency)}
-                    </span>{' '}
-                    / month
-                  </p>
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <p>
+                      Annual rate:{' '}
+                      <span className="font-medium tabular-nums text-foreground">{effectiveLoanRatePct.toFixed(2)}%</span>{' '}
+                      <span className="text-xs">
+                        — a new airline has no trading history yet, so this is priced at your playstyle&rsquo;s ceiling,
+                        not chosen by you.
+                      </span>
+                    </p>
+                    <p>
+                      Monthly repayment:{' '}
+                      <span className="font-medium tabular-nums text-foreground">{formatMoney(monthlyPayment, currency)}</span>
+                    </p>
+                    <p>
+                      Total interest over the term:{' '}
+                      <span className="font-medium tabular-nums text-foreground">{formatMoney(totalInterest, currency)}</span>
+                    </p>
+                  </div>
                 )
               )}
             </div>
@@ -196,9 +212,11 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
           <div className="min-w-0">
             <dt className="text-xs uppercase tracking-wide text-muted-foreground">Startup loan</dt>
             <dd className="mt-0.5 truncate text-sm font-medium">
-              {data.loanEnabled && currency
-                ? `${formatMoney(data.loanAmount, currency)} over ${data.loanTermMonths} months at ${data.loanRatePct}% APR (~${formatMoney(monthlyPayment, currency)}/mo)`
-                : 'None — starting debt-free'}
+              {data.loanEnabled && currency && loanRateAvailable
+                ? `${formatMoney(data.loanAmount, currency)} over ${data.loanTermMonths} months at ${effectiveLoanRatePct.toFixed(2)}% APR (~${formatMoney(monthlyPayment, currency)}/mo)`
+                : data.loanEnabled
+                  ? `${formatMoney(data.loanAmount, currency)} over ${data.loanTermMonths} months`
+                  : 'None — starting debt-free'}
             </dd>
           </div>
         </div>

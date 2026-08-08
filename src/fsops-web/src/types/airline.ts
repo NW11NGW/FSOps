@@ -1,5 +1,32 @@
 export type StrategyProfile = 'International' | 'Domestic' | 'LowCost' | 'Premium' | 'Balanced'
 export type AircraftFamily = 'A320' | 'B737'
+export type Playstyle = 'Casual' | 'TrueLife'
+
+/**
+ * The figures and honest description behind one playstyle - fetched from GET /airline/playstyles,
+ * which sources them from the same economy-config.json the founding lease/insurance/starting
+ * capital actually come from. Chosen once at airline creation and permanent for that airline's
+ * life - see docs on the onboarding Playstyle step and Settings -> Airline.
+ */
+export interface PlaystyleInfo {
+  playstyle: Playstyle
+  description: string
+  immutable: boolean
+  immutableReason: string
+  startingCapital: number
+  leaseDepositMonths: number
+  starterLeaseRateA320: number
+  starterLeaseRateB737: number
+  monthlyInsurancePerAircraft: number
+  /**
+   * The rate a startup loan actually carries - never player-chosen (see docs/PLAN.md "Loan
+   * interest is set by the simulation, never by the player"). Always equal to this playstyle's
+   * loan rate ceiling: a brand-new airline has no trading history, so the backend always prices a
+   * starting loan at the cap. Quoted here rather than re-derived so the onboarding review step can
+   * never show a different figure than what the loan actually gets charged.
+   */
+  startingLoanAnnualRatePct: number
+}
 
 /**
  * The figures behind one strategy profile - fetched from GET /airline/strategy-profiles, which
@@ -24,10 +51,13 @@ export interface StrategyProfileInfo {
   warnsOnShortDomesticHop: boolean
 }
 
+/**
+ * Deliberately has NO rate field - see docs/PLAN.md "Loan interest is set by the simulation, never
+ * by the player". The backend computes the rate; there is nothing here to send it.
+ */
 export interface StartingLoanInput {
   amount: number
   termMonths: number
-  annualRatePct: number
 }
 
 export interface CreateAirlineInput {
@@ -35,6 +65,7 @@ export interface CreateAirlineInput {
   icaoCode: string
   homeAirportIcao: string
   strategyProfile: StrategyProfile
+  playstyle: Playstyle
   accentColour: string
   starterAircraftFamily: AircraftFamily
   currencyCode: string
@@ -47,6 +78,7 @@ export interface Airline {
   icaoCode: string
   homeAirportIcao: string
   strategyProfile: StrategyProfile
+  playstyle: Playstyle
   accentColour: string
   starterAircraftFamily: AircraftFamily
   currencyCode: string

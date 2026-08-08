@@ -13,15 +13,16 @@ namespace FSOps.Server.Services;
 /// code path that would add it is never reached, not because a computed figure gets zeroed out
 /// afterwards.
 /// <para>
-/// <b>Fuel is charged on uplift, not on burn, and never here.</b> <see cref="PostFuelUplift"/>
-/// is called once, at flight start, before it's known whether the flight will ever complete - see
-/// the "pay when you buy" rule in docs/PLAN.md "Persistent fuel state and tankering". This is a
-/// deliberate simplification: <see cref="FleetAircraft"/> has no persisted tank state yet, so
-/// every flight is treated as uplifting exactly the fuel it's planned to consume this sector
-/// (<see cref="FSOps.Core.Planning.FuelBreakdown.ChargedFuelKg"/> - trip, taxi and contingency,
-/// NOT the alternate/reserve allowances that normally stay in the tanks unburned), rather than
-/// detecting a real uplift event from telemetry and carrying fuel over between flights. Both
-/// remain outstanding - see the chunk report.
+/// <b>Fuel is charged on uplift, not on burn, and never here.</b> <see cref="PostFuelUplift"/> can
+/// be called any number of times over a flight's life - at start (reconciling whatever changed
+/// while FSOps wasn't watching, see <c>FlightEndpoints.StartAsync</c>), and any time a live-tracked
+/// flight shows a real rise in fuel while on the ground (see
+/// <c>FlightLifecycleService.ProcessSample</c>) - once per genuine uplift event, each posting its
+/// own ledger line naming the airport it happened at. <see cref="FleetAircraft.FuelOnBoardKg"/> is
+/// the persisted asset this charges against: burning fuel already owned costs nothing further, so
+/// a return leg flown on fuel already in the tank posts no fuel line at all. A decrease in fuel
+/// while on the ground (defuelling) is deliberately a non-event, not a credit - see
+/// <see cref="FSOps.Core.Flights.GroundFuelChangeKind"/> - so nothing here handles that direction.
 /// </para>
 /// </summary>
 public static class FlightEconomicsPoster
@@ -38,17 +39,20 @@ public static class FlightEconomicsPoster
     }
 
     /// <summary>
-    /// Charges for fuel at the airport it's bought at, before departure - never on burn. Posted
-    /// unconditionally: fuel bought is fuel bought, whether or not the flight that follows ever
-    /// completes (see the abandoned-flight rule - abandoning does not un-buy it). Returns the
-    /// amount charged (0 if nothing was uplifted) so the caller can fold it into
-    /// <see cref="Flight.TotalCost"/>.
+    /// Charges for fuel at the airport it's bought at - never on burn. Posted unconditionally:
+    /// fuel bought is fuel bought, whether or not the flight it was bought for ever completes (see
+    /// the abandoned-flight rule - abandoning does not un-buy it). Returns the amount charged (0
+    /// if nothing was uplifted) so the caller can fold it into <see cref="Flight.TotalCost"/>.
+    /// <paramref name="upliftAirport"/> is wherever the aircraft actually was when the rise was
+    /// observed - the departure airport for a normal pre-flight fill-up, but potentially the
+    /// arrival airport (or, for a diversion, wherever it diverted to) for a turnaround uplift
+    /// detected live while still tracked.
     /// </summary>
     public static decimal PostFuelUplift(
         FsOpsDbContext db,
         Flight flight,
         EconomyConfig config,
-        Airport departureAirport,
+        Airport upliftAirport,
         double upliftKg,
         DateTimeOffset utc,
         int worldSeed)
@@ -58,7 +62,7 @@ public static class FlightEconomicsPoster
             return 0m;
         }
 
-        var pricePerKg = FuelPricing.PricePerKg(config.Fuel, departureAirport.Icao, departureAirport.Country, utc, worldSeed);
+        var pricePerKg = FuelPricing.PricePerKg(config.Fuel, upliftAirport.Icao, upliftAirport.Country, utc, worldSeed);
         var cost = FlightCostCalculator.FuelUpliftCost(upliftKg, pricePerKg);
         if (cost <= 0)
         {
@@ -73,7 +77,7 @@ public static class FlightEconomicsPoster
             Category = LedgerCategory.Fuel,
             Amount = -cost,
             FlightId = flight.Id,
-            Description = $"Fuel uplift at {departureAirport.Icao}: {upliftKg:F0} kg @ {pricePerKg:F4}/kg",
+            Description = $"Fuel uplift at {upliftAirport.Icao}: {upliftKg:F0} kg @ {pricePerKg:F4}/kg",
         });
 
         return cost;
