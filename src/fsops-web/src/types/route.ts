@@ -47,25 +47,45 @@ export interface RoutePreviewRequest {
 }
 
 /**
- * Documented POST /routes contract. Note: the live backend's CreateRouteRequest record only
- * binds departureIcao/arrivalIcao/aircraftTypeId - baseFare is accepted here (and sent) per the
- * documented contract, but is currently ignored server-side, which always prices the route at
- * RoutePreviewCalculator's suggested fare. See the route builder's fare override control.
+ * POST /routes contract. Every route is a there-and-back pair: this always creates the
+ * requested direction *and* its reverse leg in one call, sharing baseFare (when supplied)
+ * between both legs. flightNumber, if supplied, applies to the outbound leg only - the return
+ * leg's flight number is always auto-suggested to follow on from it.
  */
 export interface CreateRouteRequest {
   departureIcao: string
   arrivalIcao: string
+  aircraftTypeId?: string
   baseFare?: number
+  flightNumber?: string
 }
 
+/** One directional leg, as returned by GET /routes, POST /routes, PUT /routes/{id}. */
 export interface RouteSummary {
   id: string
   departureIcao: string
   departureName: string | null
   arrivalIcao: string
   arrivalName: string | null
+  flightNumber: string | null
+  /** The id of this route's reverse leg, if one exists - routes are meant to always have one. */
+  returnRouteId: string | null
   distanceNm: number
   baseFare: number
+  /** Only populated by GET /routes, which resolves the airline's fleet aircraft to estimate it. */
+  estimatedBlockMinutes?: number | null
   isActive: boolean
   createdUtc: string
+}
+
+/** POST /routes response: both legs of the pair it just created (or completed, for a legacy leg). */
+export interface CreateRoutePairResponse {
+  outbound: RouteSummary
+  inbound: RouteSummary
+}
+
+/** DELETE /routes/{id} response: both legs it removed (or just the one, for an unpaired legacy leg). */
+export interface DeleteRoutePairResponse {
+  deletedRouteIds: string[]
+  message: string
 }

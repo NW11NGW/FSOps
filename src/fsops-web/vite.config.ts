@@ -24,6 +24,13 @@ export default defineConfig({
       },
     },
   },
+  // MapLibre tiles its GeoJSON in a web worker written as an ES module. Vite bundles workers as
+  // classic scripts by default, so the worker was silently dropped from the production build:
+  // raster basemap tiles and DOM markers still appeared, but no route line ever rendered because
+  // the geometry never got tiled. Building workers as ES modules keeps that worker intact.
+  worker: {
+    format: 'es',
+  },
   build: {
     outDir: '../FSOps.Server/wwwroot',
     emptyOutDir: true,

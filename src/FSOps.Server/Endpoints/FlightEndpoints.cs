@@ -19,6 +19,7 @@ public static class FlightEndpoints
         group.MapGet("/flights/active", GetActiveAsync);
         group.MapGet("/flights/{id:guid}", GetByIdAsync);
         group.MapGet("/flights", ListAsync);
+        group.MapGet("/flights/options", OptionsAsync);
     }
 
     private static async Task<IResult> StartAsync(
@@ -258,6 +259,133 @@ public static class FlightEndpoints
             .Select(ToFlightDto);
 
         return Results.Ok(flights);
+    }
+
+    /// <summary>
+    /// Backs the Fly screen: for every active route, reports its flight number/distance/block
+    /// time plus which fleet aircraft (if any) is sitting at the route's departure airport ready
+    /// to fly it "right now" - e.g. an aircraft that just landed at EGPH makes the EGPH-&gt;EGGD
+    /// route flyable even though the outbound EGGD-&gt;EGPH route isn't (its aircraft is gone).
+    /// Routes with nothing available get a human-readable reason instead.
+    /// </summary>
+    private static async Task<IResult> OptionsAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.Ok(Array.Empty<object>());
+        }
+
+        // Materialise first - the SQLite provider can't translate ORDER BY over DateTimeOffset.
+        var routes = (await db.Routes.Where(r => r.AirlineId == airline.Id && r.IsActive).ToListAsync(ct))
+            .OrderBy(r => r.CreatedUtc)
+            .ToList();
+        if (routes.Count == 0)
+        {
+            return Results.Ok(Array.Empty<object>());
+        }
+
+        var fleet = await db.FleetAircraft.Where(f => f.AirlineId == airline.Id).ToListAsync(ct);
+        var fleetTypeIds = fleet.Select(f => f.AircraftTypeId).Distinct().ToList();
+        var aircraftTypesById = await db.AircraftTypes.Where(t => fleetTypeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, ct);
+
+        // Falls back to the airline's cheapest/first type by ICAO code when no specific aircraft
+        // is under consideration for a route, purely so distance/block time still has something
+        // sensible to show - mirrors RouteEndpoints.ResolveAircraftTypeAsync's own fallback.
+        var fallbackAircraftType = aircraftTypesById.Values.OrderBy(t => t.IcaoType).FirstOrDefault()
+            ?? await db.AircraftTypes.OrderBy(t => t.IcaoType).FirstOrDefaultAsync(ct);
+
+        var icaos = routes.SelectMany(r => new[] { r.DepartureIcao, r.ArrivalIcao }).Distinct().ToList();
+        var airportsByIcao = await db.Airports.Where(a => icaos.Contains(a.Icao)).ToDictionaryAsync(a => a.Icao, ct);
+
+        // Starting a flight is blocked airline-wide while one is already in progress (see
+        // StartAsync above), regardless of which aircraft or route would otherwise be used.
+        var hasFlightInProgress = await db.Flights.AnyAsync(f => f.AirlineId == airline.Id && f.Status == FlightStatus.InProgress, ct);
+
+        var options = new List<object>();
+        foreach (var route in routes)
+        {
+            if (!airportsByIcao.TryGetValue(route.DepartureIcao, out var departure) ||
+                !airportsByIcao.TryGetValue(route.ArrivalIcao, out var arrival))
+            {
+                // World data shouldn't be able to drift out from under an existing route, but
+                // skip rather than fail the whole list if it somehow has.
+                continue;
+            }
+
+            var readyAircraft = fleet
+                .Where(f => f.LocationIcao == route.DepartureIcao && f.Status == FleetAircraftStatus.Active)
+                .OrderBy(f => f.CreatedUtc)
+                .FirstOrDefault();
+
+            string? reason = null;
+            var consideredAircraft = readyAircraft;
+
+            if (readyAircraft is null)
+            {
+                var atDeparture = fleet.Where(f => f.LocationIcao == route.DepartureIcao).ToList();
+                var inFlight = atDeparture.FirstOrDefault(f => f.Status == FleetAircraftStatus.InFlight);
+                var inMaintenance = atDeparture.FirstOrDefault(f => f.Status == FleetAircraftStatus.InMaintenance);
+
+                if (inFlight is not null)
+                {
+                    reason = $"Your aircraft at {route.DepartureIcao} is currently in flight.";
+                    consideredAircraft = inFlight;
+                }
+                else if (inMaintenance is not null)
+                {
+                    reason = $"Your aircraft at {route.DepartureIcao} is in maintenance.";
+                    consideredAircraft = inMaintenance;
+                }
+                else
+                {
+                    var activeLocations = fleet
+                        .Where(f => f.Status == FleetAircraftStatus.Active)
+                        .Select(f => f.LocationIcao)
+                        .Distinct()
+                        .ToList();
+                    reason = activeLocations.Count > 0
+                        ? $"No aircraft at {route.DepartureIcao} - your fleet is currently at {string.Join(", ", activeLocations)}."
+                        : "No active aircraft is available in your fleet.";
+                }
+            }
+            else if (hasFlightInProgress)
+            {
+                reason = "A flight is already in progress - complete or abandon it before starting another.";
+            }
+
+            var isFlyable = readyAircraft is not null && !hasFlightInProgress;
+
+            var aircraftType = consideredAircraft is not null && aircraftTypesById.TryGetValue(consideredAircraft.AircraftTypeId, out var matchedType)
+                ? matchedType
+                : fallbackAircraftType;
+
+            int? estimatedBlockMinutes = null;
+            double? distanceNm = route.DistanceNm;
+            if (aircraftType is not null)
+            {
+                var preview = RoutePreviewCalculator.Calculate(departure, arrival, aircraftType, airline.StrategyProfile);
+                estimatedBlockMinutes = preview.BlockTimeBreakdown.TotalMinutes;
+            }
+
+            options.Add(new
+            {
+                routeId = route.Id,
+                route.FlightNumber,
+                route.DepartureIcao,
+                DepartureName = departure.Name,
+                route.ArrivalIcao,
+                ArrivalName = arrival.Name,
+                distanceNm,
+                estimatedBlockMinutes,
+                isFlyable,
+                fleetAircraftId = readyAircraft?.Id,
+                aircraftRegistration = readyAircraft?.Registration,
+                reason = isFlyable ? null : reason,
+            });
+        }
+
+        return Results.Ok(options);
     }
 
     private static async Task<Flight?> LoadOwnedFlightAsync(FsOpsDbContext db, ICurrentUser currentUser, Guid flightId, CancellationToken ct)

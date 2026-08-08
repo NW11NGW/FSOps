@@ -288,7 +288,7 @@ public static class AirlineEndpoints
         return Results.Ok(airline);
     }
 
-    private static async Task<IResult> GetSummaryAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    internal static async Task<IResult> GetSummaryAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         return airline is null ? Results.NoContent() : Results.Ok(await BuildSummaryAsync(db, airline, ct));
@@ -306,7 +306,24 @@ public static class AirlineEndpoints
             .ToListAsync(ct);
         var cashBalance = amounts.Sum();
         var fleetCount = await db.FleetAircraft.CountAsync(f => f.AirlineId == airline.Id, ct);
-        var routeCount = await db.Routes.CountAsync(r => r.AirlineId == airline.Id, ct);
+
+        // Routes are always a there-and-back pair (see RouteEndpoints.CreateAsync): each direction
+        // is stored as its own row so it can carry its own flight number, but from the owner's
+        // point of view EGGD<->EGPH is *one* route, not two. Counting raw rows would double-count
+        // every pair, so this counts distinct unordered airport pairs instead - a leg that hasn't
+        // been paired yet (e.g. momentarily, before ListAsync's self-heal runs) still counts as
+        // one route rather than zero.
+        var legDirections = await db.Routes
+            .Where(r => r.AirlineId == airline.Id)
+            .Select(r => new { r.DepartureIcao, r.ArrivalIcao })
+            .ToListAsync(ct);
+        var routeCount = legDirections
+            .Select(d => string.CompareOrdinal(d.DepartureIcao, d.ArrivalIcao) <= 0
+                ? (d.DepartureIcao, d.ArrivalIcao)
+                : (d.ArrivalIcao, d.DepartureIcao))
+            .Distinct()
+            .Count();
+
         var pilotCount = await db.Pilots.CountAsync(p => p.AirlineId == airline.Id, ct);
 
         return new { airline, cashBalance, fleetCount, routeCount, pilotCount };

@@ -21,7 +21,7 @@ import { sampleGreatCirclePath } from '@/lib/geo'
 import type { AirportDetail, AirportSummary } from '@/types/airport'
 import type { LiveContext } from '@/types/live-context'
 import type { CurrencyInfo } from '@/types/settings'
-import type { RouteSummary } from '@/types/route'
+import type { CreateRoutePairResponse, DeleteRoutePairResponse, RouteSummary } from '@/types/route'
 
 function toDisplayAmount(baseAmount: number, currency: Pick<CurrencyInfo, 'rate' | 'decimalPlaces'>): string {
   return (baseAmount * currency.rate).toFixed(currency.decimalPlaces)
@@ -63,13 +63,19 @@ export function RoutesPage() {
 
   // Great-circle arcs for every saved route, sampled client-side (see lib/geo.ts) rather than
   // fetched one-by-one from /routes/preview - N routes would otherwise mean N network calls just
-  // to draw the network.
+  // to draw the network. Every route is now a paired there-and-back leg, so the outbound and
+  // return rows would otherwise draw the exact same line twice - deduped here by unordered
+  // airport pair so the map shows one arc per city pair, not two overlapping ones.
   const savedRouteArcs = useMemo<SavedRouteArc[]>(() => {
     const arcs: SavedRouteArc[] = []
+    const seenPairs = new Set<string>()
     for (const route of routesQuery.routes) {
+      const pairKey = [route.departureIcao, route.arrivalIcao].sort().join('-')
+      if (seenPairs.has(pairKey)) continue
       const dep = coordsByIcao[route.departureIcao]
       const arr = coordsByIcao[route.arrivalIcao]
       if (!dep || !arr) continue
+      seenPairs.add(pairKey)
       arcs.push({
         id: route.id,
         departureIcao: route.departureIcao,
@@ -169,9 +175,9 @@ export function RoutesPage() {
   }
 
   async function handleDeleteRoute(route: RouteSummary) {
-    await del(`/routes/${route.id}`)
+    const result = await del<DeleteRoutePairResponse>(`/routes/${route.id}`)
     if (selectedRouteId === route.id) setSelectedRouteId(null)
-    toast.success(`Route ${route.departureIcao} → ${route.arrivalIcao} deleted.`)
+    toast.success(result.message)
     routesQuery.refetch()
   }
 
@@ -185,12 +191,16 @@ export function RoutesPage() {
       fareTouched && Number.isFinite(parsedFare) && parsedFare > 0 ? parsedFare / currentCurrency.rate : undefined
 
     try {
-      await post<RouteSummary>('/routes', {
+      const { outbound, inbound } = await post<CreateRoutePairResponse>('/routes', {
         departureIcao: departure.icao,
         arrivalIcao: arrival.icao,
         ...(baseFare !== undefined ? { baseFare } : {}),
       })
-      toast.success(`Route ${departure.icao} → ${arrival.icao} created.`)
+      const flightNumbers = [outbound.flightNumber, inbound.flightNumber].filter(Boolean).join(' / ')
+      toast.success(
+        `Route created both ways: ${outbound.departureIcao} → ${outbound.arrivalIcao} and back` +
+          (flightNumbers ? ` (${flightNumbers}).` : '.'),
+      )
       setFareTouched(false)
       routesQuery.refetch()
     } catch (err) {

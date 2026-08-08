@@ -10,6 +10,14 @@ public class Route
 
     public string ArrivalIcao { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Digits with an optional single-letter suffix (e.g. "101" or "204A"), matching the
+    /// convention SimBrief/the aircraft FMS expect. Nullable because older/imported routes may
+    /// not have one yet; new routes always get one, either supplied or auto-suggested - see
+    /// <see cref="FSOps.Core.Routes.FlightNumberGenerator"/>.
+    /// </summary>
+    public string? FlightNumber { get; set; }
+
     public double DistanceNm { get; set; }
 
     public decimal BaseFare { get; set; }

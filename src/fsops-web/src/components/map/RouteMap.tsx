@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Feature, FeatureCollection, LineString } from 'geojson'
-import { MapLibreMap, Marker, NavigationControl } from 'maplibre-gl'
-import type { ErrorEvent as MapLibreErrorEvent, GeoJSONSource, MapLayerMouseEvent } from 'maplibre-gl'
+import { Map as MapLibreMap, Marker, NavigationControl } from 'maplibre-gl'
+import type { GeoJSONSource, MapLayerMouseEvent } from 'maplibre-gl'
+
+type MapLibreErrorEvent = { error?: { message?: string } }
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { boundsForPath, splitAntimeridian } from '@/lib/geo'
@@ -140,10 +142,92 @@ function buildRouteFeatures(
   return { type: 'FeatureCollection', features }
 }
 
-function ensureRouteLayers(map: MapLibreMap, colors: MapColors): void {
-  if (map.getSource(ROUTE_SOURCE_ID)) return
+const ROUTE_LAYER_IDS = [ROUTE_GLOW_LAYER_ID, ROUTE_LINE_LAYER_ID, ROUTE_HIT_LAYER_ID] as const
 
-  map.addSource(ROUTE_SOURCE_ID, { type: 'geojson', data: EMPTY_ROUTE_GEOJSON, promoteId: 'routeId' })
+/** Reads the `fsops:mapdebug` opt-in flag; wrapped in try/catch because `localStorage` can throw
+ * in locked-down embeds (e.g. the in-sim panel webview) and this must never break the map. */
+function mapDebugEnabled(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.localStorage.getItem('fsops:mapdebug') != null
+  } catch {
+    return false
+  }
+}
+
+function logMapDebug(map: MapLibreMap, context: string, featureCount: number): void {
+  if (!mapDebugEnabled()) return
+  // eslint-disable-next-line no-console
+  // Layer order and the resolved paint values matter as much as presence: a line layer sitting
+  // beneath the raster basemap, or painted with a colour MapLibre cannot parse, is invisible
+  // while still reporting itself as present.
+  let layerOrder: string[] = []
+  let paint: Record<string, unknown> = {}
+  let firstCoord: unknown = null
+  try {
+    layerOrder = map.getStyle().layers.map((layer) => layer.id)
+    if (map.getLayer(ROUTE_LINE_LAYER_ID)) {
+      paint = {
+        color: map.getPaintProperty(ROUTE_LINE_LAYER_ID, 'line-color'),
+        width: map.getPaintProperty(ROUTE_LINE_LAYER_ID, 'line-width'),
+        opacity: map.getPaintProperty(ROUTE_LINE_LAYER_ID, 'line-opacity'),
+      }
+    }
+    const source = map.getSource(ROUTE_SOURCE_ID) as
+      | { _data?: { features?: { geometry?: { coordinates?: unknown[] } }[] } }
+      | undefined
+    firstCoord = source?._data?.features?.[0]?.geometry?.coordinates?.[0] ?? null
+  } catch {
+    // Diagnostics must never break the map.
+  }
+
+  // eslint-disable-next-line no-console
+  console.debug('[fsops:map]', context, {
+    sourcePresent: Boolean(map.getSource(ROUTE_SOURCE_ID)),
+    glowLayerPresent: Boolean(map.getLayer(ROUTE_GLOW_LAYER_ID)),
+    lineLayerPresent: Boolean(map.getLayer(ROUTE_LINE_LAYER_ID)),
+    hitLayerPresent: Boolean(map.getLayer(ROUTE_HIT_LAYER_ID)),
+    featureCount,
+    layerOrder: layerOrder.join(' > '),
+    linePaint: JSON.stringify(paint),
+    firstCoord: JSON.stringify(firstCoord),
+  })
+}
+
+function ensureRouteLayers(map: MapLibreMap, colors: MapColors): void {
+  const sourcePresent = Boolean(map.getSource(ROUTE_SOURCE_ID))
+  const allLayersPresent = sourcePresent && ROUTE_LAYER_IDS.every((id) => map.getLayer(id))
+  if (allLayersPresent) return
+
+  // Defensive re-assert: a style reload (`setStyle` diffing, an initial style transition, or any
+  // other partial style mutation) can leave the source and its layers out of sync with each
+  // other - e.g. the source surviving while a layer was dropped, or vice versa. Silently trusting
+  // "the source exists, so we must be fine" is exactly what let the GeoJSON source sit there
+  // fully populated with data but with no layer left to paint it. Tear down whatever fragment of
+  // our own source/layers survived and rebuild the whole set from scratch every time anything is
+  // missing, instead of no-opping.
+  // Every one of these calls is wrapped, because during a style transition MapLibre's getSource /
+  // getLayer can report nothing while the style still holds the entry internally. Trusting those
+  // probes meant removeSource was skipped and the following addSource threw "Source 'routes'
+  // already exists" - which aborted the whole sync before setData ever ran, so the layers existed,
+  // the data was ready, and nothing was ever painted.
+  for (const id of ROUTE_LAYER_IDS) {
+    try {
+      if (map.getLayer(id)) map.removeLayer(id)
+    } catch {
+      // Layer was already gone.
+    }
+  }
+  try {
+    if (map.getSource(ROUTE_SOURCE_ID)) map.removeSource(ROUTE_SOURCE_ID)
+  } catch {
+    // Source was already gone, or is still referenced; addSource below tolerates both.
+  }
+
+  try {
+    map.addSource(ROUTE_SOURCE_ID, { type: 'geojson', data: EMPTY_ROUTE_GEOJSON, promoteId: 'routeId' })
+  } catch {
+    // The source survived the teardown - reuse it rather than losing the layers below.
+  }
 
   // Base + glow layers are styled entirely from feature-state so every saved route can be drawn
   // in one source/pair-of-layers instead of restyling per selection - only the emphasised route
@@ -180,23 +264,12 @@ function ensureRouteLayers(map: MapLibreMap, colors: MapColors): void {
       // Every route - emphasised or not - is drawn in the accent hue; only width/opacity change
       // with emphasis. A single shared colour reads as one legible network on both basemaps
       // instead of the unemphasised routes needing a second, weaker colour of their own.
+      // Deliberately static values. Driving width/opacity from feature-state here left the whole
+      // network unpainted; emphasis is carried by the separate glow layer instead, so the base
+      // network always draws regardless of what feature state resolves to.
       'line-color': colors.accent,
-      'line-width': [
-        'case',
-        ['==', ['feature-state', 'emphasis'], 'selected'],
-        3,
-        ['==', ['feature-state', 'emphasis'], 'hovered'],
-        2.5,
-        1.75,
-      ],
-      'line-opacity': [
-        'case',
-        ['==', ['feature-state', 'emphasis'], 'selected'],
-        0.95,
-        ['==', ['feature-state', 'emphasis'], 'hovered'],
-        0.85,
-        0.55,
-      ],
+      'line-width': 2,
+      'line-opacity': 0.9,
     },
   })
   // Wide, invisible hit-target so thin/dim lines are still easy to hover and click.
@@ -222,12 +295,19 @@ function syncRouteData(
   emphasisId: string | null,
   hoveredRouteId: string | null,
   previewPath: LonLat[],
+  debugContext: string,
 ): void {
   ensureRouteLayers(map, colors)
   const source = map.getSource(ROUTE_SOURCE_ID) as GeoJSONSource | undefined
-  if (!source) return
+  if (!source) {
+    // Should be unreachable now that ensureRouteLayers always (re)creates the source - logged so
+    // it is visible with the debug flag on rather than failing silently again.
+    logMapDebug(map, `${debugContext}: source missing after ensureRouteLayers`, 0)
+    return
+  }
 
-  source.setData(buildRouteFeatures(savedRoutes, emphasisId, previewPath))
+  const featureCollection = buildRouteFeatures(savedRoutes, emphasisId, previewPath)
+  source.setData(featureCollection)
   map.removeFeatureState({ source: ROUTE_SOURCE_ID })
   if (hoveredRouteId && hoveredRouteId !== emphasisId) {
     map.setFeatureState({ source: ROUTE_SOURCE_ID, id: hoveredRouteId }, { emphasis: 'hovered' })
@@ -235,6 +315,7 @@ function syncRouteData(
   if (emphasisId) {
     map.setFeatureState({ source: ROUTE_SOURCE_ID, id: emphasisId }, { emphasis: 'selected' })
   }
+  logMapDebug(map, debugContext, featureCollection.features.length)
 }
 
 function nextClickIntent(departure: AirportSummary | null): EndpointRole {
@@ -496,10 +577,19 @@ export function RouteMap({
   // 'style.load' fires as soon as the style JSON + source definitions are parsed, before any
   // tile request is made, which is the point sources/layers become safe to add.
   const styleReadyRef = useRef(false)
+  // Whether the map has completed at least one 'style.load'. Guards against calling `setStyle`
+  // before the *first* style has finished its own (inherently async) load - see the mount effect.
+  const hasLoadedOnceRef = useRef(false)
   const [tilesUnavailable, setTilesUnavailable] = useState(false)
 
   latestRef.current = { departure, arrival, path, savedRoutes, networkAirports, homeAirportIcao, selectedRouteId, hoveredRouteId }
   callbacksRef.current = { onSelectRoute, onHoverRoute, onAirportClick, onEndpointDrop }
+
+  // When the map debug flag is set, publish the live map so it can be interrogated from the
+  // console (layer order, resolved paint, queryRenderedFeatures). Off by default.
+  if (mapDebugEnabled() && typeof window !== 'undefined') {
+    ;(window as unknown as { __fsopsMap?: MapLibreMap | null }).__fsopsMap = mapRef.current
+  }
 
   useEffect(() => {
     const container = containerRef.current
@@ -530,13 +620,44 @@ export function RouteMap({
       const { departure: dep, arrival: arr, path: currentPath, savedRoutes: routes, networkAirports: network, homeAirportIcao: hub, selectedRouteId: selected, hoveredRouteId: hovered } =
         latestRef.current
       const emphasisId = resolveEmphasisId(routes, selected, dep, arr)
-      syncRouteData(current, readMapColors(), routes, emphasisId, hovered, currentPath)
+      syncRouteData(current, readMapColors(), routes, emphasisId, hovered, currentPath, 'full-sync')
       syncMarkers(current, markersRef.current, buildMarkerSpecs(network, hub, dep, arr), specsRef, callbacksRef)
       moveCamera(current, dep, arr, resolveFitPath(routes, emphasisId, currentPath), network, animate)
       cameraKeyRef.current = `${dep?.icao ?? ''}|${arr?.icao ?? ''}|${emphasisId ?? ''}`
     }
 
+    // Swaps the basemap style for a theme change. Only ever called once the map's *current* style
+    // has itself finished loading (see callers below) - calling `setStyle` while a style is still
+    // mid-load is a known-fragile MapLibre sequence and previously left the route source/layers
+    // out of sync with whichever style ultimately settled, which is why the arcs could silently
+    // fail to (re)attach after the very first paint.
+    const swapStyle = (nextMode: MapThemeMode) => {
+      modeRef.current = nextMode
+      styleReadyRef.current = false
+      map.once('style.load', () => {
+        styleReadyRef.current = true
+        fullSync(false)
+      })
+      map.setStyle(buildMapStyle(nextMode, readMapColors()))
+    }
+
     map.on('style.load', () => {
+      if (!hasLoadedOnceRef.current) {
+        hasLoadedOnceRef.current = true
+        // The DOM's actual theme class can briefly disagree with `initialMode`: `useTheme`
+        // applies the `dark` class in its own effect, and React fires a child component's
+        // passive effects (this one) before an ancestor's (the theme provider's) in the same
+        // commit - so `initialMode`, sampled synchronously above, can read the wrong theme on
+        // every fresh mount. Re-check now that the first style has genuinely finished loading,
+        // and self-correct via a single clean `setStyle` instead of leaving it to the
+        // MutationObserver below, which would otherwise fire this same correction while the
+        // first style is still loading.
+        const actualMode: MapThemeMode = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+        if (actualMode !== modeRef.current) {
+          swapStyle(actualMode)
+          return
+        }
+      }
       styleReadyRef.current = true
       fullSync(false)
     })
@@ -569,17 +690,17 @@ export function RouteMap({
       if (!current) return
 
       const nextMode: MapThemeMode = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-      if (nextMode !== modeRef.current) {
-        modeRef.current = nextMode
-        styleReadyRef.current = false
-        current.once('style.load', () => {
-          styleReadyRef.current = true
-          fullSync(false)
-        })
-        current.setStyle(buildMapStyle(nextMode, readMapColors()))
-      } else {
+      if (nextMode === modeRef.current) {
         applyRouteColors(current, readMapColors())
+        return
       }
+      if (!hasLoadedOnceRef.current) {
+        // The map's first style hasn't finished loading yet - the 'style.load' handler above
+        // will self-correct the theme once it has, rather than racing a `setStyle` call against
+        // it here.
+        return
+      }
+      swapStyle(nextMode)
     })
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] })
 
@@ -597,7 +718,7 @@ export function RouteMap({
     if (!map || !styleReadyRef.current) return
 
     const emphasisId = resolveEmphasisId(savedRoutes, selectedRouteId, departure, arrival)
-    syncRouteData(map, readMapColors(), savedRoutes, emphasisId, hoveredRouteId, path)
+    syncRouteData(map, readMapColors(), savedRoutes, emphasisId, hoveredRouteId, path, 'props-sync')
     syncMarkers(map, markersRef.current, buildMarkerSpecs(networkAirports, homeAirportIcao, departure, arrival), specsRef, callbacksRef)
 
     // Only move the camera when what the user is actively planning/selecting changes - hovering a

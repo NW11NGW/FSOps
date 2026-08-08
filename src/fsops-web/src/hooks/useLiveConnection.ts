@@ -32,6 +32,14 @@ export function useLiveConnection(): LiveConnectionState {
     connection.on('heartbeat', (payload: Heartbeat) => {
       if (!cancelled) setHeartbeat(payload)
     })
+    // Server broadcasts (Clients.All) reach every connection regardless of which events it cares
+    // about - this connection only wants heartbeats, but the Fly screen's flight-tracking events
+    // (see useFlightLive) also land here without a handler, which SignalR would otherwise log as
+    // a "no client method" warning for every one that arrives.
+    connection.on('telemetry', () => {})
+    connection.on('flightUpdate', () => {})
+    connection.on('flightCompleted', () => {})
+    connection.on('flightNeedsResolution', () => {})
 
     connection.onreconnecting(() => {
       if (!cancelled) setStatus('reconnecting')

@@ -12,10 +12,48 @@ export interface MapColors {
 }
 
 /**
- * MapLibre paint properties need literal CSS colour strings, not `var(...)` references, so the
- * design tokens (raw "H S% L%" triplets - see index.css) are read from the live computed style
- * and wrapped in hsl(...) at call time. This keeps the map in sync with both the light/dark
- * theme and the airline's accent colour without hardcoding any hex values here.
+ * Converts a design token ("H S% L%", the space-separated form Tailwind expects) into an
+ * rgb()/rgba() string.
+ *
+ * MapLibre parses paint colours with its own parser rather than the browser's, and it does not
+ * accept the space-separated hsl() syntax that CSS Color 4 introduced. Handing it
+ * `hsl(199 89% 48%)` leaves the layer unpainted with no error - the source and layers exist and
+ * report the right feature count, but nothing appears. Emitting rgb() sidesteps the whole issue
+ * because every parser understands it.
+ */
+function tokenToRgb(triplet: string, alpha = 1): string {
+  const [h, s, l] = triplet
+    .split(/[\s,]+/)
+    .map((part) => Number.parseFloat(part.replace('%', '')))
+
+  if (![h, s, l].every((n) => Number.isFinite(n))) {
+    // Unrecognised token - fall back to something visible rather than an unpaintable colour.
+    return alpha < 1 ? `rgba(56, 189, 248, ${alpha})` : 'rgb(56, 189, 248)'
+  }
+
+  const saturation = s! / 100
+  const lightness = l! / 100
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const hue = ((h! % 360) + 360) % 360
+  const second = chroma * (1 - Math.abs(((hue / 60) % 2) - 1))
+  const match = lightness - chroma / 2
+
+  const [r, g, b] = (
+    hue < 60 ? [chroma, second, 0]
+      : hue < 120 ? [second, chroma, 0]
+        : hue < 180 ? [0, chroma, second]
+          : hue < 240 ? [0, second, chroma]
+            : hue < 300 ? [second, 0, chroma]
+              : [chroma, 0, second]
+  ).map((channel) => Math.round((channel + match) * 255))
+
+  return alpha < 1 ? `rgba(${r}, ${g}, ${b}, ${alpha})` : `rgb(${r}, ${g}, ${b})`
+}
+
+/**
+ * MapLibre paint properties need literal colour strings, not `var(...)` references, so the design
+ * tokens are read from the live computed style and converted at call time. This keeps the map in
+ * sync with both the light/dark theme and the airline's accent colour without hardcoding colours.
  */
 export function readMapColors(): MapColors {
   const style = typeof window === 'undefined' ? null : getComputedStyle(document.documentElement)
@@ -28,12 +66,12 @@ export function readMapColors(): MapColors {
   const mutedForeground = read('--muted-foreground', '215 20% 65%')
 
   return {
-    accent: `hsl(${accent})`,
-    accentGlow: `hsl(${accent} / 0.5)`,
-    background: `hsl(${background})`,
-    border: `hsl(${border})`,
-    foreground: `hsl(${foreground})`,
-    mutedForeground: `hsl(${mutedForeground})`,
+    accent: tokenToRgb(accent),
+    accentGlow: tokenToRgb(accent, 0.5),
+    background: tokenToRgb(background),
+    border: tokenToRgb(border),
+    foreground: tokenToRgb(foreground),
+    mutedForeground: tokenToRgb(mutedForeground),
   }
 }
 

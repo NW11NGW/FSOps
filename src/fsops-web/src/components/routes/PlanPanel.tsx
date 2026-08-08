@@ -193,6 +193,10 @@ export function PlanPanel({
                   {creating ? 'Creating…' : 'Create route'}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                This creates both directions at once — {departure.icao} → {arrival.icao} and {arrival.icao} → {departure.icao}
+                — so an aircraft never gets stranded at the outstation.
+              </p>
               {createError && <p className="text-sm text-danger">{createError}</p>}
             </div>
           </div>

@@ -1,5 +1,6 @@
 using FSOps.Core.Entities;
 using FSOps.Core.Planning;
+using FSOps.Core.Routes;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,8 @@ public static class RouteEndpoints
         group.MapPost("/routes", CreateAsync);
         group.MapGet("/routes", ListAsync);
         group.MapGet("/routes/{id:guid}", GetByIdAsync);
+        group.MapPut("/routes/{id:guid}", UpdateAsync);
+        group.MapPost("/routes/{id:guid}/return-leg", CreateReturnLegAsync);
         group.MapDelete("/routes/{id:guid}", DeleteAsync);
     }
 
@@ -160,7 +163,16 @@ public static class RouteEndpoints
         return await db.AircraftTypes.OrderBy(t => t.IcaoType).FirstOrDefaultAsync(ct);
     }
 
-    private static async Task<IResult> CreateAsync(CreateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    /// <summary>
+    /// A route is always a there-and-back pair: creating EGGD-&gt;EGPH always creates EGPH-&gt;EGGD
+    /// alongside it, in the same save, so an aircraft that has flown the outbound leg is never
+    /// stranded at the outstation and no ferry/positioning flight is ever needed. The two legs
+    /// stay separate rows with their own flight numbers (outbound odd, return the next even - see
+    /// <see cref="FlightNumberGenerator"/>) and share the same fare unless overridden. If the
+    /// reverse direction already exists (most likely a route created before pairing was
+    /// mandatory), it's reused as the return leg instead of being rejected as a conflict.
+    /// </summary>
+    internal static async Task<IResult> CreateAsync(CreateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -171,41 +183,142 @@ public static class RouteEndpoints
         var departureIcao = (request.DepartureIcao ?? string.Empty).Trim().ToUpperInvariant();
         var arrivalIcao = (request.ArrivalIcao ?? string.Empty).Trim().ToUpperInvariant();
 
+        var (outbound, error) = await BuildRouteAsync(
+            db, airline, departureIcao, arrivalIcao, request.AircraftTypeId, request.BaseFare, request.FlightNumber,
+            existing => FlightNumberGenerator.SuggestOutbound(airline.IcaoCode, existing), ct);
+        if (error is not null)
+        {
+            return error;
+        }
+
+        var existingReverse = await db.Routes.FirstOrDefaultAsync(
+            r => r.AirlineId == airline.Id && r.DepartureIcao == arrivalIcao && r.ArrivalIcao == departureIcao, ct);
+
+        Route inbound;
+        if (existingReverse is not null)
+        {
+            inbound = existingReverse;
+        }
+        else
+        {
+            var (built, returnError) = await BuildRouteAsync(
+                db, airline, arrivalIcao, departureIcao, aircraftTypeId: null, outbound!.BaseFare, requestedFlightNumber: null,
+                existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), ct);
+            if (returnError is not null)
+            {
+                return returnError;
+            }
+
+            inbound = built!;
+            db.Routes.Add(inbound);
+        }
+
+        db.Routes.Add(outbound!);
+        // One SaveChangesAsync call for both new rows - EF Core wraps every pending change in a
+        // single implicit transaction, so the pair either lands together or not at all.
+        await db.SaveChangesAsync(ct);
+
+        return Results.Created($"/api/v1/routes/{outbound!.Id}", new
+        {
+            outbound = await ToRouteDtoAsync(outbound, db, ct),
+            inbound = await ToRouteDtoAsync(inbound, db, ct),
+        });
+    }
+
+    /// <summary>
+    /// Creates the reverse of an existing route in one call - e.g. given EGGD-&gt;EGPH, creates
+    /// EGPH-&gt;EGGD. Every route created through <see cref="CreateAsync"/> is already paired, so
+    /// this endpoint is now a manual repair tool: it exists for legacy single-leg routes (created
+    /// before pairing was mandatory) that the automatic backfill in <see cref="ListAsync"/> could
+    /// not complete on its own - e.g. because the reverse direction is beyond the fleet's range -
+    /// and for surfacing that failure reason directly instead of it being swallowed as a skip. The
+    /// fare mirrors the outbound route unless the caller overrides it, and the flight number
+    /// follows on from the outbound one (see <see cref="FlightNumberGenerator.SuggestReturn"/>)
+    /// unless the caller supplies their own.
+    /// </summary>
+    private static async Task<IResult> CreateReturnLegAsync(
+        Guid id, CreateReturnLegRequest? request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.NotFound();
+        }
+
+        var outbound = await db.Routes.FirstOrDefaultAsync(r => r.Id == id && r.AirlineId == airline.Id, ct);
+        if (outbound is null)
+        {
+            return Results.NotFound();
+        }
+
+        var requestedFare = request?.BaseFare ?? outbound.BaseFare;
+
+        var (route, error) = await BuildRouteAsync(
+            db, airline, outbound.ArrivalIcao, outbound.DepartureIcao, aircraftTypeId: null, requestedFare, request?.FlightNumber,
+            existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), ct);
+        if (error is not null)
+        {
+            return error;
+        }
+
+        db.Routes.Add(route!);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Created($"/api/v1/routes/{route!.Id}", await ToRouteDtoAsync(route, db, ct));
+    }
+
+    /// <summary>
+    /// Shared route-construction logic for <see cref="CreateAsync"/> and
+    /// <see cref="CreateReturnLegAsync"/>: validates the airport pair, enforces the directional
+    /// duplicate check, resolves an aircraft type and fare, and resolves a flight number. Returns
+    /// a fully-populated but not-yet-saved <see cref="Route"/>, or an error result to return
+    /// as-is.
+    /// </summary>
+    private static async Task<(Route? Route, IResult? Error)> BuildRouteAsync(
+        FsOpsDbContext db,
+        Airline airline,
+        string departureIcao,
+        string arrivalIcao,
+        Guid? aircraftTypeId,
+        decimal? requestedFare,
+        string? requestedFlightNumber,
+        Func<List<string?>, string> suggestFlightNumber,
+        CancellationToken ct)
+    {
         if (departureIcao.Length == 0 || arrivalIcao.Length == 0)
         {
-            return Results.BadRequest(new { error = "Departure and arrival ICAO codes are required." });
+            return (null, Results.BadRequest(new { error = "Departure and arrival ICAO codes are required." }));
         }
 
         if (departureIcao == arrivalIcao)
         {
-            return Results.BadRequest(new { error = "Departure and arrival airports must be different." });
+            return (null, Results.BadRequest(new { error = "Departure and arrival airports must be different." }));
         }
 
         var departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == departureIcao, ct);
         if (departure is null)
         {
-            return Results.BadRequest(new { error = $"Departure airport '{departureIcao}' was not found." });
+            return (null, Results.BadRequest(new { error = $"Departure airport '{departureIcao}' was not found." }));
         }
 
         var arrival = await db.Airports.FirstOrDefaultAsync(a => a.Icao == arrivalIcao, ct);
         if (arrival is null)
         {
-            return Results.BadRequest(new { error = $"Arrival airport '{arrivalIcao}' was not found." });
+            return (null, Results.BadRequest(new { error = $"Arrival airport '{arrivalIcao}' was not found." }));
         }
 
-        // "Same city pair" is treated as either direction between the same two airports -
-        // an airline offering LHR->JFK already covers the JFK->LHR leg conceptually.
+        // Routes are directional: an airline flying LHR->JFK doesn't automatically also fly
+        // JFK->LHR, so only an exact match in the *same* direction is a conflict. Creating the
+        // reverse direction on purpose is what CreateReturnLegAsync is for.
         var duplicateExists = await db.Routes.AnyAsync(r =>
-            r.AirlineId == airline.Id &&
-            ((r.DepartureIcao == departureIcao && r.ArrivalIcao == arrivalIcao) ||
-             (r.DepartureIcao == arrivalIcao && r.ArrivalIcao == departureIcao)), ct);
+            r.AirlineId == airline.Id && r.DepartureIcao == departureIcao && r.ArrivalIcao == arrivalIcao, ct);
         if (duplicateExists)
         {
-            return Results.Conflict(new { error = $"A route between {departureIcao} and {arrivalIcao} already exists." });
+            return (null, Results.Conflict(new { error = $"A route from {departureIcao} to {arrivalIcao} already exists." }));
         }
 
         AircraftType? aircraftType = null;
-        if (request.AircraftTypeId is Guid requestedTypeId)
+        if (aircraftTypeId is Guid requestedTypeId)
         {
             aircraftType = await db.AircraftTypes.FindAsync([requestedTypeId], ct);
         }
@@ -225,40 +338,46 @@ public static class RouteEndpoints
             var anyTypeInRange = fleetAircraftTypes.Any(t => distanceNm <= t.RangeNm * RoutePreviewCalculator.OperationalRangeFactor);
             if (!anyTypeInRange)
             {
-                return Results.BadRequest(new { error = $"This route ({distanceNm:F0} nm) is beyond your fleet's range." });
+                return (null, Results.BadRequest(new { error = $"This route ({distanceNm:F0} nm) is beyond your fleet's range." }));
             }
         }
 
         aircraftType ??= await db.AircraftTypes.OrderBy(t => t.IcaoType).FirstOrDefaultAsync(ct);
         if (aircraftType is null)
         {
-            return Results.Problem("No aircraft type is available to plan this route.", statusCode: StatusCodes.Status503ServiceUnavailable);
+            return (null, Results.Problem("No aircraft type is available to plan this route.", statusCode: StatusCodes.Status503ServiceUnavailable));
         }
 
         var result = RoutePreviewCalculator.Calculate(departure, arrival, aircraftType, airline.StrategyProfile);
 
         decimal baseFare;
-        if (request.BaseFare is decimal requestedFare)
+        if (requestedFare is decimal fareValue)
         {
             // Guard against fat-finger / garbage input while still letting the user meaningfully
             // undercut or beat the suggested fare - "sane" is defined relative to the suggestion
             // rather than as a fixed currency band, since suggested fares vary a lot by distance.
             var minAllowedFare = result.SuggestedFare * MinFareMultiplierOfSuggested;
             var maxAllowedFare = result.SuggestedFare * MaxFareMultiplierOfSuggested;
-            if (requestedFare <= 0m || requestedFare < minAllowedFare || requestedFare > maxAllowedFare)
+            if (fareValue <= 0m || fareValue < minAllowedFare || fareValue > maxAllowedFare)
             {
-                return Results.BadRequest(new
+                return (null, Results.BadRequest(new
                 {
-                    error = $"Fare {requestedFare:F2} is outside the allowed range " +
+                    error = $"Fare {fareValue:F2} is outside the allowed range " +
                             $"({minAllowedFare:F2}-{maxAllowedFare:F2}) for this route (suggested fare {result.SuggestedFare:F2}).",
-                });
+                }));
             }
 
-            baseFare = requestedFare;
+            baseFare = fareValue;
         }
         else
         {
             baseFare = result.SuggestedFare;
+        }
+
+        var (flightNumber, flightNumberError) = await ResolveFlightNumberAsync(db, airline, requestedFlightNumber, suggestFlightNumber, ct);
+        if (flightNumberError is not null)
+        {
+            return (null, flightNumberError);
         }
 
         var route = new Route
@@ -267,19 +386,108 @@ public static class RouteEndpoints
             AirlineId = airline.Id,
             DepartureIcao = departureIcao,
             ArrivalIcao = arrivalIcao,
+            FlightNumber = flightNumber,
             DistanceNm = result.DistanceNm,
             BaseFare = baseFare,
             IsActive = true,
             CreatedUtc = DateTimeOffset.UtcNow,
         };
 
-        db.Routes.Add(route);
-        await db.SaveChangesAsync(ct);
-
-        return Results.Created($"/api/v1/routes/{route.Id}", await ToRouteDtoAsync(route, db, ct));
+        return (route, null);
     }
 
-    private static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    /// <summary>
+    /// Validates a caller-supplied flight number and checks it isn't already used elsewhere on
+    /// this airline, or - when none was supplied - generates one with <paramref name="suggestDefault"/>.
+    /// </summary>
+    private static async Task<(string? FlightNumber, IResult? Error)> ResolveFlightNumberAsync(
+        FsOpsDbContext db, Airline airline, string? requestedFlightNumber, Func<List<string?>, string> suggestDefault, CancellationToken ct)
+    {
+        var existing = await db.Routes.Where(r => r.AirlineId == airline.Id).Select(r => r.FlightNumber).ToListAsync(ct);
+
+        var trimmed = requestedFlightNumber?.Trim().ToUpperInvariant();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return (suggestDefault(existing), null);
+        }
+
+        if (!FlightNumberGenerator.IsValidFormat(trimmed))
+        {
+            return (null, Results.BadRequest(new
+            {
+                error = "flightNumber must be 1-4 digits with an optional single letter suffix, e.g. '101' or '204A'.",
+            }));
+        }
+
+        if (existing.Any(fn => string.Equals(fn, trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            return (null, Results.Conflict(new { error = $"Flight number {trimmed} is already used by another route on this airline." }));
+        }
+
+        return (trimmed, null);
+    }
+
+    private static async Task<IResult> UpdateAsync(Guid id, UpdateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.NotFound();
+        }
+
+        var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == id && r.AirlineId == airline.Id, ct);
+        if (route is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (request.FlightNumber is not null)
+        {
+            var trimmed = request.FlightNumber.Trim().ToUpperInvariant();
+            if (trimmed.Length == 0)
+            {
+                route.FlightNumber = null;
+            }
+            else
+            {
+                if (!FlightNumberGenerator.IsValidFormat(trimmed))
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "flightNumber must be 1-4 digits with an optional single letter suffix, e.g. '101' or '204A'.",
+                    });
+                }
+
+                var collision = await db.Routes.AnyAsync(r => r.AirlineId == airline.Id && r.Id != route.Id && r.FlightNumber == trimmed, ct);
+                if (collision)
+                {
+                    return Results.Conflict(new { error = $"Flight number {trimmed} is already used by another route on this airline." });
+                }
+
+                route.FlightNumber = trimmed;
+            }
+        }
+
+        if (request.BaseFare is decimal fareValue)
+        {
+            if (fareValue <= 0m)
+            {
+                return Results.BadRequest(new { error = "baseFare must be greater than zero." });
+            }
+
+            route.BaseFare = fareValue;
+        }
+
+        if (request.IsActive is bool isActive)
+        {
+            route.IsActive = isActive;
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(await ToRouteDtoAsync(route, db, ct));
+    }
+
+    internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -292,6 +500,18 @@ public static class RouteEndpoints
         var routes = (await db.Routes.Where(r => r.AirlineId == airline.Id).ToListAsync(ct))
             .OrderBy(r => r.CreatedUtc)
             .ToList();
+
+        // Self-heals routes created before pairing was mandatory: any route missing its reverse
+        // leg gets one now, so the list this returns is always fully paired without the owner
+        // having to notice or do anything. Best-effort - a leg that can't be repaired right now
+        // (e.g. the reverse is beyond the fleet's range) is left as a single leg rather than
+        // failing the whole list; see POST /routes/{id}/return-leg for a manual retry.
+        var backfilled = await BackfillMissingReturnLegsAsync(db, airline, routes, ct);
+        if (backfilled.Count > 0)
+        {
+            routes.AddRange(backfilled);
+        }
+
         var icaos = routes.SelectMany(r => new[] { r.DepartureIcao, r.ArrivalIcao }).Distinct().ToList();
         var airports = await db.Airports.Where(a => icaos.Contains(a.Icao)).ToDictionaryAsync(a => a.Icao, ct);
 
@@ -299,6 +519,11 @@ public static class RouteEndpoints
         // airline's fleet default. Resolved once for the whole list rather than per-route.
         var discardedWarnings = new List<string>();
         var aircraftType = await ResolveAircraftTypeAsync(db, requestedTypeId: null, airline, discardedWarnings, ct);
+
+        // A route's return leg (if any) is just the other active route on this airline flying
+        // the reverse direction - the directional duplicate check means there's at most one, so
+        // this lookup is unambiguous and can be built once in memory instead of a query per row.
+        var idByDirection = routes.ToDictionary(r => (r.DepartureIcao, r.ArrivalIcao), r => r.Id);
 
         var dtos = routes.Select(r =>
         {
@@ -311,6 +536,8 @@ public static class RouteEndpoints
                 estimatedBlockMinutes = preview.BlockTimeBreakdown.TotalMinutes;
             }
 
+            Guid? returnRouteId = idByDirection.TryGetValue((r.ArrivalIcao, r.DepartureIcao), out var reverseId) ? reverseId : null;
+
             return new
             {
                 r.Id,
@@ -318,6 +545,8 @@ public static class RouteEndpoints
                 DepartureName = airports.TryGetValue(r.DepartureIcao, out var depAirport) ? depAirport.Name : null,
                 r.ArrivalIcao,
                 ArrivalName = airports.TryGetValue(r.ArrivalIcao, out var arrAirport) ? arrAirport.Name : null,
+                r.FlightNumber,
+                returnRouteId,
                 r.DistanceNm,
                 r.BaseFare,
                 estimatedBlockMinutes,
@@ -341,7 +570,13 @@ public static class RouteEndpoints
         return route is null ? Results.NotFound() : Results.Ok(await ToRouteDtoAsync(route, db, ct));
     }
 
-    private static async Task<IResult> DeleteAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    /// <summary>
+    /// Deletes a route and its return leg together, atomically - routes are always a there-and-back
+    /// pair, so leaving the surviving leg behind would strand an aircraft at the outstation with no
+    /// route back. If no reverse leg exists (a legacy single leg that hasn't been repaired yet),
+    /// only the one route is removed.
+    /// </summary>
+    internal static async Task<IResult> DeleteAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -355,15 +590,143 @@ public static class RouteEndpoints
             return Results.NotFound();
         }
 
-        route.DeletedUtc = DateTimeOffset.UtcNow;
+        var reverse = await db.Routes.FirstOrDefaultAsync(
+            r => r.AirlineId == airline.Id && r.DepartureIcao == route.ArrivalIcao && r.ArrivalIcao == route.DepartureIcao, ct);
+
+        var now = DateTimeOffset.UtcNow;
+        route.DeletedUtc = now;
+        if (reverse is not null)
+        {
+            reverse.DeletedUtc = now;
+        }
+
+        // One SaveChangesAsync call for both soft deletes - atomic in the same way pair creation is.
         await db.SaveChangesAsync(ct);
-        return Results.NoContent();
+
+        var deletedRouteIds = reverse is not null ? new[] { route.Id, reverse.Id } : new[] { route.Id };
+        var message = reverse is not null
+            ? $"Deleted both legs of the route: {route.DepartureIcao} ↔ {route.ArrivalIcao}."
+            : $"Deleted {route.DepartureIcao} → {route.ArrivalIcao}. It had no return leg to remove.";
+
+        return Results.Ok(new { deletedRouteIds, message });
+    }
+
+    /// <summary>
+    /// Repairs a pre-pairing route list in two passes. Pass 1 gives every route missing its
+    /// reverse leg one, so a legacy single-leg route ends up fully paired (saving each repair
+    /// immediately, rather than batching, so a later route repaired in the same pass sees the
+    /// flight number and direction the previous repair just took). Pass 2 gives every route still
+    /// missing a flight number one - this covers legs saved back when routes had no flight
+    /// numbers at all, which pass 1 alone never touches because their reverse leg already exists.
+    /// Never renumbers a route that already has one, and is idempotent - once every route is
+    /// paired and numbered, calling this again is a no-op query with no writes.
+    /// Returns the routes pass 1 created (for the caller to add to its own list); mutates
+    /// <paramref name="routes"/>' entities in place for pass 2's flight-number assignments,
+    /// but never adds/removes entries from that list itself, since the caller (ListAsync) does
+    /// that with the returned list to avoid double-counting.
+    /// </summary>
+    private static async Task<List<Route>> BackfillMissingReturnLegsAsync(
+        FsOpsDbContext db, Airline airline, List<Route> routes, CancellationToken ct)
+    {
+        // Local working copy - pass 2 needs visibility into legs pass 1 just created, but this
+        // method must not mutate the `routes` parameter's membership itself, or the caller's own
+        // `routes.AddRange(created)` afterwards would add those legs a second time.
+        var allRoutes = new List<Route>(routes);
+        var byDirection = new Dictionary<(string DepartureIcao, string ArrivalIcao), Route>();
+        foreach (var r in allRoutes)
+        {
+            // TryAdd rather than indexer assignment: odd/duplicate data (two rows with the exact
+            // same direction) must not throw here - the first one found just wins.
+            byDirection.TryAdd((r.DepartureIcao, r.ArrivalIcao), r);
+        }
+
+        var created = new List<Route>();
+
+        foreach (var route in routes)
+        {
+            if (byDirection.ContainsKey((route.ArrivalIcao, route.DepartureIcao)))
+            {
+                continue;
+            }
+
+            var (reverse, error) = await BuildRouteAsync(
+                db, airline, route.ArrivalIcao, route.DepartureIcao, aircraftTypeId: null, route.BaseFare, requestedFlightNumber: null,
+                existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, route.FlightNumber, existing), ct);
+
+            if (error is not null || reverse is null)
+            {
+                // Can't repair this one right now (e.g. the reverse is beyond the fleet's range) -
+                // leave it as a single leg instead of failing the whole list.
+                continue;
+            }
+
+            db.Routes.Add(reverse);
+            await db.SaveChangesAsync(ct);
+
+            created.Add(reverse);
+            allRoutes.Add(reverse);
+            byDirection[(reverse.DepartureIcao, reverse.ArrivalIcao)] = reverse;
+        }
+
+        // Pass 2: number every route still missing a flight number (e.g. legs saved before
+        // flight numbers existed). Walks pairs in creation order, not individual routes, so both
+        // legs of a still-unnumbered pair are resolved together: the earlier-created leg becomes
+        // the odd outbound and its partner the even return. If one side of a pair already has a
+        // number, the other is generated to sit right alongside it instead of independently.
+        var existingNumbers = await db.Routes
+            .Where(r => r.AirlineId == airline.Id)
+            .Select(r => r.FlightNumber)
+            .ToListAsync(ct);
+        var handledPairs = new HashSet<(string, string)>();
+        var anyNumberAssigned = false;
+
+        foreach (var route in allRoutes.OrderBy(r => r.CreatedUtc))
+        {
+            var pairKey = string.CompareOrdinal(route.DepartureIcao, route.ArrivalIcao) <= 0
+                ? (route.DepartureIcao, route.ArrivalIcao)
+                : (route.ArrivalIcao, route.DepartureIcao);
+            if (!handledPairs.Add(pairKey))
+            {
+                continue;
+            }
+
+            byDirection.TryGetValue((route.ArrivalIcao, route.DepartureIcao), out var partner);
+
+            if (route.FlightNumber is null)
+            {
+                var newNumber = partner?.FlightNumber is not null
+                    ? FlightNumberGenerator.SuggestReturn(airline.IcaoCode, partner.FlightNumber, existingNumbers)
+                    : FlightNumberGenerator.SuggestOutbound(airline.IcaoCode, existingNumbers);
+                route.FlightNumber = newNumber;
+                existingNumbers.Add(newNumber);
+                anyNumberAssigned = true;
+            }
+
+            if (partner is not null && partner.FlightNumber is null)
+            {
+                var newNumber = FlightNumberGenerator.SuggestReturn(airline.IcaoCode, route.FlightNumber, existingNumbers);
+                partner.FlightNumber = newNumber;
+                existingNumbers.Add(newNumber);
+                anyNumberAssigned = true;
+            }
+        }
+
+        if (anyNumberAssigned)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+
+        return created;
     }
 
     private static async Task<object> ToRouteDtoAsync(Route route, FsOpsDbContext db, CancellationToken ct)
     {
         var departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
         var arrival = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct);
+        var returnRouteId = await db.Routes
+            .Where(r => r.AirlineId == route.AirlineId && r.DepartureIcao == route.ArrivalIcao && r.ArrivalIcao == route.DepartureIcao)
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(ct);
 
         return new
         {
@@ -372,6 +735,8 @@ public static class RouteEndpoints
             DepartureName = departure?.Name,
             route.ArrivalIcao,
             ArrivalName = arrival?.Name,
+            route.FlightNumber,
+            returnRouteId,
             route.DistanceNm,
             route.BaseFare,
             route.IsActive,
@@ -382,4 +747,8 @@ public static class RouteEndpoints
 
 public record RoutePreviewRequest(string? DepartureIcao, string? ArrivalIcao, Guid? AircraftTypeId);
 
-public record CreateRouteRequest(string? DepartureIcao, string? ArrivalIcao, Guid? AircraftTypeId, decimal? BaseFare);
+public record CreateRouteRequest(string? DepartureIcao, string? ArrivalIcao, Guid? AircraftTypeId, decimal? BaseFare, string? FlightNumber);
+
+public record UpdateRouteRequest(string? FlightNumber, decimal? BaseFare, bool? IsActive);
+
+public record CreateReturnLegRequest(decimal? BaseFare, string? FlightNumber);
