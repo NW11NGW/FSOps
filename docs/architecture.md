@@ -15,6 +15,9 @@ This document describes how FSOps is put together: the solution layout, how a re
   - [App paths: no hardcoded filesystem paths](#app-paths-no-hardcoded-filesystem-paths)
   - [Deterministic, testable planning logic](#deterministic-testable-planning-logic)
   - [Sim abstraction](#sim-abstraction)
+- [Simulator connection and the telemetry pipeline](#simulator-connection-and-the-telemetry-pipeline)
+- [Flight-phase detection and landing quality](#flight-phase-detection-and-landing-quality)
+- [The append-only flight event log and crash recovery](#the-append-only-flight-event-log-and-crash-recovery)
 - [Layering diagram](#layering-diagram)
 
 ## Solution layout
@@ -25,10 +28,11 @@ FSOps is a single .NET solution (`FSOps.sln`) with a React frontend alongside it
 |---|---|
 | `src/FSOps.Core` | Domain model, money handling, route planning, and finance calculations. Airlines, routes, aircraft, flights, pilots, and the entities and pure logic that drive them — see [FSOps.Core areas](#fsopscore-areas). No dependency on ASP.NET Core, EF Core, or SimConnect — this project is plain C# so it can be unit tested in isolation. |
 | `src/FSOps.Data` | Persistence. Entity Framework Core mapping of the domain model onto SQLite, entity configurations, world data import, and the `FsOpsDbContext` used by the server. |
-| `src/FSOps.Sim` | The SimConnect adapter. Wraps the SimConnect API to read live aircraft state from MSFS and expose it to the rest of the app through a sim-agnostic interface (see [Sim abstraction](#sim-abstraction)). |
-| `src/FSOps.Server` | The ASP.NET Core host. Exposes the REST API (see [API endpoint surface](#api-endpoint-surface)) and SignalR hubs, wires everything together via dependency injection, and serves the built frontend as static files. |
-| `src/fsops-web` | The React + TypeScript frontend, built with Vite and styled with Tailwind CSS and shadcn/ui. Runs entirely in the browser against the local server. |
-| `tests/FSOps.Core.Tests` | xUnit tests, focused on `FSOps.Core`'s domain and planning logic. |
+| `src/FSOps.Sim` | The sim abstraction and its two implementations: `SimConnectSource`, which wraps `CTrue.FsConnect` to read live aircraft state from a running copy of MSFS, and `FakeSimSource`, which replays a recorded flight from a JSON script with no simulator needed. Both implement the same `ISimSource` interface (see [Sim abstraction](#sim-abstraction)). |
+| `src/FSOps.Server` | The ASP.NET Core host. Exposes the REST API (see [API endpoint surface](#api-endpoint-surface)) and SignalR hubs, runs the background services that pump sim telemetry and drive flight tracking (see [Simulator connection and the telemetry pipeline](#simulator-connection-and-the-telemetry-pipeline)), wires everything together via dependency injection, and serves the built frontend as static files. |
+| `src/fsops-web` | The React + TypeScript frontend, built with Vite and styled with Tailwind CSS and shadcn/ui, with MapLibre GL for the route-network and live-flight maps. Runs entirely in the browser against the local server. |
+| `tests/FSOps.Core.Tests` | xUnit tests, focused on `FSOps.Core`'s domain, planning, and flight-tracking logic (phase state machine, landing quality, aircraft-type matching, flight numbering). |
+| `tests/FSOps.Server.Tests` | xUnit tests for server-level behaviour that needs a database, chiefly round-trip route pairing and airline-summary route counting. |
 
 ## FSOps.Core areas
 
@@ -36,7 +40,9 @@ FSOps is a single .NET solution (`FSOps.sln`) with a React frontend alongside it
 
 | Area | Contents |
 |---|---|
-| `Entities/` | The domain model: `Airline`, `Route`, `FleetAircraft`, `Flight`, `FlightEvent`, `Pilot`, `Loan`, `Lease`, `LedgerTransaction`, `MaintenanceEvent`, `EconomyState`, `Airport`, `Runway`, `AircraftType`, `UserSettings`, and the shared enums (strategy profile, units, currencies, statuses). |
+| `Entities/` | The domain model: `Airline`, `Route`, `FleetAircraft`, `Flight`, `FlightEvent`, `Pilot`, `Loan`, `Lease`, `LedgerTransaction`, `MaintenanceEvent`, `EconomyState`, `Airport`, `Runway`, `AircraftType`, `UserSettings`, and the shared enums (strategy profile, units, currencies, statuses). `Flight` carries `Revenue`/`TotalCost` columns, always zero for now — reserved for the economy engine (see [The economy simulation](guides/user-guide.md#the-economy-simulation) in the user guide). |
+| `Flights/` | Flight tracking's pure domain logic: `FlightPhase` (the ten-phase enum), `FlightPhaseThresholds` (the speed/altitude/timing constants that drive phase transitions), `FlightPhaseStateMachine` (advances phase-by-phase from telemetry samples, captures OOOI and touchdowns, and restores itself from a stored event history), `LandingQualityCalculator` (runway-centreline deviation), and `AircraftTypeMatcher` (family-level, informational-only aircraft matching). See [Flight-phase detection and landing quality](#flight-phase-detection-and-landing-quality). |
+| `Routes/` | `FlightNumberGenerator` — deterministic odd/even outbound/return flight-number pairing per airline, pure and side-effect free. |
 | `Money/` | `CurrencyCatalogue` (the supported-currency list, each with a fixed display rate against the GBP-pegged base unit) and `MoneyFormatter` (base-unit → display-currency conversion and formatting). See [Money is stored in a single base unit](#money-is-stored-in-a-single-base-unit). |
 | `Planning/` | Route preview math: `GreatCircle` (distance/bearing), `CruiseAltitudeSelector`, `BlockTimeEstimator`, `BlockFuelEstimator`, `FareEstimator`, composed together by `RoutePreviewCalculator` into one preview result plus validation warnings. Pure, deterministic, no I/O. |
 | `Finance/` | `LoanCalculator` — amortising loan monthly-payment math, used both when a startup loan is taken and for the review-step preview in the wizard. |
@@ -52,9 +58,11 @@ All REST endpoints are versioned under `/api/v1`:
 |---|---|---|
 | `/airline` | `POST`, `GET`, `PUT`, `GET /summary`, `DELETE` | Founding an airline (creates the airline, starter fleet aircraft, first pilot, and opening ledger entries in one transaction), fetching/updating it, a summary including derived cash balance and counts, and the "start over" soft-delete. |
 | `/settings` | `GET`, `PUT`, `GET /currencies` | Per-user display settings — currency, units, theme, accent colour, Community folder path — created lazily on first access, and the supported-currency catalogue. |
-| `/routes` | `POST`, `GET`, `GET /{id}`, `DELETE /{id}`, `POST /preview` | Route creation and listing (list includes each route's estimated block time), fetching or soft-deleting a single route, and the live, throw-free preview used while picking airports. |
+| `/routes` | `POST`, `GET`, `PUT /{id}`, `GET /{id}`, `DELETE /{id}`, `POST /{id}/return-leg`, `POST /preview` | Route creation, which always creates both directions of a round trip in one call (see [Round trips and where your aircraft actually is](guides/user-guide.md#round-trips-and-where-your-aircraft-actually-is)); listing (self-healing — backfills a missing return leg or flight number for legacy single-leg routes); updating a route's flight number, fare, or active flag; fetching or soft-deleting a route pair together; a manual return-leg repair tool for routes that couldn't be paired automatically; and the live, throw-free preview used while picking airports. |
 | `/airports` | search / lookup endpoints | Backing the airport pickers in route building and airline creation, using the imported world airport/runway data. |
 | `/worlddata` | `GET /status` | Reports whether world data import has finished, is in progress, and how many airports/runways were loaded — polled by the frontend on first launch. |
+| `/sim` | `GET /status` | The simulator's current connection state, which source is active (`SimConnect` or `Fake`), the aircraft title last seen, and when the last telemetry sample arrived — backs the top bar's sim indicator and the Fly screen's readiness checks. |
+| `/flights` | `POST /start`, `POST /{id}/abandon`, `POST /{id}/complete-manual`, `GET /active`, `GET /{id}`, `GET`, `GET /options` | Starting a tracked flight (validates one-flight-at-a-time, resolves fleet aircraft and pilot, snapshots the plan, flags an aircraft-type mismatch if the sim's loaded aircraft doesn't match); abandoning or manually completing a flight that needs resolution; the currently active/interrupted flight with its live snapshot; a single flight's full detail including its event history; flight history; and, for the Fly screen, every route annotated with whether a fleet aircraft is currently available to fly it right now. |
 
 ## Request and data flow
 
@@ -78,7 +86,7 @@ Browser SPA (fsops-web)
                               EF Core (FSOps.Data) ──► SQLite
 ```
 
-The frontend talks to the backend two ways: versioned REST endpoints under `/api/v1` for requests with a clear request/response shape (creating an airline, adding a route, and so on), and a SignalR hub at `/hubs/live` for anything that needs to push to the browser without being asked — a heartbeat today, live flight telemetry and event notifications as flight tracking is built out.
+The frontend talks to the backend two ways: versioned REST endpoints under `/api/v1` for requests with a clear request/response shape (creating an airline, adding a route, and so on), and a SignalR hub at `/hubs/live` for anything that needs to push to the browser without being asked — a heartbeat, live flight telemetry, and flight-completion/needs-resolution notifications.
 
 **Simulator-driven flow:**
 
@@ -95,7 +103,7 @@ SimConnect  ──────────────► FSOps.Sim (telemetry c
                               Broadcast over /hubs/live ──► Browser SPA
 ```
 
-`FSOps.Sim` owns the SimConnect connection and turns raw sim variables into a telemetry stream. A flight tracker consumes that stream, applies the domain logic that turns raw telemetry into flight-phase detection and landing-quality scoring, persists what needs persisting, and broadcasts live updates back out over the same `/hubs/live` hub the browser is already listening on.
+`FSOps.Sim` owns the SimConnect connection and turns raw sim variables into a telemetry stream. `SimTelemetryService` (`FSOps.Server`) pumps that stream at the sim's own sampling rate, feeding `FlightLifecycleService` full-rate for accurate phase detection while throttling what it broadcasts over `/hubs/live` to twice a second, so the browser gets smooth live updates without every sim frame crossing the wire. `FlightLifecycleService` is where telemetry becomes domain logic — advancing the flight-phase state machine, capturing landing quality, and persisting the append-only event log a flight is built from (see [Flight-phase detection and landing quality](#flight-phase-detection-and-landing-quality) and [The append-only flight event log and crash recovery](#the-append-only-flight-event-log-and-crash-recovery)) — before broadcasting live updates back out over the same hub the browser is already listening on.
 
 ## Design principles
 
@@ -120,7 +128,7 @@ Display currency is purely a read-time transform: `MoneyFormatter.ConvertFromBas
 
 Your airline's cash balance is never stored as a single mutable number that gets incremented and decremented in place. Instead, every financial event — a ticket sale, a fuel bill, a lease payment, a loan drawdown, starting capital — is written as its own row in an append-only `LedgerTransaction` table. The cash balance the API and UI show is always derived as **`SUM(LedgerTransaction.Amount)`** for the airline, computed at read time, rather than read off a stored column.
 
-`FlightEvent` (the phase-by-phase record of a tracked flight, once flight tracking lands) follows the same append-only rule for the same reason: a historical record that's only ever added to is self-auditing — nothing is silently overwritten, and any derived value can be reconstructed or verified independently just by re-reading the log.
+`FlightEvent` (the phase-by-phase record of a tracked flight) follows the same append-only rule for the same reason: a historical record that's only ever added to is self-auditing — nothing is silently overwritten, and any derived value can be reconstructed or verified independently just by re-reading the log. See [The append-only flight event log and crash recovery](#the-append-only-flight-event-log-and-crash-recovery) for how this is put to use.
 
 This costs a bit of query overhead — SQLite's EF provider can't translate `Sum()` over `decimal` into SQL, so the (small, per-airline) set of amounts is pulled into memory and summed there — in exchange for a system where the financial history can't drift out of sync with how it got there.
 
@@ -140,7 +148,37 @@ Route planning — distance and bearing, cruise altitude selection, block time a
 
 ### Sim abstraction
 
-`FSOps.Sim` sits behind an interface that the rest of the app depends on, not the concrete SimConnect implementation directly. That means a fake or replay-based telemetry source can stand in for MSFS entirely — which is what makes it possible to develop and test flight tracking, phase detection, and landing scoring without the simulator running at all. The real SimConnect adapter is just one implementation of that interface; a recorded-flight replay source is another.
+`FSOps.Sim` sits behind `ISimSource` — a small interface (connection state, the currently loaded aircraft, and a channel of telemetry samples) that the rest of the app depends on, not any concrete implementation directly. Deliberately, no SimConnect-specific type is allowed to leak across that interface. That means a fake or replay-based telemetry source can stand in for MSFS entirely, which is what makes it possible to develop and test flight tracking, phase detection, and landing scoring without the simulator running at all, and without a human re-flying the same approach over and over to test a bounce-detection edge case.
+
+`FakeSimSource` is that replay source: it plays back a scripted flight from a JSON file (the bundled default is a roughly 93-minute EGKK→LEBL sector) at a configurable time-compression factor, optionally looping. `SimConnectSource` is the real adapter, wrapping the `CTrue.FsConnect` library. Which one runs is a plain startup switch — the `sim` command-line argument (or `Sim:Source` in configuration) selects `fake` for the replay source; anything else, including nothing at all, talks to a real, running copy of MSFS. This is what the whole test suite and most day-to-day development runs against, rather than requiring MSFS to be open.
+
+## Simulator connection and the telemetry pipeline
+
+**Connecting.** `SimConnectSource` runs a connection loop for the lifetime of the process: each attempt opens a fresh SimConnect session, registers FSOps' telemetry and aircraft-identity data definitions, and waits for either a connected or disconnected signal. If a connection attempt fails or drops, it's disposed and retried after a fixed interval (5 seconds). This is why FSOps doesn't need restarting just because MSFS wasn't ready the first time — it keeps trying on its own for as long as it's running.
+
+**Sampling rate.** Telemetry is read at an adaptive rate rather than a fixed one: roughly 5 Hz in normal flight, stepping up to essentially every sim frame once the aircraft is below 2,000 ft AGL, where the extra fidelity matters for accurately catching the moment of touchdown. A small hysteresis band (300 ft) around that threshold stops the rate from flapping back and forth near the boundary.
+
+**What's read.** Each sample carries position (latitude/longitude), altitude (both MSL and AGL), indicated airspeed, ground speed, vertical speed, true and magnetic heading, on-ground state, engine-running state, parking brake state, G-force, the instantaneous touchdown vertical velocity simvar (only meaningful at the moment of ground contact — this is what landing-rate scoring is built on), and total fuel weight. The aircraft's title and ATC model/type are fetched separately, once per connection or aircraft change rather than every sample, since they don't change mid-flight.
+
+**Pushing it live.** `SimTelemetryService` (`FSOps.Server`) reads the full-rate sample stream and does two things with it: it hands every sample to `FlightLifecycleService` for phase detection (see below), and it broadcasts a throttled subset — at most once every 500 ms (2 Hz) — over the `/hubs/live` SignalR hub as a `telemetry` message, carrying timestamp, position, altitude, speeds, headings, on-ground state, and connection state. The throttling keeps the browser's live view smooth without pushing every sim frame across the wire; the full-rate stream still reaches the phase state machine so a fast transition (like the instant of touchdown) is never missed just because the broadcast rate is lower.
+
+`GET /api/v1/sim/status` exposes the same connection state on demand — current state, which source is active, the last-seen aircraft title, and the last sample's timestamp — for anything that wants to poll rather than subscribe (the Fly screen's readiness checks use this, alongside the live hub).
+
+## Flight-phase detection and landing quality
+
+A tracked flight moves through ten phases, in order, with one deliberate exception: **Preflight → Taxi out → Takeoff roll → Climb → Cruise → Descent → Approach → Landed → Taxi in → Shutdown**, except that a go-around sends the state machine back from Landed to Climb rather than continuing forward. `FlightPhaseStateMachine.Advance()` runs this transition logic once per telemetry sample, driven entirely by thresholds in `FlightPhaseThresholds` — ground speed crossing 2 kt or 40 kt, vertical speed settling within a 300 fpm band for 20 seconds (levelling into cruise) or descending past -300 fpm for 15 seconds (starting a descent), altitude dropping below 3,000 ft AGL while descending (entering approach), and so on. All of this is timed from the samples' own timestamps, never wall-clock time, which is what makes the whole thing replayable and deterministic in tests.
+
+OOOI times (out/off/on/in) are captured as by-products of specific transitions: **out** when taxi begins, **off** when the aircraft becomes airborne, **on** at the first ground-contact after the approach, **in** once engines are off and the parking brake is set at the end of taxi-in.
+
+**Touchdown and landing quality.** Every ground-contact event while approaching or already landed registers a touchdown record: touchdown rate in feet per minute (converted from the sim's raw touchdown-velocity simvar), and G-force — tracked as a peak over the few seconds immediately following contact, not just the instantaneous value at the moment of contact, so a hard bounce a beat after touchdown is still captured. A landing that bounces (leaves the ground only briefly before settling) keeps accumulating touchdown records against the same landing; one that stays airborne for more than a few seconds is reclassified as a go-around instead, clearing the touchdown records and sending the phase machine back to Climb. Centreline deviation is computed separately, once a flight finalises: `LandingQualityCalculator` picks the runway at the arrival airport whose heading is closest to the touchdown's track, then measures the perpendicular distance from the touchdown point to that runway's centreline.
+
+**Aircraft-type matching.** `AircraftTypeMatcher` checks the sim's reported aircraft title and ATC model against a route's expected aircraft type using a stored list of regular expressions per family (so a 737-800 and a 737-700 both match a "B737 family" pattern without special-cased logic — the permissiveness lives in the stored pattern, not the matcher). This check is deliberately incapable of ever blocking or costing anything: an unparsable pattern list or a broken regex is treated as "no match" rather than as an error, and the result is stored purely as an informational flag on the flight, never consulted by anything that touches money.
+
+## The append-only flight event log and crash recovery
+
+Every meaningful thing that happens during a tracked flight — a phase change, a touchdown, a periodic position snapshot (every 15 seconds, so a flight's track can be reconstructed even between phase changes), an aircraft-type mismatch — is written as its own row to the `FlightEvent` table, following the same append-only rule as the financial ledger (see [Append-only ledger](#append-only-ledger)): never updated, never deleted. `FlightLifecycleService` queues these events in memory and writes them off the telemetry hot path in small batches, so persisting to SQLite never competes with processing the next incoming sample.
+
+This log is what makes a tracked flight survive FSOps or MSFS crashing partway through. On startup, if a flight is still marked in progress, `FlightLifecycleService` loads its full event history and replays it through `FlightPhaseStateMachine.RestoreFrom()` — reconstructing phase, OOOI times, and any touchdowns already recorded, purely from the stored events, with no reliance on any in-memory state that didn't survive the crash. It then waits for the simulator to reconnect near the flight's last known position (within about 5 nm) for up to 30 seconds. If that happens, tracking resumes as if nothing happened. If it doesn't, the flight is marked **Interrupted** rather than silently resumed or abandoned — surfaced to the user as a flight that needs resolving (see [Ending a flight, and what happens if it gets interrupted](guides/user-guide.md#ending-a-flight-and-what-happens-if-it-gets-interrupted) in the user guide), where they can wait for reconnection, complete the flight with estimated figures, or abandon it outright. Nothing about a flight's already-recorded history is ever lost by this process — it's exactly what the replay is built from.
 
 ## Layering diagram
 

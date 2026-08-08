@@ -17,7 +17,7 @@ This guide walks through installing the prerequisites, building FSOps, and runni
 
 ## Before you start
 
-FSOps is early in development. This guide covers building and running FSOps, founding your airline through the setup wizard, and connecting to the simulator. It is **not yet** a guide to flying tracked flights — that feature is still being built.
+FSOps is early in development. This guide covers building and running FSOps, founding your airline through the setup wizard, and connecting to the simulator. For the step-by-step of actually flying a tracked flight once you're connected, see the [User Guide](user-guide.md#planning-and-flying-a-tracked-flight).
 
 ## 1. Install the prerequisites
 
@@ -82,7 +82,7 @@ Once it's running, open your browser and go to:
 http://localhost:5977
 ```
 
-The first time FSOps runs, it needs to import world airport and runway data into its local database before the app is usable — this happens automatically and takes roughly half a minute. Once that finishes, you'll land in the airline setup wizard described below. Leave the terminal window open — closing it stops the server.
+The first time FSOps runs, it needs to import world airport and runway data into its local database — around 78,000 airports and their runways, sourced from a bundled dataset rather than downloaded, so it doesn't need internet access. This kicks off in the background as soon as the server starts and takes roughly half a minute; it doesn't hold up the airline setup wizard described below, which opens straight away, but airport search (including the wizard's home-base step) will only return complete results once the import has actually finished. If you land on the main Dashboard before it's done, a banner near the top shows its progress percentage until it completes; from then on it never runs again. Leave the terminal window open — closing it stops the server.
 
 ## 6. Found your airline
 
@@ -104,20 +104,22 @@ FSOps talks to Microsoft Flight Simulator through SimConnect, Microsoft's offici
 
 1. Start Microsoft Flight Simulator 2024.
 2. Load into a flight (SimConnect data isn't available while you're sitting at the main menu — you need to be in an aircraft, on the ground or in the air).
-3. With FSOps already running (or started afterwards), it will attempt to establish a SimConnect connection automatically.
+3. With FSOps already running (or started afterwards), it will attempt to establish a SimConnect connection automatically, and keeps retrying every few seconds on its own if the first attempt doesn't land — you don't need to restart FSOps just because MSFS wasn't ready yet.
+
+You can see the connection state at a glance from two indicator pills in the top-right of FSOps' top bar, next to your cash balance: one shows whether FSOps' own live-update connection to its backend is up, the other shows whether the simulator itself is connected ("Sim connected" in green once MSFS is reachable, "Sim offline" otherwise). You can also check `GET /api/v1/sim/status` directly, or watch it via the readiness checks on the Fly screen once you're ready to fly (see the [User Guide](user-guide.md#planning-and-flying-a-tracked-flight)).
 
 If FSOps can't reach the simulator, see [troubleshooting](troubleshooting.md#msfs-wont-connect-over-simconnect).
 
 ## What's not available yet
 
-Founding an airline and planning routes both work today (see the [User Guide](user-guide.md)). The following are still being built and are **not** available yet:
+Founding an airline, planning a route network, and flying a fully tracked flight with a post-flight report card all work today (see the [User Guide](user-guide.md)). The following are still being built and are **not** available yet:
 
-- Planning and flying tracked flights
-- Landing quality scoring and post-flight report cards
-- The economy simulation (ticket pricing, fuel, maintenance, loans, leases)
+- The economy simulation (ticket pricing, fuel and fee costs, maintenance spend, loan/lease payments) — flights currently record zero revenue and cost, deliberately, until this lands
 - Hiring and assigning virtual pilots
+- Buying or leasing additional aircraft, and aircraft maintenance
 - The in-game MSFS panel
 - Statistics dashboards
+- A packaged installer — for now, FSOps is built and run from source (this guide)
 
 See the [User Guide](user-guide.md) for a fuller description of each of these and how they're intended to work once built.
 

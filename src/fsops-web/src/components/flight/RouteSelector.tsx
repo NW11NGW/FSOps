@@ -7,36 +7,42 @@ import { Input } from '@/components/ui/input'
 import { useSettings } from '@/hooks/useSettings'
 import { cn } from '@/lib/utils'
 
-import type { RouteRow } from './routeRow'
+import type { RoutePairRow } from './routeRow'
 
 interface RouteSelectorProps {
-  rows: RouteRow[]
-  selectedRouteId: string | null
-  onSelect: (row: RouteRow) => void
+  pairs: RoutePairRow[]
+  selectedPairId: string | null
+  onSelect: (pair: RoutePairRow) => void
   /** GET /flights/options isn't available - aircraft availability genuinely can't be determined. */
   optionsUnavailable: boolean
 }
 
-function matchesQuery(row: RouteRow, query: string): boolean {
-  const haystack = [row.departureIcao, row.arrivalIcao, row.departureName, row.arrivalName, row.flightNumber]
+function matchesQuery(pair: RoutePairRow, query: string): boolean {
+  const legs = pair.other ? [pair.active, pair.other] : [pair.active]
+  const haystack = legs
+    .flatMap((leg) => [leg.departureIcao, leg.arrivalIcao, leg.departureName, leg.arrivalName, leg.flightNumber])
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
   return haystack.includes(query.toLowerCase())
 }
 
-function RouteRowCard({
-  row,
+function RoutePairCard({
+  pair,
   selected,
   emphasised,
   onSelect,
 }: {
-  row: RouteRow
+  pair: RoutePairRow
   selected: boolean
   emphasised: boolean
   onSelect: () => void
 }) {
   const { fmt } = useSettings()
+  const active = pair.active
+  const isFlyable = pair.isFlyable
+  const aircraftUnknown = active.aircraftUnknown
+  const directionLabel = pair.activeIsReturn ? 'Return available' : 'Outbound available'
 
   return (
     <button
@@ -48,7 +54,7 @@ function RouteRowCard({
           ? 'border-accent bg-accent/10'
           : emphasised
             ? 'border-accent/50 bg-accent/5 hover:border-accent'
-            : row.isFlyable
+            : isFlyable
               ? 'border-border hover:border-accent/50 hover:bg-muted/40'
               : 'border-border bg-muted/20 opacity-80 hover:opacity-100',
       )}
@@ -57,11 +63,11 @@ function RouteRowCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-sm font-semibold tracking-tight">
-              {row.departureIcao} <span className="text-muted-foreground">→</span> {row.arrivalIcao}
+              {pair.headerDepartureIcao} <span className="text-muted-foreground">⇄</span> {pair.headerArrivalIcao}
             </span>
-            {row.flightNumber && (
+            {active.flightNumber && (
               <Badge variant="outline" className="font-mono">
-                {row.flightNumber}
+                {active.flightNumber}
               </Badge>
             )}
             {emphasised && (
@@ -70,32 +76,33 @@ function RouteRowCard({
                 Ready now
               </Badge>
             )}
-            {!row.isFlyable && (
-              <Badge variant="muted">Not flyable</Badge>
+            {isFlyable && !aircraftUnknown && (
+              <Badge variant="secondary">{directionLabel}</Badge>
             )}
+            {!isFlyable && <Badge variant="muted">Not flyable</Badge>}
           </div>
-          {(row.departureName || row.arrivalName) && (
+          {(active.departureName || active.arrivalName) && (
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {[row.departureName, row.arrivalName].filter(Boolean).join(' → ')}
+              {[active.departureName, active.arrivalName].filter(Boolean).join(' → ')}
             </p>
           )}
         </div>
         <div className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-          <p>{fmt.distance(row.distanceNm)}</p>
-          {row.blockMinutes !== null && <p>{fmt.duration(row.blockMinutes)}</p>}
+          <p>{fmt.distance(active.distanceNm)}</p>
+          {active.blockMinutes !== null && <p>{fmt.duration(active.blockMinutes)}</p>}
         </div>
       </div>
 
-      {!row.isFlyable && row.reason && (
+      {!isFlyable && pair.reason && (
         <p className="mt-2 flex items-start gap-1.5 text-xs text-warning">
           <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-          {row.reason}
+          {pair.reason}
         </p>
       )}
 
-      {row.isFlyable && row.availableAircraft.length > 0 && (
+      {isFlyable && active.availableAircraft.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {row.availableAircraft.map((aircraft) => (
+          {active.availableAircraft.map((aircraft) => (
             <Badge key={aircraft.fleetAircraftId} variant="secondary" className="font-mono">
               {aircraft.registration || aircraft.icaoType}
             </Badge>
@@ -107,21 +114,23 @@ function RouteRowCard({
 }
 
 /**
- * Route picker for the pre-flight Fly screen. Splits "ready now" routes (aircraft physically at
- * the departure airport) out to the top so a return leg is genuinely easy to spot, then lists
- * flyable and not-flyable routes with the reason for each. Falls back to a flat, aircraft-unknown
- * list when GET /flights/options isn't deployed yet.
+ * Route picker for the pre-flight Fly screen. One entry per round-trip pair - whichever direction
+ * can actually be flown right now (the aircraft can only be at one end) - rather than one row per
+ * leg, so a pair never shows a "not flyable" half that's pure noise. Splits "ready now" pairs
+ * (aircraft physically parked at the offered direction's departure) out to the top, then lists
+ * other flyable and not-flyable pairs with the reason for each. Falls back to a flat,
+ * aircraft-unknown list when GET /flights/options isn't deployed yet.
  */
-export function RouteSelector({ rows, selectedRouteId, onSelect, optionsUnavailable }: RouteSelectorProps) {
+export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavailable }: RouteSelectorProps) {
   const [query, setQuery] = useState('')
 
-  const filtered = useMemo(() => (query.trim() ? rows.filter((row) => matchesQuery(row, query)) : rows), [rows, query])
+  const filtered = useMemo(() => (query.trim() ? pairs.filter((pair) => matchesQuery(pair, query)) : pairs), [pairs, query])
 
-  const readyNow = optionsUnavailable ? [] : filtered.filter((row) => row.isFlyable && row.availableAircraft.length > 0)
-  const readyNowIds = new Set(readyNow.map((row) => row.routeId))
-  const rest = filtered.filter((row) => !readyNowIds.has(row.routeId))
-  const flyable = rest.filter((row) => row.isFlyable)
-  const notFlyable = rest.filter((row) => !row.isFlyable)
+  const readyNow = optionsUnavailable ? [] : filtered.filter((pair) => pair.isFlyable && pair.active.availableAircraft.length > 0)
+  const readyNowIds = new Set(readyNow.map((pair) => pair.pairId))
+  const rest = filtered.filter((pair) => !readyNowIds.has(pair.pairId))
+  const flyable = rest.filter((pair) => pair.isFlyable)
+  const notFlyable = rest.filter((pair) => !pair.isFlyable)
 
   return (
     <Card>
@@ -135,7 +144,7 @@ export function RouteSelector({ rows, selectedRouteId, onSelect, optionsUnavaila
         )}
       </CardHeader>
       <CardContent className="space-y-4">
-        {rows.length > 5 && (
+        {pairs.length > 5 && (
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -148,7 +157,7 @@ export function RouteSelector({ rows, selectedRouteId, onSelect, optionsUnavaila
           </div>
         )}
 
-        {rows.length === 0 && (
+        {pairs.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <PlaneTakeoff className="size-8 text-muted-foreground" />
             <p className="text-sm font-medium">No routes yet</p>
@@ -160,8 +169,8 @@ export function RouteSelector({ rows, selectedRouteId, onSelect, optionsUnavaila
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-success">Ready now</p>
             <div className="space-y-2">
-              {readyNow.map((row) => (
-                <RouteRowCard key={row.routeId} row={row} selected={row.routeId === selectedRouteId} emphasised onSelect={() => onSelect(row)} />
+              {readyNow.map((pair) => (
+                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised onSelect={() => onSelect(pair)} />
               ))}
             </div>
           </div>
@@ -171,8 +180,8 @@ export function RouteSelector({ rows, selectedRouteId, onSelect, optionsUnavaila
           <div className="space-y-2">
             {readyNow.length > 0 && <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Other routes</p>}
             <div className="space-y-2">
-              {flyable.map((row) => (
-                <RouteRowCard key={row.routeId} row={row} selected={row.routeId === selectedRouteId} emphasised={false} onSelect={() => onSelect(row)} />
+              {flyable.map((pair) => (
+                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised={false} onSelect={() => onSelect(pair)} />
               ))}
             </div>
           </div>
@@ -182,14 +191,14 @@ export function RouteSelector({ rows, selectedRouteId, onSelect, optionsUnavaila
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Not flyable right now</p>
             <div className="space-y-2">
-              {notFlyable.map((row) => (
-                <RouteRowCard key={row.routeId} row={row} selected={row.routeId === selectedRouteId} emphasised={false} onSelect={() => onSelect(row)} />
+              {notFlyable.map((pair) => (
+                <RoutePairCard key={pair.pairId} pair={pair} selected={pair.pairId === selectedPairId} emphasised={false} onSelect={() => onSelect(pair)} />
               ))}
             </div>
           </div>
         )}
 
-        {rows.length > 0 && filtered.length === 0 && (
+        {pairs.length > 0 && filtered.length === 0 && (
           <p className="py-6 text-center text-sm text-muted-foreground">No routes match &ldquo;{query}&rdquo;.</p>
         )}
       </CardContent>

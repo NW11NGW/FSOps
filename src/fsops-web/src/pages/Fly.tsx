@@ -9,6 +9,7 @@ import { LiveFlightView } from '@/components/flight/LiveFlightView'
 import { NeedsResolutionPanel } from '@/components/flight/NeedsResolutionPanel'
 import { ReportCard } from '@/components/flight/ReportCard'
 import { RouteSelector } from '@/components/flight/RouteSelector'
+import { pairRouteRows } from '@/components/flight/routeRow'
 import type { RouteRow } from '@/components/flight/routeRow'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
@@ -44,7 +45,7 @@ export function Fly() {
   const activeFlight = useActiveFlight()
   const historyQuery = useFlightHistory()
 
-  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const [selectedPairId, setSelectedPairId] = useState<string | null>(null)
   const [selectedAircraftId, setSelectedAircraftId] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
@@ -103,22 +104,33 @@ export function Fly() {
     }))
   }, [optionsQuery.status, optionsQuery.options, routesQuery.routes, routesById, routeBlockMinutes])
 
-  // Default selection: prefer a "ready now" route (aircraft already at the departure airport),
-  // then any flyable route, then whatever's first - and re-pick if the previous selection
-  // disappeared (e.g. options just loaded and it's no longer valid).
+  // Pair up outbound/return legs into one round-trip entry each (Fly screen shows one card per
+  // pair, offering whichever direction is actually flyable right now) using the same
+  // returnRouteId links RoutesTable pairs on, sourced from GET /routes rather than
+  // GET /flights/options (which doesn't carry returnRouteId).
+  const returnRouteIdByRouteId = useMemo(
+    () => Object.fromEntries(routesQuery.routes.map((route) => [route.id, route.returnRouteId])),
+    [routesQuery.routes],
+  )
+  const routePairs = useMemo(() => pairRouteRows(rows, returnRouteIdByRouteId), [rows, returnRouteIdByRouteId])
+
+  // Default selection: prefer a "ready now" pair (aircraft already at the offered direction's
+  // departure airport), then any flyable pair, then whatever's first - and re-pick if the
+  // previous selection disappeared (e.g. options just loaded and it's no longer valid).
   useEffect(() => {
-    if (rows.length === 0) {
-      if (selectedRouteId !== null) setSelectedRouteId(null)
+    if (routePairs.length === 0) {
+      if (selectedPairId !== null) setSelectedPairId(null)
       return
     }
-    if (selectedRouteId && rows.some((row) => row.routeId === selectedRouteId)) return
-    const readyNow = rows.find((row) => row.isFlyable && row.availableAircraft.length > 0)
-    const flyable = rows.find((row) => row.isFlyable)
-    const fallback = readyNow ?? flyable ?? rows[0]
-    if (fallback) setSelectedRouteId(fallback.routeId)
-  }, [rows, selectedRouteId])
+    if (selectedPairId && routePairs.some((pair) => pair.pairId === selectedPairId)) return
+    const readyNow = routePairs.find((pair) => pair.isFlyable && pair.active.availableAircraft.length > 0)
+    const flyable = routePairs.find((pair) => pair.isFlyable)
+    const fallback = readyNow ?? flyable ?? routePairs[0]
+    if (fallback) setSelectedPairId(fallback.pairId)
+  }, [routePairs, selectedPairId])
 
-  const selectedRow = rows.find((row) => row.routeId === selectedRouteId) ?? null
+  const selectedPair = routePairs.find((pair) => pair.pairId === selectedPairId) ?? null
+  const selectedRow = selectedPair?.active ?? null
 
   useEffect(() => {
     if (!selectedRow) {
@@ -219,7 +231,7 @@ export function Fly() {
 
   function handleFlyAgain() {
     setJustCompletedFlightId(null)
-    setSelectedRouteId(null)
+    setSelectedPairId(null)
     setSelectedAircraftId(null)
     optionsQuery.refetch()
     routesQuery.refetch()
@@ -332,7 +344,7 @@ export function Fly() {
     <div className="space-y-6">
       <PageHeader title="Fly" description="Pick a route, review the brief, and start flying." />
 
-      {rows.length === 0 && routesQuery.status === 'ready' ? (
+      {routePairs.length === 0 && routesQuery.status === 'ready' ? (
         <EmptyState
           icon={PlaneTakeoff}
           title="No routes to fly yet"
@@ -341,9 +353,9 @@ export function Fly() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(320px,420px)_minmax(320px,1fr)] lg:items-start">
           <RouteSelector
-            rows={rows}
-            selectedRouteId={selectedRouteId}
-            onSelect={(row) => setSelectedRouteId(row.routeId)}
+            pairs={routePairs}
+            selectedPairId={selectedPairId}
+            onSelect={(pair) => setSelectedPairId(pair.pairId)}
             optionsUnavailable={optionsQuery.status === 'unavailable' || optionsQuery.status === 'error'}
           />
 

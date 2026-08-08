@@ -13,6 +13,8 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
+- [A flight is stuck needing attention](#a-flight-is-stuck-needing-attention)
+- [A route doesn't show as flyable](#a-route-doesnt-show-as-flyable)
 - [Where to find log files](#where-to-find-log-files)
 - [How to report a problem](#how-to-report-a-problem)
 
@@ -50,11 +52,11 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 ## The map shows no background tiles
 
-**Symptom:** The route-planning map is otherwise usable — route lines, the great-circle path, and airport markers all show up — but the background map tiles never load and you're left looking at a blank/grey canvas.
+**Symptom:** A map — either the route-planning/network map on the Routes page, or the live moving map on the Fly screen — shows an explicit **"Map tiles unavailable — showing offline view"** banner. Route lines, the great-circle path, your hub marker, airport markers, and (on the Fly screen) your live aircraft position all still show up; only the background imagery is missing.
 
-**Cause:** The map's background tiles are fetched over the internet. Everything else on the map (route geometry, airport positions) comes from your local database and works fully offline.
+**Cause:** The map's background tiles are fetched over the internet from a raster tile provider. Everything else on the map (route geometry, airport positions, your live position) comes from your local database and live telemetry, and works fully offline.
 
-**Solution:** Check your internet connection. There's nothing to configure — once connectivity is back, reload the page and tiles will load normally. If you're intentionally offline, you can still plan and create routes; you just won't see the background imagery.
+**Solution:** Check your internet connection. There's nothing to configure — once connectivity is back, reload the page and tiles will load normally. If you're intentionally offline, you can still plan and create routes and fly fully tracked flights; you just won't see the background imagery underneath them.
 
 ## The setup wizard keeps reappearing
 
@@ -92,19 +94,19 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 
 ## MSFS won't connect over SimConnect
 
-**Symptom:** FSOps shows the simulator as disconnected even though MSFS is open.
+**Symptom:** FSOps shows the simulator as disconnected — the "Sim offline" pill in the top bar, or a failing "Simulator connection" readiness check on the Fly screen — even though MSFS is open.
 
 **Solutions, in order:**
 
 1. **Make sure MSFS is actually in a flight.** SimConnect only exposes live aircraft data once you're loaded into a flight — being at the main menu, the world map, or a loading screen isn't enough. Load into any aircraft, on the ground or in the air, and check again.
-2. **Check for other SimConnect clients.** Only one application can hold certain SimConnect connections cleanly at a time; if you have another SimConnect-based tool running (another tracker, a panel add-on, etc.) alongside FSOps, try closing it and see if FSOps connects.
-3. **Restart FSOps.** If MSFS was still loading when FSOps started, or the connection attempt happened at the wrong moment, closing and reopening FSOps after MSFS has finished loading a flight often resolves it.
+2. **Give it a few seconds.** FSOps retries the SimConnect connection automatically roughly every 5 seconds for as long as it's running — you don't need to restart FSOps just because the first attempt didn't land right as MSFS finished loading.
+3. **Check for other SimConnect clients.** Only one application can hold certain SimConnect connections cleanly at a time; if you have another SimConnect-based tool running (another tracker, a panel add-on, etc.) alongside FSOps, try closing it and see if FSOps connects.
 4. **Check your firewall.** SimConnect communicates locally between MSFS and FSOps. If Windows Firewall or third-party security software is blocking that local traffic, allow both Microsoft Flight Simulator and FSOps through it.
-5. **Restart MSFS.** As a last resort, a full restart of the simulator clears up most SimConnect connection issues.
+5. **Restart both.** As a last resort, closing and reopening FSOps after MSFS has finished loading a flight, or a full restart of the simulator, clears up most remaining SimConnect connection issues.
 
 ## Flight tracking stopped mid-flight
 
-**Symptom:** FSOps was tracking your flight, then stopped updating — the map freezes, or the connection indicator drops.
+**Symptom:** FSOps was tracking your flight, then stopped updating — the map freezes, the live readouts stop moving, or a banner on the live flight view says tracking is paused.
 
 **Cause:** Usually either MSFS or FSOps crashed or was closed, or the SimConnect link between them dropped.
 
@@ -112,8 +114,29 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 
 1. Check whether MSFS is still running. If MSFS itself crashed, you'll need to relaunch the simulator and resume or restart your flight there first.
 2. Check whether the FSOps backend (the terminal window) is still running. If it closed unexpectedly, restart it with `dotnet run --project src/FSOps.Server` and reload the browser.
-3. Once both MSFS (in an active flight) and FSOps are running again, FSOps will attempt to re-establish the SimConnect connection automatically.
-4. If you were partway through a tracked flight when the disconnect happened, check the [log files](#where-to-find-log-files) for what state the flight was left in before reporting it as a problem.
+3. Once both MSFS (in an active flight) and FSOps are running again, FSOps attempts to re-establish the SimConnect connection automatically — a banner on the live flight view says as much ("Tracking paused — waiting for the simulator to reconnect. Nothing is lost; this will pick back up automatically."), and no button-press is needed for a brief drop.
+4. If the sim doesn't reconnect quickly (within about 30 seconds, close to where the flight last reported its position), FSOps stops guessing and marks the flight as needing your attention instead of silently resuming or losing it — see [A flight is stuck needing attention](#a-flight-is-stuck-needing-attention) below.
+5. If you were partway through a tracked flight when the disconnect happened, check the [log files](#where-to-find-log-files) for what state the flight was left in before reporting it as a problem.
+
+## A flight is stuck needing attention
+
+**Symptom:** Opening the Fly screen shows a card titled **"This flight needs your attention"** instead of the normal live view or route picker.
+
+**Cause:** FSOps couldn't automatically resume tracking an in-progress flight — almost always because FSOps or MSFS was restarted mid-flight and the simulator didn't reconnect close enough to the flight's last known position within about 30 seconds. Rather than silently guess at what happened next, or lose the flight's data, FSOps stops and asks you what to do. Nothing about the flight so far is lost either way — everything already tracked is kept in its stored event history.
+
+**Solutions, pick one:**
+
+1. **Check again** — if MSFS just needed a moment longer to load and reconnect, this re-checks without doing anything else. Try this first if you're about to keep flying the same flight.
+2. **Complete with estimates** — closes the flight out now, using your planned block time and fuel figures rather than measured ones. Use this if you don't intend to keep flying it. No landing quality (touchdown rate, G-force, bounces, centreline) will be recorded for a flight completed this way, since none of that could actually be measured.
+3. **Abandon** — discards the flight entirely, with no report card, and frees your aircraft up to fly something else. Use this if the flight is a lost cause (for example, MSFS crashed and you don't want to resume that exact flight).
+
+## A route doesn't show as flyable
+
+**Symptom:** A route you expect to be able to fly shows up under "Not flyable right now" on the Fly screen, with a reason like "No aircraft at {ICAO} — your fleet is currently at {other ICAO}."
+
+**Cause:** FSOps only lets you fly a route whose departure airport matches where one of your fleet aircraft is actually recorded as being (see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is)). In the current build, an aircraft's recorded location is set once — when it joins your fleet — and doesn't yet move automatically to the arrival airport once a flight lands. So if your airline has only one aircraft, only the route(s) departing from wherever that aircraft started (your home base, for a newly founded airline) will show as flyable; a route departing from anywhere else reports the reason above rather than pretending it's flyable.
+
+**Solution:** This isn't something you can currently fix from within FSOps — flying the outbound leg of a round trip doesn't yet make the return leg (or any other route from that airport) show as flyable the way the pairing is ultimately designed to support, since aircraft-location updates on landing are still being built. If a route genuinely should be flyable and isn't for a different reason (for example, your aircraft is showing as "in maintenance" or "in flight" when it shouldn't be), check the [log files](#where-to-find-log-files) and consider it worth reporting.
 
 ## Where to find log files
 

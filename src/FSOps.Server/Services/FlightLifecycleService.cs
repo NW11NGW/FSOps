@@ -343,7 +343,9 @@ public sealed class FlightLifecycleService : IHostedService
         await _hub.Clients.All.SendAsync("flightNeedsResolution", new { flightId });
     }
 
-    private async Task FinalizeFlightAsync(ActiveFlightTracker tracker)
+    /// <summary>Internal (rather than private) purely so tests can drive it directly with a
+    /// synthetic <see cref="ActiveFlightTracker"/> instead of needing a live telemetry pump.</summary>
+    internal async Task FinalizeFlightAsync(ActiveFlightTracker tracker)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FsOpsDbContext>();
@@ -383,9 +385,40 @@ public sealed class FlightLifecycleService : IHostedService
         // ledger entries for a completed flight arrives in the next chunk.
 
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == tracker.FleetAircraftId);
-        if (fleetAircraft is not null && fleetAircraft.Status == FleetAircraftStatus.InFlight)
+        if (fleetAircraft is not null)
         {
-            fleetAircraft.Status = FleetAircraftStatus.Active;
+            // The last position telemetry ever reported for this flight - where it actually ended
+            // up, which is not always the planned arrival (see the diversion rule in docs/PLAN.md).
+            (double LatitudeDeg, double LongitudeDeg)? finalPosition = tracker.LatestSnapshot is { } snapshot
+                ? (snapshot.LatitudeDeg, snapshot.LongitudeDeg)
+                : null;
+
+            var candidateAirports = finalPosition is { } position
+                ? await AirportProximityQueries.NearbyAsync(db, position.LatitudeDeg, position.LongitudeDeg, CancellationToken.None)
+                : [];
+
+            var landing = LandingAirportResolver.Resolve(candidateAirports, finalPosition, tracker.ArrivalIcao);
+            fleetAircraft.LocationIcao = landing.Icao;
+
+            if (fleetAircraft.Status == FleetAircraftStatus.InFlight)
+            {
+                fleetAircraft.Status = FleetAircraftStatus.Active;
+            }
+
+            fleetAircraft.AirframeHours += BlockTimeCalculator.BlockHours(machine.OutUtc, machine.InUtc);
+
+            if (landing.Decision == LandingAirportDecision.Diverted)
+            {
+                _logger.LogInformation(
+                    "Flight {FlightId} diverted: planned arrival was {PlannedArrival}, actually landed at {ActualArrival} ({DistanceNm:F1} nm from the final tracked position).",
+                    flight.Id, tracker.ArrivalIcao, landing.Icao, landing.DistanceFromFinalPositionNm);
+            }
+            else if (landing.Decision == LandingAirportDecision.UnresolvedFallbackToPlanned)
+            {
+                _logger.LogWarning(
+                    "Flight {FlightId} finished with a final position that matched no known airport within {RadiusNm} nm - falling back to the planned arrival {PlannedArrival}.",
+                    flight.Id, LandingAirportResolver.SearchRadiusNm, tracker.ArrivalIcao);
+            }
         }
 
         await db.SaveChangesAsync();
@@ -493,7 +526,9 @@ public sealed class FlightLifecycleService : IHostedService
         });
     }
 
-    private sealed class ActiveFlightTracker
+    /// <summary>Internal (rather than private) purely so tests can construct one directly - see
+    /// <see cref="FinalizeFlightAsync"/>.</summary>
+    internal sealed class ActiveFlightTracker
     {
         public required Guid FlightId { get; init; }
 

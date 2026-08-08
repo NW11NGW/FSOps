@@ -51,7 +51,10 @@ function airportMarkerElement(label: string, filled: boolean): HTMLDivElement {
   return wrapper
 }
 
-/** Plane glyph as a raw SVG string (no external icon dependency) - rotated to true heading via CSS transform on the wrapper. */
+/** Plane glyph as a raw SVG string (no external icon dependency). Rotation is applied through
+ *  MapLibre's own Marker#setRotation, not a CSS transform on this element - MapLibre positions a
+ *  marker via `style.transform` on its root element too, so anything setting `style.transform`
+ *  directly here would race with (and stomp on) the marker's own translate/positioning. */
 const AIRCRAFT_SVG =
   '<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M22 16.5v-2l-8.5-5V4.5c0-1-.8-2-1.5-2s-1.5 1-1.5 2v5l-8.5 5v2l8.5-2.5V19l-2.5 1.8V22l4-1 4 1v-1.2L13.5 19v-5.5z"/></svg>'
 
@@ -60,10 +63,8 @@ function aircraftMarkerElement(): HTMLDivElement {
   wrapper.className = 'flex items-center justify-center rounded-full bg-accent text-accent-foreground shadow-elevation-3 ring-2 ring-background'
   wrapper.style.width = '30px'
   wrapper.style.height = '30px'
-  wrapper.style.willChange = 'transform'
   wrapper.innerHTML = AIRCRAFT_SVG
   wrapper.setAttribute('role', 'img')
-  wrapper.setAttribute('aria-label', 'Aircraft position')
   return wrapper
 }
 
@@ -78,7 +79,6 @@ export function LiveFlightMap({ departure, arrival, path, aircraft, className }:
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const aircraftMarkerRef = useRef<Marker | null>(null)
-  const aircraftIconRef = useRef<HTMLDivElement | null>(null)
   const depMarkerRef = useRef<Marker | null>(null)
   const arrMarkerRef = useRef<Marker | null>(null)
   const modeRef = useRef<MapThemeMode>('dark')
@@ -127,6 +127,9 @@ export function LiveFlightMap({ departure, arrival, path, aircraft, className }:
           depMarkerRef.current = new Marker({ element: airportMarkerElement(dep.icao, true), anchor: 'bottom' })
             .setLngLat([dep.longitude, dep.latitude])
             .addTo(current)
+          // Marker#addTo overwrites the element's aria-label with a generic "Map marker" - set
+          // the real one after, not before, or it gets clobbered.
+          depMarkerRef.current.getElement().setAttribute('aria-label', `Departure airport ${dep.icao}`)
         } else {
           depMarkerRef.current.setLngLat([dep.longitude, dep.latitude])
         }
@@ -136,6 +139,7 @@ export function LiveFlightMap({ departure, arrival, path, aircraft, className }:
           arrMarkerRef.current = new Marker({ element: airportMarkerElement(arr.icao, false), anchor: 'bottom' })
             .setLngLat([arr.longitude, arr.latitude])
             .addTo(current)
+          arrMarkerRef.current.getElement().setAttribute('aria-label', `Arrival airport ${arr.icao}`)
         } else {
           arrMarkerRef.current.setLngLat([arr.longitude, arr.latitude])
         }
@@ -143,14 +147,17 @@ export function LiveFlightMap({ departure, arrival, path, aircraft, className }:
 
       if (ac) {
         if (!aircraftMarkerRef.current) {
-          const el = aircraftMarkerElement()
-          aircraftIconRef.current = el
-          aircraftMarkerRef.current = new Marker({ element: el, anchor: 'center' }).setLngLat([ac.longitude, ac.latitude]).addTo(current)
+          // rotationAlignment: 'map' keeps the glyph pointed along its true track (ac.headingDeg
+          // is heading-true) as the map's own bearing changes, via MapLibre's own setRotation -
+          // NOT a manual style.transform, which would fight the translate MapLibre itself applies
+          // to this same element to position it.
+          aircraftMarkerRef.current = new Marker({ element: aircraftMarkerElement(), anchor: 'center', rotationAlignment: 'map' })
+            .setLngLat([ac.longitude, ac.latitude])
+            .setRotation(ac.headingDeg)
+            .addTo(current)
+          aircraftMarkerRef.current.getElement().setAttribute('aria-label', 'Aircraft position')
         } else {
-          aircraftMarkerRef.current.setLngLat([ac.longitude, ac.latitude])
-        }
-        if (aircraftIconRef.current) {
-          aircraftIconRef.current.style.transform = `rotate(${ac.headingDeg}deg)`
+          aircraftMarkerRef.current.setLngLat([ac.longitude, ac.latitude]).setRotation(ac.headingDeg)
         }
       }
 

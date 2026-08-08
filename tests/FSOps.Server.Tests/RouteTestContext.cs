@@ -22,6 +22,11 @@ internal sealed class RouteTestContext : IDisposable
 
     public AircraftType AircraftType { get; private set; } = null!;
 
+    /// <summary>Exposed so tests that need a second <see cref="FsOpsDbContext"/> pointed at the
+    /// same in-memory database (e.g. to exercise code that resolves its own scope via DI) can open
+    /// one against the same live connection instead of getting a separate, empty database.</summary>
+    public SqliteConnection Connection => _connection;
+
     private readonly SqliteConnection _connection;
 
     private RouteTestContext(SqliteConnection connection, FsOpsDbContext db)

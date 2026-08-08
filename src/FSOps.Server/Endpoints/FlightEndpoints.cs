@@ -148,7 +148,7 @@ public static class FlightEndpoints
         return Results.Created($"/api/v1/flights/{flight.Id}", ToFlightDto(flight));
     }
 
-    private static async Task<IResult> AbandonAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
+    internal static async Task<IResult> AbandonAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
     {
         var flight = await LoadOwnedFlightAsync(db, currentUser, id, ct);
         if (flight is null)
@@ -161,15 +161,20 @@ public static class FlightEndpoints
             return Results.BadRequest(new { error = $"Flight is {flight.Status} and cannot be abandoned." });
         }
 
+        // Grab whatever telemetry position is still live before StopTracking drops it - an
+        // abandoned flight never completed, so the aircraft normally stays exactly where it was,
+        // but if the sim clearly shows it moved (it took off and got abandoned mid-air, say) that
+        // move should still be reflected rather than pretending it's still at the gate.
+        var lastSnapshot = lifecycle.GetActiveSnapshot(flight.Id);
         lifecycle.StopTracking(flight.Id);
         flight.Status = FlightStatus.Abandoned;
-        await RevertFleetAircraftAsync(db, flight, ct);
+        await RevertFleetAircraftAsync(db, flight, lastSnapshot, ct);
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(ToFlightDto(flight));
     }
 
-    private static async Task<IResult> CompleteManualAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
+    internal static async Task<IResult> CompleteManualAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
     {
         var flight = await LoadOwnedFlightAsync(db, currentUser, id, ct);
         if (flight is null)
@@ -199,7 +204,26 @@ public static class FlightEndpoints
 
         flight.PaxFlown = flight.PaxBooked;
         flight.Status = FlightStatus.Completed;
-        await RevertFleetAircraftAsync(db, flight, ct);
+
+        var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
+        if (fleetAircraft is not null)
+        {
+            if (fleetAircraft.Status == FleetAircraftStatus.InFlight)
+            {
+                fleetAircraft.Status = FleetAircraftStatus.Active;
+            }
+
+            // No reliable telemetry for a manual completion (that's the whole reason this path
+            // exists) - trust the planned arrival rather than guessing at a real position.
+            var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
+            if (route is not null)
+            {
+                fleetAircraft.LocationIcao = route.ArrivalIcao;
+            }
+
+            fleetAircraft.AirframeHours += BlockTimeCalculator.BlockHours(flight.OutUtc, flight.InUtc);
+        }
+
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(ToFlightDto(flight));
@@ -399,12 +423,36 @@ public static class FlightEndpoints
         return await db.Flights.FirstOrDefaultAsync(f => f.Id == flightId && f.AirlineId == airline.Id, ct);
     }
 
-    private static async Task RevertFleetAircraftAsync(FsOpsDbContext db, Flight flight, CancellationToken ct)
+    internal static async Task RevertFleetAircraftAsync(FsOpsDbContext db, Flight flight, LiveFlightSnapshot? lastSnapshot, CancellationToken ct)
     {
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
-        if (fleetAircraft is not null && fleetAircraft.Status == FleetAircraftStatus.InFlight)
+        if (fleetAircraft is null)
+        {
+            return;
+        }
+
+        if (fleetAircraft.Status == FleetAircraftStatus.InFlight)
         {
             fleetAircraft.Status = FleetAircraftStatus.Active;
+        }
+
+        if (lastSnapshot is null)
+        {
+            // No telemetry was ever received for this attempt - the aircraft never left where it
+            // already was recorded, so there's nothing to resolve.
+            return;
+        }
+
+        var candidateAirports = await AirportProximityQueries.NearbyAsync(db, lastSnapshot.LatitudeDeg, lastSnapshot.LongitudeDeg, ct);
+        var landing = LandingAirportResolver.Resolve(
+            candidateAirports, (lastSnapshot.LatitudeDeg, lastSnapshot.LongitudeDeg), fleetAircraft.LocationIcao);
+
+        // Only overwrite the recorded location on a clear move away from it - "still there" and
+        // "couldn't be determined" both mean leave it exactly where it already was, per the
+        // "NEVER destroy the user's data" project rule of not guessing at state changes.
+        if (landing.Decision == LandingAirportDecision.Diverted)
+        {
+            fleetAircraft.LocationIcao = landing.Icao;
         }
     }
 
