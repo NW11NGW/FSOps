@@ -6,13 +6,20 @@ using FSOps.Server.Auth;
 using FSOps.Server.Endpoints;
 using FSOps.Server.Hubs;
 using FSOps.Server.Services;
+using FSOps.Sim;
+using FSOps.Sim.Fake;
+using FSOps.Sim.SimConnect;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Localhost only - this app tracks flights and money through SimConnect and a local
-// SQLite ledger, and none of that should ever be reachable from another machine.
-builder.WebHost.UseUrls("http://localhost:5977");
+// SQLite ledger, and none of that should ever be reachable from another machine. The port
+// defaults to 5977 but can be overridden with FSOPS_PORT - useful when that port is already
+// taken by another copy of the app, and for tests/tooling that must never collide with the
+// owner's own running instance.
+var port = Environment.GetEnvironmentVariable("FSOPS_PORT") ?? "5977";
+builder.WebHost.UseUrls($"http://localhost:{port}");
 
 builder.Host.UseSerilog((context, services, configuration) =>
 {
@@ -39,10 +46,38 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddSignalR();
 builder.Services.AddScoped<ICurrentUser, LocalUser>();
-builder.Services.AddHostedService<HeartbeatService>();
 builder.Services.AddFsOpsData();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
+// "--sim=fake" (or Sim:Source in config) plays back a scripted flight with no simulator
+// installed - the project's main development and test strategy. Anything else, including no
+// setting at all, talks to a real, running copy of MSFS.
+var simSource = builder.Configuration["sim"] ?? builder.Configuration["Sim:Source"] ?? "SimConnect";
+
+builder.Services.AddSingleton<ISimSource>(sp =>
+{
+    if (string.Equals(simSource, "fake", StringComparison.OrdinalIgnoreCase))
+    {
+        var replayPath = builder.Configuration["Sim:ReplayFile"]
+            ?? Path.Combine(AppContext.BaseDirectory, "Fake", "Replays", "egkk-lebl.json");
+        var timeCompression = builder.Configuration.GetValue<double?>("Sim:TimeCompression") ?? 1.0;
+
+        return new FakeSimSource(new FakeSimSourceOptions
+        {
+            ReplayFilePath = replayPath,
+            TimeCompressionFactor = timeCompression,
+            Loop = true,
+        });
+    }
+
+    return new SimConnectSource(new SimConnectSourceOptions(), sp.GetRequiredService<ILogger<SimConnectSource>>());
+});
+builder.Services.AddSingleton<SimTelemetryService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SimTelemetryService>());
+builder.Services.AddSingleton<FlightLifecycleService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<FlightLifecycleService>());
+builder.Services.AddHostedService<HeartbeatService>();
 
 var app = builder.Build();
 
@@ -82,6 +117,8 @@ apiV1.MapWorldDataEndpoints();
 apiV1.MapAirlineEndpoints();
 apiV1.MapRouteEndpoints();
 apiV1.MapSettingsEndpoints();
+apiV1.MapSimEndpoints();
+apiV1.MapFlightEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");
 

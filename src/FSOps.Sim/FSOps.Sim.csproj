@@ -4,6 +4,38 @@
     <ProjectReference Include="..\FSOps.Core\FSOps.Core.csproj" />
   </ItemGroup>
 
+  <!-- CTrue.FsConnect only publishes a .NET Framework 4.6.1 build (no netstandard/net8 target),
+       so the SDK's normal NuGet asset selection drops its compile/runtime assemblies for a net8.0
+       project with no warning at all - AssetTargetFallback does not rescue it either, because the
+       package itself has no compatible asset group for the SDK to fall back to. The DLL is a thin
+       COM-interop wrapper with no WinForms/WPF dependency, so .NET 8 loads and runs it fine; it
+       just has to be referenced directly by path instead of through normal PackageReference asset
+       selection. ExcludeAssets keeps the package's own (broken) compile/runtime selection out of
+       the build while still letting its "build" props/targets run, which is what copies the native
+       SimConnect.dll next to the output. -->
+  <ItemGroup>
+    <PackageReference Include="CTrue.FsConnect" Version="1.4.0" ExcludeAssets="compile;runtime" GeneratePathProperty="true" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="CTrue.FsConnect">
+      <HintPath>$(PkgCTrue_FsConnect)\lib\net461\CTrue.FsConnect.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.FlightSimulator.SimConnect">
+      <HintPath>$(PkgCTrue_FsConnect)\lib\net461\Microsoft.FlightSimulator.SimConnect.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Fake\Replays\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

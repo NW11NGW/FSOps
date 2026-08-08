@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { RoutesStatus } from '@/hooks/useRoutes'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import type { RouteSummary } from '@/types/route'
 
 interface RoutesTableProps {
@@ -18,12 +19,14 @@ interface RoutesTableProps {
   status: RoutesStatus
   blockMinutes: Record<string, number | undefined>
   selectedId: string | null
+  hoveredId?: string | null
   onSelect: (route: RouteSummary) => void
   onDelete: (route: RouteSummary) => Promise<void>
+  onHover?: (routeId: string | null) => void
 }
 
 /** The airline's saved routes: distance/fare from the list endpoint, block time backfilled per-row via preview. */
-export function RoutesTable({ routes, status, blockMinutes, selectedId, onSelect, onDelete }: RoutesTableProps) {
+export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredId, onSelect, onDelete, onHover }: RoutesTableProps) {
   const { fmt } = useSettings()
   const [deletingRoute, setDeletingRoute] = useState<RouteSummary | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -114,9 +117,14 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, onSelect
                     role="button"
                     aria-pressed={route.id === selectedId}
                     data-state={route.id === selectedId ? 'selected' : undefined}
-                    className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    className={cn(
+                      'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                      route.id === hoveredId && route.id !== selectedId && 'bg-accent/10',
+                    )}
                     onClick={() => selectRow(route)}
                     onKeyDown={(event) => handleRowKeyDown(event, route)}
+                    onMouseEnter={() => onHover?.(route.id)}
+                    onMouseLeave={() => onHover?.(null)}
                   >
                     <TableCell>
                       <span className="font-mono">{route.departureIcao}</span>

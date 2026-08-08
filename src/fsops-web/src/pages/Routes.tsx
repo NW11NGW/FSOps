@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Building2 } from 'lucide-react'
 import { toast } from 'sonner'
 
+import type { NetworkAirport, SavedRouteArc } from '@/components/map/RouteMap'
 import { RouteMap } from '@/components/map/RouteMap'
 import { AirportPickerCard } from '@/components/routes/AirportPickerCard'
 import { PlanPanel } from '@/components/routes/PlanPanel'
@@ -10,11 +11,13 @@ import { RoutesTable } from '@/components/routes/RoutesTable'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useAirportCoordinates } from '@/hooks/useAirportCoordinates'
 import { useRouteBlockTimes } from '@/hooks/useRouteBlockTimes'
 import { useRoutePreview } from '@/hooks/useRoutePreview'
 import { useRoutes } from '@/hooks/useRoutes'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError, del, get, post } from '@/lib/api'
+import { sampleGreatCirclePath } from '@/lib/geo'
 import type { AirportDetail, AirportSummary } from '@/types/airport'
 import type { LiveContext } from '@/types/live-context'
 import type { CurrencyInfo } from '@/types/settings'
@@ -35,10 +38,62 @@ export function RoutesPage() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const [hoveredRouteId, setHoveredRouteId] = useState<string | null>(null)
 
   const preview = useRoutePreview(departure?.icao ?? null, arrival?.icao ?? null)
   const routesQuery = useRoutes()
   const blockMinutes = useRouteBlockTimes(routesQuery.routes)
+
+  const homeAirportIcao = airlineSummary.data?.airline.homeAirportIcao ?? null
+
+  // Saved routes only carry ICAO codes, not coordinates - this resolves the hub plus every
+  // unique departure/arrival airport across the whole route list so the map can draw the
+  // "spider web" (every saved route's arc) without a per-route call to /routes/preview.
+  const neededIcaos = useMemo(() => {
+    const icaos = new Set<string>()
+    if (homeAirportIcao) icaos.add(homeAirportIcao)
+    for (const route of routesQuery.routes) {
+      icaos.add(route.departureIcao)
+      icaos.add(route.arrivalIcao)
+    }
+    return Array.from(icaos)
+  }, [homeAirportIcao, routesQuery.routes])
+
+  const coordsByIcao = useAirportCoordinates(neededIcaos)
+
+  // Great-circle arcs for every saved route, sampled client-side (see lib/geo.ts) rather than
+  // fetched one-by-one from /routes/preview - N routes would otherwise mean N network calls just
+  // to draw the network.
+  const savedRouteArcs = useMemo<SavedRouteArc[]>(() => {
+    const arcs: SavedRouteArc[] = []
+    for (const route of routesQuery.routes) {
+      const dep = coordsByIcao[route.departureIcao]
+      const arr = coordsByIcao[route.arrivalIcao]
+      if (!dep || !arr) continue
+      arcs.push({
+        id: route.id,
+        departureIcao: route.departureIcao,
+        arrivalIcao: route.arrivalIcao,
+        path: sampleGreatCirclePath(dep.latitude, dep.longitude, arr.latitude, arr.longitude),
+      })
+    }
+    return arcs
+  }, [routesQuery.routes, coordsByIcao])
+
+  const networkAirports = useMemo<NetworkAirport[]>(() => {
+    const byIcao = new Map<string, NetworkAirport>()
+    if (homeAirportIcao) {
+      const hub = coordsByIcao[homeAirportIcao]
+      if (hub) byIcao.set(hub.icao, { icao: hub.icao, latitude: hub.latitude, longitude: hub.longitude })
+    }
+    for (const route of routesQuery.routes) {
+      const dep = coordsByIcao[route.departureIcao]
+      const arr = coordsByIcao[route.arrivalIcao]
+      if (dep) byIcao.set(dep.icao, { icao: dep.icao, latitude: dep.latitude, longitude: dep.longitude })
+      if (arr) byIcao.set(arr.icao, { icao: arr.icao, latitude: arr.latitude, longitude: arr.longitude })
+    }
+    return Array.from(byIcao.values())
+  }, [routesQuery.routes, coordsByIcao, homeAirportIcao])
 
   // A freshly picked city pair should always start from the suggested fare - only stop tracking
   // it once the user actually edits the override field themselves.
@@ -90,6 +145,27 @@ export function RoutesPage() {
     } catch {
       toast.error("Could not load this route's airports.")
     }
+  }
+
+  function handleSelectRouteId(routeId: string) {
+    const route = routesQuery.routes.find((candidate) => candidate.id === routeId)
+    if (route) void handleSelectRoute(route)
+  }
+
+  /** Clicking an airport marker on the map assigns it as departure (if empty) or arrival. */
+  function handleAirportClick(icao: string) {
+    const airport = coordsByIcao[icao]
+    if (!airport) return
+    if (!departure) selectDeparture(airport)
+    else selectArrival(airport)
+  }
+
+  /** Dragging a departure/arrival marker onto another airport reassigns that endpoint. */
+  function handleEndpointDrop(role: 'departure' | 'arrival', icao: string) {
+    const airport = coordsByIcao[icao]
+    if (!airport) return
+    if (role === 'departure') selectDeparture(airport)
+    else selectArrival(airport)
   }
 
   async function handleDeleteRoute(route: RouteSummary) {
@@ -171,7 +247,7 @@ export function RoutesPage() {
     <div className="space-y-4">
       <PageHeader title="Routes" description="Plan and manage the routes your airline flies." />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-start">
+      <div className="grid gap-4 lg:grid-cols-[minmax(320px,420px)_minmax(320px,1fr)] lg:items-start">
         <div className="min-w-0 space-y-4">
           <AirportPickerCard
             departure={departure}
@@ -207,7 +283,16 @@ export function RoutesPage() {
           departure={departure}
           arrival={arrival}
           path={routePath}
-          className="h-[360px] lg:sticky lg:top-6 lg:h-[calc(100vh-176px)]"
+          savedRoutes={savedRouteArcs}
+          networkAirports={networkAirports}
+          homeAirportIcao={homeAirportIcao}
+          selectedRouteId={selectedRouteId}
+          hoveredRouteId={hoveredRouteId}
+          onSelectRoute={handleSelectRouteId}
+          onHoverRoute={setHoveredRouteId}
+          onAirportClick={handleAirportClick}
+          onEndpointDrop={handleEndpointDrop}
+          className="h-[320px] sm:h-[400px] lg:sticky lg:top-6 lg:h-[480px]"
         />
       </div>
 
@@ -216,8 +301,10 @@ export function RoutesPage() {
         status={routesQuery.status}
         blockMinutes={blockMinutes}
         selectedId={selectedRouteId}
+        hoveredId={hoveredRouteId}
         onSelect={handleSelectRoute}
         onDelete={handleDeleteRoute}
+        onHover={setHoveredRouteId}
       />
     </div>
   )

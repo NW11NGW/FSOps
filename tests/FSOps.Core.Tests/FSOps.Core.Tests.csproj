@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FSOps.Core\FSOps.Core.csproj" />
+    <ProjectReference Include="..\..\src\FSOps.Sim\FSOps.Sim.csproj" />
   </ItemGroup>
 
 </Project>

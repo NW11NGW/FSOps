@@ -1,4 +1,5 @@
 using FSOps.Server.Hubs;
+using FSOps.Sim;
 using Microsoft.AspNetCore.SignalR;
 
 namespace FSOps.Server.Services;
@@ -12,10 +13,12 @@ public sealed class HeartbeatService : BackgroundService
     private const string ServerVersion = "0.1.0";
 
     private readonly IHubContext<LiveHub> _hub;
+    private readonly SimTelemetryService _simTelemetry;
 
-    public HeartbeatService(IHubContext<LiveHub> hub)
+    public HeartbeatService(IHubContext<LiveHub> hub, SimTelemetryService simTelemetry)
     {
         _hub = hub;
+        _simTelemetry = simTelemetry;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -27,7 +30,7 @@ public sealed class HeartbeatService : BackgroundService
             var payload = new
             {
                 ServerTimeUtc = DateTime.UtcNow.ToString("o"),
-                SimConnected = false,
+                SimConnected = _simTelemetry.ConnectionState == SimConnectionState.Connected,
                 Version = ServerVersion
             };
 
