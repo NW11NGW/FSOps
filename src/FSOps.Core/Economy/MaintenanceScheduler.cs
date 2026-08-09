@@ -69,6 +69,47 @@ public static class MaintenanceScheduler
     }
 
     /// <summary>
+    /// Brings an A- or C-check forward at the player's own choosing, ahead of its natural due
+    /// point - see docs/PLAN.md "A 'perform maintenance now' button on the Fleet page". Charges the
+    /// FULL cost and downtime for the check type, exactly as if it had fired naturally at its usual
+    /// interval, and always resets that cycle's hours to zero - so any hours already accrued since
+    /// the last check of this type are forfeited. That forfeiture is the deliberate cost of
+    /// choosing WHEN the downtime lands rather than being surprised by it mid-week: nothing here is
+    /// pro-rated or discounted, or bringing a check forward would be a way to dodge cost rather than
+    /// a real trade-off. Pure like <see cref="Apply"/> - the caller (MaintenancePoster) does the
+    /// actual grounding/ledger/event writes.
+    /// </summary>
+    public static MaintenanceOutcome ApplyForced(FleetAircraft aircraft, MaintenanceEventType type, EconomyConfig config)
+    {
+        var maintenance = config.Maintenance;
+
+        return type switch
+        {
+            MaintenanceEventType.CCheck => new MaintenanceOutcome(
+                CheckTriggered: true,
+                Type: MaintenanceEventType.CCheck,
+                Cost: maintenance.CCheckCost,
+                DowntimeHours: maintenance.CCheckDowntimeHours,
+                NewHoursSinceACheck: 0,
+                NewHoursSinceCCheck: 0,
+                NewConditionPercent: 100),
+
+            MaintenanceEventType.ACheck => new MaintenanceOutcome(
+                CheckTriggered: true,
+                Type: MaintenanceEventType.ACheck,
+                Cost: maintenance.ACheckCost,
+                DowntimeHours: maintenance.ACheckDowntimeHours,
+                NewHoursSinceACheck: 0,
+                // A forced A-check doesn't touch the C-check clock, same as a naturally-triggered
+                // one - it's a full overhaul only when the C-check threshold is what's crossed.
+                NewHoursSinceCCheck: aircraft.HoursSinceCCheck,
+                NewConditionPercent: Math.Min(100, aircraft.ConditionPercent + maintenance.ACheckConditionRestorePercent)),
+
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Only ACheck or CCheck can be performed - Unscheduled is never player-triggered."),
+        };
+    }
+
+    /// <summary>
     /// The hours/condition/purchase-price state a used airframe of the given <paramref name="newPurchasePrice"/>
     /// starts at - see docs/PLAN.md "Used aircraft - cheap to buy, expensive to run". Pure: does not
     /// touch the database or assign a registration; the caller builds the actual FleetAircraft row.

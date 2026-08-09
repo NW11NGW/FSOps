@@ -1,9 +1,10 @@
 import type { ComponentType } from 'react'
 import { AlertTriangle, CheckCircle2, HelpCircle, type LucideProps } from 'lucide-react'
 
+import type { AircraftOptionRow } from '@/components/flight/routeRow'
 import { distanceNm } from '@/lib/flightGeo'
 import { cn } from '@/lib/utils'
-import type { FlightOptionAircraft, SimStatus, TelemetryPayload } from '@/types/flight'
+import type { SimStatus, TelemetryPayload } from '@/types/flight'
 
 type CheckLevel = 'ok' | 'warn' | 'unknown'
 
@@ -17,7 +18,7 @@ interface ReadinessChecksProps {
   simStatus: SimStatus | null
   simStatusLoaded: boolean
   telemetry: TelemetryPayload | null
-  selectedAircraft: FlightOptionAircraft | null
+  selectedAircraft: AircraftOptionRow | null
   departure: { icao: string; latitude: number; longitude: number } | null
 }
 

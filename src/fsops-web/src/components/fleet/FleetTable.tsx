@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, Pencil, Plane, ShieldCheck, Users } from 'lucide-react'
+import { AlertTriangle, Banknote, LogOut, Pencil, Plane, ShieldCheck, Users, Wrench } from 'lucide-react'
 
 import { ConditionBar } from '@/components/fleet/ConditionBar'
 import { Badge } from '@/components/ui/badge'
@@ -20,6 +20,13 @@ interface FleetTableProps {
   /** Toggle PUT /fleet/{id}/reservation - see docs/PLAN.md "Let the player release the reserved
    *  aircraft". Omitted entirely hides the reservation column, same optional-prop convention as onRename. */
   onToggleReservation?: (aircraft: FleetAircraftSummary) => void
+  /** Opens the sell/end-lease dialog appropriate to this aircraft's ownership - see
+   *  docs/PLAN.md "Getting rid of an aircraft". Omitted entirely hides the action column. */
+  onDispose?: (aircraft: FleetAircraftSummary) => void
+  /** Opens PerformMaintenanceDialog for this aircraft - see docs/PLAN.md "A 'perform maintenance
+   *  now' button on the Fleet page". Omitted entirely hides the button; shares the actions column
+   *  with onDispose rather than adding a second column. */
+  onPerformMaintenance?: (aircraft: FleetAircraftSummary) => void
 }
 
 function statusBadge(aircraft: FleetAircraftSummary) {
@@ -45,7 +52,7 @@ function formatUntil(iso: string | null): string | null {
   return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReservation }: FleetTableProps) {
+export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReservation, onDispose, onPerformMaintenance }: FleetTableProps) {
   const { fmt } = useSettings()
 
   if (status === 'loading') {
@@ -94,6 +101,11 @@ export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReser
             <TableHead>Condition</TableHead>
             <TableHead>Fuel on board</TableHead>
             {onToggleReservation && <TableHead>Reservation</TableHead>}
+            {(onDispose || onPerformMaintenance) && (
+              <TableHead className="text-right">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -180,6 +192,45 @@ export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReser
                     >
                       {aircraft.reservedForPlayer ? 'Release to pilots' : 'Reserve for you'}
                     </Button>
+                  </div>
+                </TableCell>
+              )}
+              {(onDispose || onPerformMaintenance) && (
+                <TableCell className="text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {onPerformMaintenance && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={aircraft.status === 'InFlight'}
+                        onClick={() => onPerformMaintenance(aircraft)}
+                      >
+                        <Wrench className="size-3.5" />
+                        Maintenance
+                      </Button>
+                    )}
+                    {onDispose && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={aircraft.status === 'InFlight'}
+                        onClick={() => onDispose(aircraft)}
+                      >
+                        {aircraft.ownership === 'Owned' ? (
+                          <>
+                            <Banknote className="size-3.5" />
+                            Sell
+                          </>
+                        ) : (
+                          <>
+                            <LogOut className="size-3.5" />
+                            End lease
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               )}

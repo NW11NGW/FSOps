@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useActiveFlight } from '@/hooks/useActiveFlight'
+import { useAircraftTypes } from '@/hooks/useAircraftTypes'
 import { useAirportCoordinates } from '@/hooks/useAirportCoordinates'
 import { useFlightDetail } from '@/hooks/useFlightDetail'
 import { useFlightHistory } from '@/hooks/useFlightHistory'
@@ -28,7 +29,7 @@ import { useRoutes } from '@/hooks/useRoutes'
 import { useSimStatus } from '@/hooks/useSimStatus'
 import { ApiError, post } from '@/lib/api'
 import { sampleGreatCirclePath } from '@/lib/geo'
-import type { Flight, FlightOptionAircraft } from '@/types/flight'
+import type { Flight } from '@/types/flight'
 import type { LiveContext } from '@/types/live-context'
 import type { RouteSummary } from '@/types/route'
 
@@ -42,6 +43,7 @@ export function Fly() {
   const routesQuery = useRoutes()
   const routeBlockMinutes = useRouteBlockTimes(routesQuery.routes)
   const optionsQuery = useFlightOptions()
+  const aircraftTypesQuery = useAircraftTypes()
   const activeFlight = useActiveFlight()
   const historyQuery = useFlightHistory()
 
@@ -65,6 +67,15 @@ export function Fly() {
 
   const routesById = useMemo(() => Object.fromEntries(routesQuery.routes.map((route) => [route.id, route])), [routesQuery.routes])
 
+  // GET /flights/options' aircraftOptions doesn't carry icaoType/family (see types/flight.ts) -
+  // joined in here from the buy/lease catalogue so the SimBrief hand-off and the sim-aircraft
+  // readiness check still have an ICAO type to compare against. Falls back to the type's own name
+  // when the catalogue hasn't loaded yet or the id is unrecognised, rather than blocking on it.
+  const aircraftTypesById = useMemo(
+    () => new Map(aircraftTypesQuery.types.map((type) => [type.id, type])),
+    [aircraftTypesQuery.types],
+  )
+
   const rows = useMemo<RouteRow[]>(() => {
     if (optionsQuery.status === 'ready') {
       return optionsQuery.options.map((option) => {
@@ -77,11 +88,14 @@ export function Fly() {
           arrivalIcao: option.arrivalIcao,
           arrivalName: option.arrivalName ?? route?.arrivalName ?? null,
           distanceNm: option.distanceNm || route?.distanceNm || 0,
-          blockMinutes: option.blockMinutes ?? routeBlockMinutes[option.routeId] ?? null,
+          blockMinutes: option.estimatedBlockMinutes ?? routeBlockMinutes[option.routeId] ?? null,
           baseFare: route?.baseFare ?? 0,
           isFlyable: option.isFlyable,
           reason: option.reason,
-          availableAircraft: option.availableAircraft,
+          aircraftOptions: option.aircraftOptions.map((aircraft) => {
+            const type = aircraft.aircraftTypeId ? aircraftTypesById.get(aircraft.aircraftTypeId) : undefined
+            return { ...aircraft, icaoType: type?.icaoType ?? aircraft.aircraftTypeName, family: type?.family ?? aircraft.aircraftTypeName }
+          }),
           aircraftUnknown: false,
         }
       })
@@ -99,10 +113,10 @@ export function Fly() {
       baseFare: route.baseFare,
       isFlyable: true,
       reason: null,
-      availableAircraft: [] as FlightOptionAircraft[],
+      aircraftOptions: [],
       aircraftUnknown: true,
     }))
-  }, [optionsQuery.status, optionsQuery.options, routesQuery.routes, routesById, routeBlockMinutes])
+  }, [optionsQuery.status, optionsQuery.options, routesQuery.routes, routesById, routeBlockMinutes, aircraftTypesById])
 
   // Pair up outbound/return legs into one round-trip entry each (Fly screen shows one card per
   // pair, offering whichever direction is actually flyable right now) using the same
@@ -123,7 +137,7 @@ export function Fly() {
       return
     }
     if (selectedPairId && routePairs.some((pair) => pair.pairId === selectedPairId)) return
-    const readyNow = routePairs.find((pair) => pair.isFlyable && pair.active.availableAircraft.length > 0)
+    const readyNow = routePairs.find((pair) => pair.isFlyable && pair.active.aircraftOptions.some((a) => a.isFlyable))
     const flyable = routePairs.find((pair) => pair.isFlyable)
     const fallback = readyNow ?? flyable ?? routePairs[0]
     if (fallback) setSelectedPairId(fallback.pairId)
@@ -132,16 +146,20 @@ export function Fly() {
   const selectedPair = routePairs.find((pair) => pair.pairId === selectedPairId) ?? null
   const selectedRow = selectedPair?.active ?? null
 
+  // The player may only ever fly a RESERVED aircraft (docs/PLAN.md "3a") - aircraftOptions lists
+  // every aircraft at the departure airport, flyable or not, so the default pick (and the only
+  // ones selectable at all) must be restricted to the flyable subset. Unflyable ones are still
+  // shown in the brief, disabled, with their reason (see FlightBrief.tsx).
   useEffect(() => {
     if (!selectedRow) {
       if (selectedAircraftId !== null) setSelectedAircraftId(null)
       return
     }
-    if (selectedAircraftId && selectedRow.availableAircraft.some((a) => a.fleetAircraftId === selectedAircraftId)) return
-    setSelectedAircraftId(selectedRow.availableAircraft[0]?.fleetAircraftId ?? null)
+    if (selectedAircraftId && selectedRow.aircraftOptions.some((a) => a.fleetAircraftId === selectedAircraftId && a.isFlyable)) return
+    setSelectedAircraftId(selectedRow.aircraftOptions.find((a) => a.isFlyable)?.fleetAircraftId ?? null)
   }, [selectedRow, selectedAircraftId])
 
-  const selectedAircraft = selectedRow?.availableAircraft.find((a) => a.fleetAircraftId === selectedAircraftId) ?? null
+  const selectedAircraft = selectedRow?.aircraftOptions.find((a) => a.fleetAircraftId === selectedAircraftId) ?? null
 
   const flightPreview = useFlightPreview(
     selectedRow?.departureIcao ?? null,
@@ -368,7 +386,7 @@ export function Fly() {
           {selectedRow ? (
             <FlightBrief
               row={selectedRow}
-              availableAircraft={selectedRow.availableAircraft}
+              aircraftOptions={selectedRow.aircraftOptions}
               selectedAircraft={selectedAircraft}
               onSelectAircraft={(aircraft) => setSelectedAircraftId(aircraft.fleetAircraftId)}
               preview={flightPreview.data}

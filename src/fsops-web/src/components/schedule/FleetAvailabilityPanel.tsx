@@ -1,21 +1,24 @@
 import { useMemo } from 'react'
 import { Plane, ShieldAlert, Wrench } from 'lucide-react'
 
-import type { DraftEntry } from './draftEntry'
+import type { DraftWeek } from './draftEntry'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { FleetAircraftLite } from '@/types/schedule'
 
 interface FleetAvailabilityPanelProps {
-  draft: DraftEntry[]
+  week: DraftWeek
   fleet: FleetAircraftLite[]
 }
 
 /** Weekly scheduled hours per aircraft, keyed by fleetAircraftId. */
-function weeklyHoursByAircraft(draft: DraftEntry[]): Map<string, number> {
+function weeklyHoursByAircraft(week: DraftWeek): Map<string, number> {
   const totals = new Map<string, number>()
-  for (const entry of draft) {
-    totals.set(entry.fleetAircraftId, (totals.get(entry.fleetAircraftId) ?? 0) + entry.blockMinutes / 60)
+  for (const day of Object.values(week)) {
+    if (!day) continue
+    for (const leg of day.legs) {
+      totals.set(day.fleetAircraftId, (totals.get(day.fleetAircraftId) ?? 0) + leg.blockMinutes / 60)
+    }
   }
   return totals
 }
@@ -25,8 +28,8 @@ function weeklyHoursByAircraft(draft: DraftEntry[]): Map<string, number> {
  * player needs to see before committing: an aircraft this schedule would fly into its next
  * A-check, and the aircraft being deliberately held back for the player to fly themselves.
  */
-export function FleetAvailabilityPanel({ draft, fleet }: FleetAvailabilityPanelProps) {
-  const hoursByAircraft = useMemo(() => weeklyHoursByAircraft(draft), [draft])
+export function FleetAvailabilityPanel({ week, fleet }: FleetAvailabilityPanelProps) {
+  const hoursByAircraft = useMemo(() => weeklyHoursByAircraft(week), [week])
   const usedIds = new Set(hoursByAircraft.keys())
   const usedAircraft = fleet.filter((a) => usedIds.has(a.id))
   const reservedAircraft = fleet.filter((a) => a.reservedForPlayer)

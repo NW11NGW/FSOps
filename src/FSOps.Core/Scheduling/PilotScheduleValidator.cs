@@ -18,11 +18,13 @@ public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string
 
 /// <summary>
 /// Pure validation for a weekly schedule - see docs/PLAN.md "Virtual pilot scheduling" for every
-/// rule this enforces: geographic continuity, no double-booking/overlap of an aircraft (across
-/// pilots, not just within one), minimum turnaround, pilot rest between duty days, a maximum duty
-/// day, and the reserved-for-player aircraft never being assignable. No I/O, no EF - the caller
-/// (PilotEndpoints) loads everything this needs and hands it in as plain data, so this is directly
-/// unit-testable without a database.
+/// rule this enforces: one aircraft per pilot per duty day (see
+/// <see cref="ValidateDutyDayAircraftConsistency"/> - the 2a/2c redesign's central invariant),
+/// geographic continuity, no double-booking/overlap of an aircraft (across pilots, not just within
+/// one), minimum turnaround, pilot rest between duty days, a maximum duty day, and the
+/// reserved-for-player aircraft never being assignable. No I/O, no EF - the caller (PilotEndpoints)
+/// loads everything this needs and hands it in as plain data, so this is directly unit-testable
+/// without a database.
 /// <para>
 /// <b>Whole-airline scope, not just one pilot.</b> "No double-booking an aircraft across pilots"
 /// means an aircraft's chain must be validated across every pilot that touches it, not in
@@ -97,10 +99,62 @@ public static class PilotScheduleValidator
             return new ScheduleValidationResult(false, conflicts);
         }
 
+        // The aircraft-per-duty-day invariant (docs/PLAN.md "2a"/"2c") - see this method's own doc
+        // for why it has to run, and fail fast, BEFORE ValidateAircraftChains: that method groups by
+        // FleetAircraftId, so two legs on two DIFFERENT aircraft in one pilot's day are never
+        // compared to each other at all - each aircraft's own chain can look perfectly valid in
+        // isolation while the pilot's day is geographically impossible. This is exactly the
+        // 2026-08-09 defect shape (two same-origin legs, one duty day, two different airframes, a
+        // meaningless "turnaround" rendered between them). Enforcing "one aircraft per duty day"
+        // here is what makes continuity hold by construction rather than by hoping every caller
+        // behaves - see ValidateDutyDayAircraftConsistency's own doc.
+        ValidateDutyDayAircraftConsistency(entries, fleetById, conflicts);
+        if (conflicts.Count > 0)
+        {
+            return new ScheduleValidationResult(false, conflicts);
+        }
+
         ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, requireWeekClosure);
         ValidatePilotDutyAndRest(entries, blockMinutesByLeg, config, conflicts, requireWeekClosure);
 
         return conflicts.Count == 0 ? ScheduleValidationResult.Ok : new ScheduleValidationResult(false, conflicts);
+    }
+
+    /// <summary>
+    /// Structural invariant from the aircraft-per-duty-day redesign (docs/PLAN.md "2a": "assign an
+    /// aircraft per pilot per DUTY DAY, not per leg"). Every entry belonging to the same
+    /// (<see cref="PilotScheduleEntryInput.PilotId"/>, <see cref="PilotScheduleEntryInput.DayOfWeek"/>)
+    /// pair must reference the same <see cref="PilotScheduleEntryInput.FleetAircraftId"/> - the
+    /// player picks the aircraft for a duty day once, then drops legs into it, so the API layer
+    /// should never be able to construct anything else. This check exists as the pure validator's own
+    /// defence regardless: it is what actually closes the 2026-08-09 defect (two EGPH -&gt; EGLL legs
+    /// in one duty day, one on G-PKS0 and one on G-LHRE, each individually unremarkable to
+    /// <see cref="ValidateAircraftChains"/> because it groups by aircraft and never saw both legs in
+    /// the same group) - without this, that shape passes cleanly no matter how the redesigned API
+    /// happens to be wired.
+    /// </summary>
+    private static void ValidateDutyDayAircraftConsistency(
+        IReadOnlyList<PilotScheduleEntryInput> entries,
+        IReadOnlyDictionary<Guid, FleetAircraft> fleetById,
+        List<string> conflicts)
+    {
+        foreach (var dutyDay in entries.GroupBy(e => (e.PilotId, e.DayOfWeek)))
+        {
+            var aircraftIds = dutyDay.Select(e => e.FleetAircraftId).Distinct().ToList();
+            if (aircraftIds.Count <= 1)
+            {
+                continue;
+            }
+
+            var registrations = aircraftIds
+                .Select(id => fleetById.TryGetValue(id, out var aircraft) ? aircraft.Registration : "an unknown aircraft")
+                .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            conflicts.Add(
+                $"{dutyDay.Key.DayOfWeek} has legs assigned to {string.Join(" and ", registrations)} - a duty day flies a single " +
+                "aircraft throughout. Pick one aircraft for this day, or move the extra legs to another day.");
+        }
     }
 
     /// <summary>Geographic continuity, overlap/double-booking, and minimum turnaround - all scoped

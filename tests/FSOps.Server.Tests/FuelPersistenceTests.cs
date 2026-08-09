@@ -111,6 +111,20 @@ public class FuelPersistenceTests
 
         var cashBeforeLeg2 = await CashBalanceAsync(ctx);
 
+        // ctx.Db's tracked FleetAircraft instance is stale at this point: leg 1's StartAsync
+        // loaded and mutated it through THIS context, but FinalizeFlightAsync just updated the same
+        // row through lifecycle's OWN separate DbContext (correctly mirroring production, where a
+        // background service resolves through its own DI scope). In production this can never bite
+        // StartAsync specifically - every HTTP request gets a brand-new scoped DbContext, so a
+        // second request's StartAsync would never see a first request's tracked entities. Here,
+        // though, ctx.Db is deliberately reused for both StartAsync calls to keep this test simple,
+        // so its identity map would otherwise hand back the SAME stale in-memory object (still
+        // showing EGPH's departure aircraft parked at EGGD, InFlight) instead of the fresh row
+        // FinalizeFlightAsync just committed. Reload it explicitly so this test's DbContext usage
+        // matches what a fresh per-request context would actually observe.
+        var trackedAircraft = await ctx.Db.FleetAircraft.FirstAsync(f => f.Id == fleetAircraftId);
+        await ctx.Db.Entry(trackedAircraft).ReloadAsync();
+
         var startLeg2 = await FlightEndpoints.StartAsync(
             new StartFlightRequest(returnRoute.Id, fleetAircraftId), ctx.Db, ctx.CurrentUser, lifecycle, telemetry, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(startLeg2));

@@ -553,11 +553,20 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// The explicit, never-silent choice docs/PLAN.md requires - "expose that choice, never decide
-    /// silently", both for the one-aircraft case and for releasing/re-assigning the reservation
-    /// later. Deliberately unopinionated: the player can release every aircraft (accepting nothing
-    /// is held back for them) or reserve more than one - this endpoint enforces nothing beyond
-    /// "this aircraft belongs to your airline", the same way every other Fleet action does.
+    /// Reservation is the sole gate on both sides now (docs/PLAN.md "3a", decided 2026-08-09): the
+    /// player may only fly a reserved aircraft, and a reserved aircraft is never offered to the
+    /// scheduler - so reserving one that a virtual pilot is already scheduled to fly would create
+    /// exactly the unrepresentable conflict 3a exists to prevent. Releasing (reserved -&gt; not
+    /// reserved) never has this problem - a reserved aircraft was never offered to the scheduler in
+    /// the first place, so it cannot already carry scheduled legs to worry about.
+    /// <para>
+    /// So: reserving (<see cref="SetReservationRequest.Reserved"/> true) an aircraft that already
+    /// has active scheduled legs is REFUSED by default (409), naming every offending leg (pilot,
+    /// day, route) so the player knows exactly what stands in the way - never a silent drop. Passing
+    /// <see cref="SetReservationRequest.ForceClearSchedule"/> true clears those legs (soft-deletes
+    /// the entries) and then reserves the aircraft, with the cleared legs echoed back in the
+    /// response so the consequence is stated plainly, not discovered later as missing revenue.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> SetReservationAsync(
         Guid id, SetReservationRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -574,10 +583,63 @@ public static class FleetEndpoints
             return Results.NotFound();
         }
 
+        var clearedLegs = Array.Empty<object>() as IReadOnlyList<object>;
+
+        if (request.Reserved && !aircraft.ReservedForPlayer)
+        {
+            var affectedEntries = await db.PilotScheduleEntries.Where(e => e.FleetAircraftId == aircraft.Id).ToListAsync(ct);
+            if (affectedEntries.Count > 0)
+            {
+                var scheduleIds = affectedEntries.Select(e => e.PilotScheduleId).Distinct().ToList();
+                var schedules = await db.PilotSchedules.Where(s => scheduleIds.Contains(s.Id)).ToListAsync(ct);
+                var pilotIdByScheduleId = schedules.ToDictionary(s => s.Id, s => s.PilotId);
+                var pilotIds = pilotIdByScheduleId.Values.Distinct().ToList();
+                var pilotsById = await db.Pilots.Where(p => pilotIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
+                var routeIds = affectedEntries.Select(e => e.RouteId).Distinct().ToList();
+                var routesById = await db.Routes.Where(r => routeIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
+
+                object DescribeLeg(PilotScheduleEntry e)
+                {
+                    var pilotId = pilotIdByScheduleId.TryGetValue(e.PilotScheduleId, out var pid) ? pid : Guid.Empty;
+                    pilotsById.TryGetValue(pilotId, out var pilot);
+                    routesById.TryGetValue(e.RouteId, out var route);
+                    return new
+                    {
+                        pilotId,
+                        pilotName = pilot?.Name,
+                        dayOfWeek = (int)e.DayOfWeek,
+                        departureTimeUtc = e.DepartureTimeUtc.ToString(@"hh\:mm\:ss"),
+                        routeId = e.RouteId,
+                        departureIcao = route?.DepartureIcao,
+                        arrivalIcao = route?.ArrivalIcao,
+                    };
+                }
+
+                if (!request.ForceClearSchedule)
+                {
+                    return Results.Conflict(new
+                    {
+                        error = $"{aircraft.Registration} is scheduled to fly {affectedEntries.Count} leg(s) - reserving it for the player would leave those legs " +
+                                 "with no aircraft. Clear them first, or resend with forceClearSchedule to clear them now.",
+                        offendingLegs = affectedEntries.Select(DescribeLeg).ToList(),
+                    });
+                }
+
+                var now = DateTimeOffset.UtcNow;
+                var cleared = affectedEntries.Select(DescribeLeg).ToList();
+                foreach (var entry in affectedEntries)
+                {
+                    entry.DeletedUtc = now;
+                }
+
+                clearedLegs = cleared;
+            }
+        }
+
         aircraft.ReservedForPlayer = request.Reserved;
         await db.SaveChangesAsync(ct);
 
-        return Results.Ok(new { aircraft.Id, aircraft.Registration, aircraft.ReservedForPlayer });
+        return Results.Ok(new { aircraft.Id, aircraft.Registration, aircraft.ReservedForPlayer, clearedLegs });
     }
 
     /// <summary>Cash is never a stored column - see the project convention. Same materialise-then-sum
@@ -736,8 +798,10 @@ public record RenameAircraftRequest(string? Registration);
 /// </summary>
 public record TakeLoanRequest(decimal Amount, int TermMonths);
 
-/// <summary>See FleetEndpoints.SetReservationAsync.</summary>
-public record SetReservationRequest(bool Reserved);
+/// <summary>See FleetEndpoints.SetReservationAsync. <see cref="ForceClearSchedule"/> only matters
+/// when <see cref="Reserved"/> is true and the aircraft already has scheduled legs - it confirms the
+/// player has seen the consequence and wants those legs cleared rather than the request refused.</summary>
+public record SetReservationRequest(bool Reserved, bool ForceClearSchedule = false);
 
 /// <summary>One fleet aircraft, enriched for the Fleet page - see FleetEndpoints.ListAsync.</summary>
 public record FleetAircraftSummary(

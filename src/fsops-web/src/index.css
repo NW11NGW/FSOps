@@ -35,6 +35,17 @@
     --danger: 0 72% 45%;
     --danger-foreground: 210 40% 98%;
 
+    /* Categorical palette for "colour-code by X" surfaces (schedule overview's by-pilot
+     * colouring on the by-aircraft grid) - kept separate from the semantic tokens above so a
+     * pilot's colour never collides in meaning with success/warning/danger. Six hues spread
+     * around the wheel, none within ~20deg of accent/success/warning/danger. */
+    --chart-1: 262 83% 58%;
+    --chart-2: 291 60% 55%;
+    --chart-3: 330 75% 55%;
+    --chart-4: 172 66% 38%;
+    --chart-5: 221 83% 55%;
+    --chart-6: 88 55% 38%;
+
     --shadow-color: 222 47% 11%;
 
     /* shadcn-style aliases, kept in sync with the tokens above */
@@ -77,6 +88,13 @@
 
     --danger: 0 72% 55%;
     --danger-foreground: 210 40% 98%;
+
+    --chart-1: 262 83% 70%;
+    --chart-2: 291 65% 68%;
+    --chart-3: 330 75% 68%;
+    --chart-4: 172 60% 55%;
+    --chart-5: 221 83% 68%;
+    --chart-6: 88 55% 55%;
 
     --shadow-color: 222 60% 2%;
 

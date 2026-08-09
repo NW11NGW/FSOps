@@ -15,6 +15,12 @@ public class PilotScheduleConfiguration : IEntityTypeConfiguration<PilotSchedule
         builder.HasIndex(s => s.PilotId).IsUnique();
         builder.HasIndex(s => s.AirlineId);
         builder.HasQueryFilter(s => s.DeletedUtc == null);
+
+        // Explicit default, not left to EF's scaffolded bool default (which lands on false) - see
+        // the project's "never trust an EF-scaffolded migration default" rule and
+        // PilotSchedule.AutoSuspendOnMaintenance's own doc comment. Every existing schedule must
+        // pick this feature up as ON, not silently opt out of it.
+        builder.Property(s => s.AutoSuspendOnMaintenance).HasDefaultValue(true);
     }
 }
 

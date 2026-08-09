@@ -148,8 +148,15 @@ export const DEFAULT_WIZARD_DATA: WizardData = {
   weightUnit: 'Kg',
   timeDisplay: 'Utc',
   use24HourClock: true,
+  // Debt is always a deliberate act, never something inherited from the form - the checkbox
+  // starts unticked AND the amount starts at zero, so a player who ticks it still has to type a
+  // real number before the review step will let them continue (see isFinanceValid below). A
+  // previous default of 5,000,000/60 months priced to the rate cap at roughly double a solo
+  // Casual airline's typical monthly income - a trap for exactly the player least able to spot
+  // it, and the reason AirlineEndpoints.CreateAsync now also refuses a starting loan above the
+  // playstyle's own cap (economy-config.json's loan.maxStartingLoanPrincipal) outright.
   loanEnabled: false,
-  loanAmount: 5_000_000,
+  loanAmount: 0,
   loanTermMonths: 60,
 }
 

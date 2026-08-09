@@ -1,9 +1,23 @@
 import type { FlightOptionAircraft } from '@/types/flight'
 
 /**
+ * A `FlightOptionAircraft` enriched with `icaoType`/`family` joined client-side from
+ * GET /fleet/aircraft-types by `aircraftTypeId` - GET /flights/options itself doesn't carry
+ * these (see types/flight.ts), but the SimBrief hand-off and the sim-aircraft readiness check
+ * both need an ICAO type code to compare against. Falls back to the aircraft's own type NAME when
+ * the catalogue hasn't loaded yet or the id doesn't match anything, so those two features degrade
+ * gracefully rather than breaking.
+ */
+export interface AircraftOptionRow extends FlightOptionAircraft {
+  icaoType: string
+  family: string
+}
+
+/**
  * Unified shape the route selector renders, whether it came from GET /flights/options (rich:
- * flyability + available aircraft) or the GET /routes fallback used when that endpoint isn't
- * deployed yet (plain: every route shown, aircraft assignment unknown).
+ * flyability + every aircraft physically at the departure airport) or the GET /routes fallback
+ * used when that endpoint isn't deployed yet (plain: every route shown, aircraft availability
+ * unknown).
  */
 export interface RouteRow {
   routeId: string
@@ -17,7 +31,10 @@ export interface RouteRow {
   baseFare: number
   isFlyable: boolean
   reason: string | null
-  availableAircraft: FlightOptionAircraft[]
+  /** Every aircraft physically at the departure airport - flyable or not, never omitted (see
+   *  types/flight.ts's FlightOption doc). Empty when `aircraftUnknown` is true (the fallback
+   *  path) or when GET /flights/options itself says nothing is there. */
+  aircraftOptions: AircraftOptionRow[]
   /** True when this row came from the fallback path - aircraft availability genuinely isn't known, not just empty. */
   aircraftUnknown: boolean
 }

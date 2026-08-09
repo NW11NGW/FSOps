@@ -65,6 +65,10 @@ export type LedgerCategory =
   | 'Handling'
   | 'Maintenance'
   | 'Salary'
+  | 'CrewCost'
+  | 'ParkingFees'
+  | 'PassengerCharges'
+  | 'TurnaroundFees'
   | 'LeasePayment'
   | 'LoanPayment'
   | 'AircraftPurchase'
@@ -154,19 +158,29 @@ export interface SimStatus {
   lastSampleUtc: string | null
 }
 
-/** One fleet aircraft offered for a flyable route by GET /flights/options. */
+/**
+ * One fleet aircraft PHYSICALLY AT a route's departure airport, as returned by
+ * GET /flights/options' `aircraftOptions`. Every aircraft present is listed here - flyable or not
+ * (docs/PLAN.md "2b"; the 2026-08-09 defect this fixes was silently dropping the ones that
+ * weren't) - `isFlyable`/`reason` say which. This does NOT carry `icaoType`/`family`; join against
+ * GET /fleet/aircraft-types by `aircraftTypeId` for those (see routeRow.ts's `AircraftOptionRow`),
+ * needed for the SimBrief hand-off and the sim-aircraft readiness check.
+ */
 export interface FlightOptionAircraft {
   fleetAircraftId: string
   registration: string
-  aircraftTypeId: string
+  aircraftTypeId: string | null
   aircraftTypeName: string
-  icaoType: string
-  family: string
-  locationIcao: string
   paxCapacity: number | null
+  estimatedBlockMinutes: number | null
+  isFlyable: boolean
+  reason: string | null
 }
 
-/** One row of GET /flights/options - a route plus whether it can be flown right now. */
+/** One row of GET /flights/options - a route plus whether it can be flown right now.
+ *  `isFlyable` is true iff at least one entry in `aircraftOptions` is flyable; `reason` is only
+ *  ever set when `aircraftOptions` is empty (no fleet aircraft at all at the departure airport) -
+ *  when aircraft ARE present but none is flyable, their own per-aircraft reasons already cover it. */
 export interface FlightOption {
   routeId: string
   flightNumber: string | null
@@ -175,10 +189,10 @@ export interface FlightOption {
   arrivalIcao: string
   arrivalName: string | null
   distanceNm: number
-  blockMinutes: number | null
+  estimatedBlockMinutes: number | null
   isFlyable: boolean
   reason: string | null
-  availableAircraft: FlightOptionAircraft[]
+  aircraftOptions: FlightOptionAircraft[]
 }
 
 export interface StartFlightRequest {

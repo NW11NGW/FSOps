@@ -125,6 +125,9 @@ builder.Services.AddHostedService<EconomyClockService>();
 // monotonicity/capped-catch-up pattern rather than inventing a second one.
 builder.Services.AddHostedService<VirtualFlightResolverService>();
 
+// Populated during startup, below - nothing can be added to the service collection after Build().
+builder.Services.AddSingleton<StartupReconciliationState>();
+
 var app = builder.Build();
 
 // Migrations are fast (schema-only), so this runs synchronously before Kestrel starts
@@ -132,6 +135,25 @@ var app = builder.Build();
 // below and its progress is polled through /api/v1/worlddata/status instead of blocking
 // startup on it.
 app.Services.MigrateFsOpsDatabase();
+
+// MUST run here: after the schema migration, and strictly before any hosted service starts.
+// Reservation only became a hard two-way invariant in E3, so a database written earlier can hold
+// an aircraft that is both ReservedForPlayer and carrying virtual-pilot legs - reserving one never
+// checked for a schedule before. VirtualFlightResolverService does not consult ReservedForPlayer at
+// all and runs its first resolution pass synchronously the moment it starts (at app.Run(), not at
+// registration above), so if it went first it would fly a contradictory aircraft's legs while the
+// Fly screen simultaneously offered the same airframe to the player - exactly the two-actor
+// collision the invariant exists to prevent. See ReservationReconciler for the resolution rule.
+using (var reservationScope = app.Services.CreateScope())
+{
+    var reservationDb = reservationScope.ServiceProvider.GetRequiredService<FsOpsDbContext>();
+    var reservationLogger = reservationScope.ServiceProvider
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("ReservationReconciliation");
+
+    app.Services.GetRequiredService<StartupReconciliationState>().Result =
+        await ReservationReconciler.ReconcileAsync(reservationDb, reservationLogger);
+}
 
 // AppContext.BaseDirectory (not ContentRootPath) so this resolves the same way whether
 // running via "dotnet run" (project bin output) or from a published single-file exe -
@@ -166,7 +188,10 @@ apiV1.MapSettingsEndpoints();
 apiV1.MapSimEndpoints();
 apiV1.MapFlightEndpoints();
 apiV1.MapFleetEndpoints();
+apiV1.MapFleetDisposalEndpoints();
+apiV1.MapFinanceEndpoints();
 apiV1.MapPilotEndpoints();
+apiV1.MapMaintenanceEndpoints();
 apiV1.MapOperationsEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");

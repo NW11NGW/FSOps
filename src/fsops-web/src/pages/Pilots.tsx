@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { CalendarClock, Loader2, Plane, Plus, Trash2, Users } from 'lucide-react'
+import { CalendarClock, LayoutGrid, Loader2, Plane, Plus, Trash2, Users } from 'lucide-react'
 
 import { PilotScheduleDialog } from '@/components/schedule/PilotScheduleDialog'
+import { ScheduleOverview } from '@/components/schedule/ScheduleOverview'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePilots } from '@/hooks/usePilots'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError } from '@/lib/api'
@@ -85,6 +87,19 @@ export function Pilots() {
         }
       />
 
+      <Tabs defaultValue="roster">
+        <TabsList>
+          <TabsTrigger value="roster" className="gap-1.5">
+            <Users className="size-3.5" />
+            Roster
+          </TabsTrigger>
+          <TabsTrigger value="overview" className="gap-1.5">
+            <LayoutGrid className="size-3.5" />
+            Schedule overview
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="roster">
       <Card>
         <CardContent className="p-0">
           {pilotsQuery.status === 'loading' && (
@@ -198,6 +213,12 @@ export function Pilots() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="overview">
+          <ScheduleOverview />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={hireOpen} onOpenChange={(open) => !hiring && setHireOpen(open)}>
         <DialogContent>

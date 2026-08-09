@@ -8,10 +8,10 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Chunk E2's own stated verification for the pilot/schedule endpoints: hiring, the weekly
-/// schedule builder's whole-airline conflict validation, and releasing a pilot cascading to their
-/// schedule. Drives PilotEndpoints' handlers directly against an isolated in-memory
-/// RouteTestContext - same convention as FleetEndpointsTests/MaintenanceTriggerTests.
+/// Chunk E3's own stated verification for the redesigned pilot/schedule endpoints - aircraft
+/// assigned per pilot per DUTY DAY (docs/PLAN.md "2a"/"2c"), not per leg, plus the hard
+/// reservation invariant (docs/PLAN.md "3a"). Drives PilotEndpoints' handlers directly against an
+/// isolated in-memory RouteTestContext - same convention as FleetEndpointsTests/MaintenanceTriggerTests.
 /// </summary>
 public class PilotEndpointsTests
 {
@@ -57,8 +57,11 @@ public class PilotEndpointsTests
 
         var request = new SaveScheduleRequest(new[]
         {
-            new ScheduleEntryRequest(0, "06:00:00", outbound.Id, aircraftId), // Sunday
-            new ScheduleEntryRequest(0, "08:00:00", inbound.Id, aircraftId),
+            new DutyDayRequest(0, aircraftId, new[] // Sunday
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("08:00:00", inbound.Id),
+            }),
         });
 
         var saveResult = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
@@ -66,9 +69,103 @@ public class PilotEndpointsTests
 
         var getResult = await PilotEndpoints.GetScheduleAsync(pilot.Id, ctx.Db, ctx.CurrentUser, CancellationToken.None);
         var dto = OkValueOf<ScheduleDto>(getResult);
-        Assert.Equal(2, dto.Entries.Count);
-        Assert.Contains(dto.Entries, e => e.DepartureIcao == "EGGD" && e.ArrivalIcao == "EGPH");
-        Assert.Contains(dto.Entries, e => e.DepartureIcao == "EGPH" && e.ArrivalIcao == "EGGD");
+        var day = Assert.Single(dto.DutyDays);
+        Assert.Equal(aircraftId, day.FleetAircraftId);
+        Assert.Equal(2, day.Legs.Count);
+        Assert.Contains(day.Legs, l => l.DepartureIcao == "EGGD" && l.ArrivalIcao == "EGPH");
+        Assert.Contains(day.Legs, l => l.DepartureIcao == "EGPH" && l.ArrivalIcao == "EGGD");
+    }
+
+    [Fact]
+    public async Task GetSchedule_BeforeAnySave_ReportsAutoSuspendOnMaintenanceDefaultOfTrue()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+
+        var getResult = await PilotEndpoints.GetScheduleAsync(pilot.Id, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var dto = OkValueOf<ScheduleDto>(getResult);
+
+        Assert.True(dto.AutoSuspendOnMaintenance);
+    }
+
+    [Fact]
+    public async Task SaveSchedule_OmittingAutoSuspendOnMaintenance_DefaultsToTrue()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        // No AutoSuspendOnMaintenance argument at all - the exact shape an older client (one that
+        // predates this field) would send, since the parameter defaults to null on the wire.
+        var request = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(0, aircraftId, new[]
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("08:00:00", inbound.Id),
+            }),
+        });
+
+        var saveResult = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var savedDto = OkValueOf<ScheduleDto>(saveResult);
+        Assert.True(savedDto.AutoSuspendOnMaintenance);
+
+        var schedule = await ctx.Db.PilotSchedules.SingleAsync(s => s.PilotId == pilot.Id);
+        Assert.True(schedule.AutoSuspendOnMaintenance);
+    }
+
+    [Fact]
+    public async Task SaveSchedule_ExplicitlySettingAutoSuspendOnMaintenanceFalse_PersistsAndIsReturnedByGet()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var request = new SaveScheduleRequest(
+            new[]
+            {
+                new DutyDayRequest(0, aircraftId, new[]
+                {
+                    new DutyLegRequest("06:00:00", outbound.Id),
+                    new DutyLegRequest("08:00:00", inbound.Id),
+                }),
+            },
+            AutoSuspendOnMaintenance: false);
+
+        var saveResult = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var savedDto = OkValueOf<ScheduleDto>(saveResult);
+        Assert.False(savedDto.AutoSuspendOnMaintenance);
+
+        var getResult = await PilotEndpoints.GetScheduleAsync(pilot.Id, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var getDto = OkValueOf<ScheduleDto>(getResult);
+        Assert.False(getDto.AutoSuspendOnMaintenance);
+    }
+
+    [Fact]
+    public async Task SaveSchedule_DayWithLegsButNoAircraft_IsRejected()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, _) = await SeedRoundTripRoutesAsync(ctx);
+
+        var request = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(0, null, new[] { new DutyLegRequest("06:00:00", outbound.Id) }),
+        });
+
+        var result = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
+        var schedule = await ctx.Db.PilotSchedules.FirstOrDefaultAsync(s => s.PilotId == pilot.Id);
+        Assert.Null(schedule);
     }
 
     [Fact]
@@ -85,8 +182,11 @@ public class PilotEndpointsTests
         // Lands at EGPH (outbound) but the second leg departs EGSS - no route connects them.
         var request = new SaveScheduleRequest(new[]
         {
-            new ScheduleEntryRequest(1, "06:00:00", outbound.Id, aircraftId), // Monday
-            new ScheduleEntryRequest(1, "08:00:00", elsewhere.Id, aircraftId),
+            new DutyDayRequest(1, aircraftId, new[] // Monday
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("08:00:00", elsewhere.Id),
+            }),
         });
 
         var result = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
@@ -127,8 +227,11 @@ public class PilotEndpointsTests
 
         var request = new SaveScheduleRequest(new[]
         {
-            new ScheduleEntryRequest(1, "06:00:00", outbound.Id, aircraftId), // Monday, lands EGPH
-            new ScheduleEntryRequest(1, "08:00:00", elsewhere.Id, aircraftId), // departs EGSS
+            new DutyDayRequest(1, aircraftId, new[] // Monday, lands EGPH then departs EGSS
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("08:00:00", elsewhere.Id),
+            }),
         });
 
         var result = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
@@ -159,8 +262,11 @@ public class PilotEndpointsTests
 
         var request = new SaveScheduleRequest(new[]
         {
-            new ScheduleEntryRequest(0, "06:00:00", outbound.Id, aircraftId),
-            new ScheduleEntryRequest(0, "08:00:00", inbound.Id, aircraftId),
+            new DutyDayRequest(0, aircraftId, new[]
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("08:00:00", inbound.Id),
+            }),
         });
 
         var result = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
@@ -168,6 +274,44 @@ public class PilotEndpointsTests
         Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
         var value = OkValueOf<ConflictDto>(result);
         Assert.Contains(value.Conflicts, c => c.Contains("reserved for the player"));
+    }
+
+    /// <summary>
+    /// Regression for the 2026-08-09 real-use defect via the actual save endpoint (not just the
+    /// pure validator): a duty day with two same-origin legs on two different airframes must be
+    /// rejected, not silently accepted with a meaningless rendered turnaround between them.
+    /// </summary>
+    [Fact]
+    public async Task SaveSchedule_TwoLegsSameDutyDay_DifferentAircraft_IsRejected()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (_, inbound) = await SeedRoundTripRoutesAsync(ctx); // EGPH -> EGGD
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var secondAircraft = await LeaseSecondAircraftAsync(ctx, catalog);
+
+        // Both legs depart EGPH, one on each aircraft - the API cannot even express "one aircraft
+        // per day" being violated (DutyDayRequest.FleetAircraftId is a single field), so this can
+        // only be reproduced with two SEPARATE duty-day entries for the same day, which
+        // SaveScheduleAsync happily accepts as input but the validator must still reject once
+        // merged, because dayOfWeek collides.
+        var request = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("13:05:00", inbound.Id) }),
+            new DutyDayRequest(1, secondAircraft, new[] { new DutyLegRequest("14:50:00", inbound.Id) }),
+        });
+
+        var result = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
+        var value = OkValueOf<ConflictDto>(result);
+        Assert.Contains(value.Conflicts, c => c.Contains("single") && c.Contains("aircraft"));
+
+        var schedule = await ctx.Db.PilotSchedules.FirstOrDefaultAsync(s => s.PilotId == pilot.Id);
+        Assert.Null(schedule);
     }
 
     [Fact]
@@ -185,7 +329,7 @@ public class PilotEndpointsTests
         await ctx.Db.SaveChangesAsync();
 
         var result = await PilotEndpoints.SaveScheduleAsync(
-            playerPilot.Id, new SaveScheduleRequest(Array.Empty<ScheduleEntryRequest>()), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+            playerPilot.Id, new SaveScheduleRequest(Array.Empty<DutyDayRequest>()), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
     }
@@ -204,8 +348,11 @@ public class PilotEndpointsTests
             pilot.Id,
             new SaveScheduleRequest(new[]
             {
-                new ScheduleEntryRequest(0, "06:00:00", outbound.Id, aircraftId),
-                new ScheduleEntryRequest(0, "08:00:00", inbound.Id, aircraftId),
+                new DutyDayRequest(0, aircraftId, new[]
+                {
+                    new DutyLegRequest("06:00:00", outbound.Id),
+                    new DutyLegRequest("08:00:00", inbound.Id),
+                }),
             }),
             ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(saveResult));
@@ -224,7 +371,65 @@ public class PilotEndpointsTests
     }
 
     [Fact]
-    public async Task ScheduleOptions_ReservedAircraftIsIllegal_UnreservedIsLegal()
+    public async Task AircraftOptions_ReservedAircraftIsIneligible_WithAQuietReason()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraftId);
+        aircraft.ReservedForPlayer = true;
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await PilotEndpoints.GetAircraftOptionsAsync(pilot.Id, new AircraftOptionsRequest(1), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<AircraftOptionsDto>(result);
+        var option = Assert.Single(value.Options);
+        Assert.False(option.Eligible);
+        Assert.Contains("reserved for the player", option.Reason);
+    }
+
+    [Fact]
+    public async Task AircraftOptions_UnreservedGroundedAircraft_IsIneligible_WithMaintenanceReason()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraftId);
+        aircraft.Status = FleetAircraftStatus.InMaintenance;
+        aircraft.GroundedUntilUtc = DateTimeOffset.UtcNow.AddDays(2);
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await PilotEndpoints.GetAircraftOptionsAsync(pilot.Id, new AircraftOptionsRequest(1), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+
+        var value = OkValueOf<AircraftOptionsDto>(result);
+        var option = Assert.Single(value.Options);
+        Assert.False(option.Eligible);
+        Assert.Contains("maintenance", option.Reason);
+    }
+
+    [Fact]
+    public async Task AircraftOptions_UnreservedIdleAircraft_IsEligible()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var result = await PilotEndpoints.GetAircraftOptionsAsync(pilot.Id, new AircraftOptionsRequest(1), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+
+        var value = OkValueOf<AircraftOptionsDto>(result);
+        var option = Assert.Single(value.Options);
+        Assert.True(option.Eligible);
+        Assert.Null(option.Reason);
+    }
+
+    [Fact]
+    public async Task LegOptions_ReservedAircraft_EveryRouteIsIllegal_WithOneQuietReason()
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
@@ -235,17 +440,17 @@ public class PilotEndpointsTests
         aircraft.ReservedForPlayer = true;
         await ctx.Db.SaveChangesAsync();
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "06:00", null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", aircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
-        var value = OkValueOf<OptionsDto>(result);
-        Assert.Contains(value.Illegal, i => i.FleetAircraftId == aircraftId && i.Reason.Contains("reserved for the player"));
-        Assert.DoesNotContain(value.Legal, l => l.FleetAircraftId == aircraftId);
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Empty(value.Legal);
+        Assert.Contains(value.Illegal, i => i.RouteId == outbound.Id && i.Reason.Contains("reserved for the player"));
     }
 
     [Fact]
-    public async Task ScheduleOptions_EmptySchedule_OffersLegalOptions()
+    public async Task LegOptions_EmptySchedule_OffersLegalOptions()
     {
         // Regression for the bug the schedule-builder agent found: options used to validate
         // full-week closure (including the wraparound from the week's last leg back to its first)
@@ -254,26 +459,25 @@ public class PilotEndpointsTests
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
         var pilot = await HirePilotAsync(ctx, catalog);
-        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var (outbound, _) = await SeedRoundTripRoutesAsync(ctx);
         var aircraftId = await FleetAircraftIdAsync(ctx);
         await ReleaseReservationAsync(ctx, aircraftId);
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "06:00", null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", aircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
-        var value = OkValueOf<OptionsDto>(result);
-        Assert.Contains(value.Legal, l => l.RouteId == outbound.Id && l.FleetAircraftId == aircraftId);
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Contains(value.Legal, l => l.RouteId == outbound.Id);
     }
 
     [Fact]
-    public async Task ScheduleOptions_PartiallyBuiltWeek_OffersASensibleNextLeg()
+    public async Task LegOptions_PartiallyBuiltWeek_OffersASensibleNextLeg()
     {
         // A Monday out-and-back (06:00 out, 08:00 back) has already been drafted client-side but
         // NOT saved. Querying a third leg at 12:00 the same day, departing from where the aircraft
-        // now sits (EGGD, after the 08:00 return), must be legal - the second half of the original
-        // bug report: even after the empty-schedule case is fixed, the SECOND leg of a day was
-        // still judged against a stale aircraft position unless the draft is passed in.
+        // now sits (EGGD, after the 08:00 return), must be legal - the draft must actually be
+        // load-bearing, not just accepted and ignored.
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
         var pilot = await HirePilotAsync(ctx, catalog);
@@ -283,28 +487,31 @@ public class PilotEndpointsTests
 
         var draft = new[]
         {
-            new ScheduleEntryRequest(1, "06:00:00", outbound.Id, aircraftId),
-            new ScheduleEntryRequest(1, "08:00:00", inbound.Id, aircraftId),
+            new DutyDayRequest(1, aircraftId, new[]
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("08:00:00", inbound.Id),
+            }),
         };
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "12:00", draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "12:00", aircraftId, draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
-        var value = OkValueOf<OptionsDto>(result);
-        Assert.Contains(value.Legal, l => l.RouteId == outbound.Id && l.FleetAircraftId == aircraftId);
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Contains(value.Legal, l => l.RouteId == outbound.Id);
 
         // The SAME query without the draft (server falls back to nothing known about this pilot's
-        // day) would have no way to know the aircraft is at EGGD rather than wherever it started -
-        // demonstrating the draft is actually load-bearing, not just accepted and ignored.
-        var withoutDraft = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "12:00", null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
-        var withoutDraftValue = OkValueOf<OptionsDto>(withoutDraft);
-        Assert.Contains(withoutDraftValue.Legal, l => l.RouteId == outbound.Id && l.FleetAircraftId == aircraftId);
+        // day) still offers the outbound leg legally - it just has no basis to know the aircraft
+        // isn't at EGGD, demonstrating the draft only NARROWS options, it doesn't invent conflicts.
+        var withoutDraft = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "12:00", aircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var withoutDraftValue = OkValueOf<LegOptionsDto>(withoutDraft);
+        Assert.Contains(withoutDraftValue.Legal, l => l.RouteId == outbound.Id);
     }
 
     [Fact]
-    public async Task ScheduleOptions_WrongAirportIsStillIllegal_WithItsReason()
+    public async Task LegOptions_WrongAirportIsStillIllegal_WithItsReason()
     {
         // Geographic continuity within the drafted day must still be enforced even with closure
         // relaxed - only the WRAP is exempted, not the interior legs the player has actually built.
@@ -316,28 +523,24 @@ public class PilotEndpointsTests
         var aircraftId = await FleetAircraftIdAsync(ctx);
         await ReleaseReservationAsync(ctx, aircraftId);
 
-        var draft = new[] { new ScheduleEntryRequest(1, "06:00:00", outbound.Id, aircraftId) }; // lands EGPH
+        var draft = new[] { new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }) }; // lands EGPH
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "08:00", draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "08:00", aircraftId, draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
-        var value = OkValueOf<OptionsDto>(result);
+        var value = OkValueOf<LegOptionsDto>(result);
         // The EGSS->EGPF candidate departs EGSS, but the aircraft (after the drafted 06:00 leg) is
         // at EGPH - illegal, with a reason naming both airports. No EGPH -> EGSS route was seeded,
         // so the reason must offer to CREATE one.
-        Assert.Contains(value.Illegal, i => i.RouteId == elsewhere.Id && i.FleetAircraftId == aircraftId && i.Reason.Contains("EGPH") && i.Reason.Contains("EGSS"));
-        Assert.Contains(value.Illegal, i => i.RouteId == elsewhere.Id && i.FleetAircraftId == aircraftId && i.Reason.Contains("create"));
-        Assert.DoesNotContain(value.Legal, l => l.RouteId == elsewhere.Id && l.FleetAircraftId == aircraftId);
+        Assert.Contains(value.Illegal, i => i.RouteId == elsewhere.Id && i.Reason.Contains("EGPH") && i.Reason.Contains("EGSS"));
+        Assert.Contains(value.Illegal, i => i.RouteId == elsewhere.Id && i.Reason.Contains("create"));
+        Assert.DoesNotContain(value.Legal, l => l.RouteId == elsewhere.Id);
     }
 
     [Fact]
-    public async Task ScheduleOptions_WrongAirportButTheConnectingRouteAlreadyExists_SaysScheduleALeg()
+    public async Task LegOptions_WrongAirportButTheConnectingRouteAlreadyExists_SaysScheduleALeg()
     {
-        // Same setup as ScheduleOptions_WrongAirportIsStillIllegal_WithItsReason, but this time the
-        // EGPH -> EGSS route already exists - just unscheduled. The options endpoint must offer the
-        // corrected "schedule a leg" wording exactly as a save-time rejection does (docs/PLAN.md
-        // "2b", user feedback 2026-08-08).
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
         var pilot = await HirePilotAsync(ctx, catalog);
@@ -347,19 +550,18 @@ public class PilotEndpointsTests
         var aircraftId = await FleetAircraftIdAsync(ctx);
         await ReleaseReservationAsync(ctx, aircraftId);
 
-        var draft = new[] { new ScheduleEntryRequest(1, "06:00:00", outbound.Id, aircraftId) }; // lands EGPH
+        var draft = new[] { new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }) }; // lands EGPH
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "08:00", draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "08:00", aircraftId, draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
 
-        var value = OkValueOf<OptionsDto>(result);
-        Assert.Contains(value.Illegal, i =>
-            i.RouteId == elsewhere.Id && i.FleetAircraftId == aircraftId && i.Reason.Contains("schedule a EGPH -> EGSS leg"));
-        Assert.DoesNotContain(value.Illegal, i => i.RouteId == elsewhere.Id && i.Reason.Contains("you'd need to create"));
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Contains(value.Illegal, i => i.RouteId == elsewhere.Id && i.Reason.Contains("schedule a EGPH -> EGSS leg"));
+        Assert.DoesNotContain(value.Illegal, i => i.Reason.Contains("you'd need to create"));
     }
 
     [Fact]
-    public async Task ScheduleOptions_GroundedAircraftIsStillIllegal_WithItsReason()
+    public async Task LegOptions_GroundedAircraft_EveryRouteIsIllegal_WithItsReason()
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
@@ -373,16 +575,16 @@ public class PilotEndpointsTests
         aircraft.GroundedUntilUtc = DateTimeOffset.UtcNow.AddDays(2);
         await ctx.Db.SaveChangesAsync();
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "06:00", null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", aircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
 
-        var value = OkValueOf<OptionsDto>(result);
-        Assert.Contains(value.Illegal, i => i.FleetAircraftId == aircraftId && i.Reason.Contains("maintenance"));
-        Assert.DoesNotContain(value.Legal, l => l.FleetAircraftId == aircraftId);
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Contains(value.Illegal, i => i.RouteId == outbound.Id && i.Reason.Contains("maintenance"));
+        Assert.Empty(value.Legal);
     }
 
     [Fact]
-    public async Task ScheduleOptions_NoRestRoomLeft_IsStillIllegal_WithItsReason()
+    public async Task LegOptions_NoRestRoomLeft_IsStillIllegal_WithItsReason()
     {
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
@@ -394,21 +596,21 @@ public class PilotEndpointsTests
         // Sunday duty already runs 20:00 -> ~21:05 in the draft. A Monday 03:00 departure leaves
         // well under the 10-hour minimum rest - illegal even though closure itself is relaxed,
         // because rest between two ALREADY-drafted duty days is an interior (non-wrap) check.
-        var draft = new[] { new ScheduleEntryRequest(0, "20:00:00", outbound.Id, aircraftId) };
+        var draft = new[] { new DutyDayRequest(0, aircraftId, new[] { new DutyLegRequest("20:00:00", outbound.Id) }) };
 
-        var result = await PilotEndpoints.GetScheduleOptionsAsync(
-            pilot.Id, new ScheduleOptionsRequest(1, "03:00", draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "03:00", aircraftId, draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
 
-        var value = OkValueOf<OptionsDto>(result);
-        Assert.Contains(value.Illegal, i => i.RouteId == inbound.Id && i.FleetAircraftId == aircraftId && (i.Reason.Contains("rest") || i.Reason.Contains("hours")));
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Contains(value.Illegal, i => i.RouteId == inbound.Id && (i.Reason.Contains("rest") || i.Reason.Contains("hours")));
     }
 
     [Fact]
     public async Task SaveSchedule_WeekThatDoesNotClose_IsStillRejected()
     {
-        // The other half of the split: options relaxes closure, but PUT /schedule must not. A
-        // single Monday leg with no return leaves the aircraft unable to start its own next
-        // week's Monday departure from the right airport.
+        // The other half of the split: leg-options relaxes closure, but PUT /schedule must not. A
+        // single Monday leg with no return leaves the aircraft unable to start its own next week's
+        // Monday departure from the right airport.
         using var ctx = await RouteTestContext.CreateAsync();
         var catalog = EconomyConfigCatalog.Default();
         var pilot = await HirePilotAsync(ctx, catalog);
@@ -416,13 +618,52 @@ public class PilotEndpointsTests
         var aircraftId = await FleetAircraftIdAsync(ctx);
         await ReleaseReservationAsync(ctx, aircraftId);
 
-        var request = new SaveScheduleRequest(new[] { new ScheduleEntryRequest(1, "06:00:00", outbound.Id, aircraftId) });
+        var request = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }),
+        });
 
         var result = await PilotEndpoints.SaveScheduleAsync(pilot.Id, request, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
         var schedule = await ctx.Db.PilotSchedules.FirstOrDefaultAsync(s => s.PilotId == pilot.Id);
         Assert.Null(schedule); // nothing persisted
+    }
+
+    [Fact]
+    public async Task ScheduleOverview_GroupsByAircraftAndByPilot()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        await PilotEndpoints.SaveScheduleAsync(
+            pilot.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(0, aircraftId, new[]
+                {
+                    new DutyLegRequest("06:00:00", outbound.Id),
+                    new DutyLegRequest("08:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var result = await PilotEndpoints.GetScheduleOverviewAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<OverviewDto>(result);
+        var aircraftRow = Assert.Single(value.ByAircraft, a => a.FleetAircraftId == aircraftId);
+        Assert.Equal(2, aircraftRow.Legs.Count);
+        Assert.All(aircraftRow.Legs, l => Assert.Equal(pilot.Id, l.PilotId));
+
+        var pilotRow = Assert.Single(value.ByPilot, p => p.PilotId == pilot.Id);
+        var day = Assert.Single(pilotRow.DutyDays);
+        Assert.Equal(aircraftId, day.FleetAircraftId);
+        Assert.Equal(2, day.Legs.Count);
     }
 
     private static async Task<Pilot> HirePilotAsync(RouteTestContext ctx, EconomyConfigCatalog catalog)
@@ -461,6 +702,28 @@ public class PilotEndpointsTests
         await ctx.Db.SaveChangesAsync();
     }
 
+    /// <summary>Adds a second, unreserved, already-serviceable aircraft of the same type/location
+    /// as the founding one - used by tests that need two distinct schedulable airframes.</summary>
+    private static async Task<Guid> LeaseSecondAircraftAsync(RouteTestContext ctx, EconomyConfigCatalog catalog)
+    {
+        var second = new FleetAircraft
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            AircraftTypeId = ctx.AircraftType.Id,
+            Registration = "G-TEST2",
+            Ownership = AircraftOwnership.Owned,
+            LocationIcao = ctx.Airline.HomeAirportIcao,
+            Status = FleetAircraftStatus.Active,
+            ReservedForPlayer = false,
+            CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.FleetAircraft.Add(second);
+        await ctx.Db.SaveChangesAsync();
+        _ = catalog;
+        return second.Id;
+    }
+
     private static int StatusCodeOf(IResult result) => ((IStatusCodeHttpResult)result).StatusCode ?? 0;
 
     private static T OkValueOf<T>(IResult result)
@@ -470,15 +733,31 @@ public class PilotEndpointsTests
         return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
-    private sealed record ScheduleDto(Guid PilotId, List<ScheduleEntryDto> Entries);
+    private sealed record ScheduleDto(Guid PilotId, List<DutyDayDto> DutyDays, bool AutoSuspendOnMaintenance);
 
-    private sealed record ScheduleEntryDto(Guid Id, int DayOfWeek, string DepartureTimeUtc, Guid RouteId, string? DepartureIcao, string? ArrivalIcao, string? FlightNumber, Guid FleetAircraftId, string? Registration, int? BlockMinutes);
+    private sealed record DutyDayDto(int DayOfWeek, Guid FleetAircraftId, string? Registration, List<DutyLegDto> Legs);
+
+    private sealed record DutyLegDto(Guid Id, string DepartureTimeUtc, Guid RouteId, string? DepartureIcao, string? ArrivalIcao, string? FlightNumber, int? BlockMinutes);
 
     private sealed record ConflictDto(string Error, List<string> Conflicts);
 
-    private sealed record OptionsDto(List<OptionDto> Legal, List<IllegalOptionDto> Illegal);
+    private sealed record AircraftOptionsDto(List<AircraftOptionDto> Options);
 
-    private sealed record OptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, Guid FleetAircraftId, string Registration);
+    private sealed record AircraftOptionDto(Guid FleetAircraftId, string Registration, string? AircraftTypeName, string? LocationIcao, bool Eligible, string? Reason, int ScheduledLegsThisWeek);
 
-    private sealed record IllegalOptionDto(Guid RouteId, Guid FleetAircraftId, string Reason);
+    private sealed record LegOptionsDto(List<LegOptionDto> Legal, List<IllegalLegOptionDto> Illegal);
+
+    private sealed record LegOptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber);
+
+    private sealed record IllegalLegOptionDto(Guid RouteId, string Reason);
+
+    private sealed record OverviewDto(List<AircraftRowDto> ByAircraft, List<PilotRowDto> ByPilot);
+
+    private sealed record AircraftRowDto(Guid FleetAircraftId, string Registration, string LocationIcao, List<OverviewLegDto> Legs);
+
+    private sealed record PilotRowDto(Guid PilotId, string Name, List<OverviewDutyDayDto> DutyDays);
+
+    private sealed record OverviewDutyDayDto(int DayOfWeek, Guid FleetAircraftId, string? Registration, List<OverviewLegDto> Legs);
+
+    private sealed record OverviewLegDto(Guid FleetAircraftId, Guid PilotId, string? PilotName, int DayOfWeek, string DepartureTimeUtc, Guid RouteId, string? DepartureIcao, string? ArrivalIcao, string? FlightNumber);
 }

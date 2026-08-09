@@ -186,6 +186,9 @@ namespace FSOps.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("AwaySummaryLastViewedUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<decimal>("FuelPricePerKg")
                         .HasPrecision(18, 4)
                         .HasColumnType("TEXT");
@@ -615,6 +618,11 @@ namespace FSOps.Data.Migrations
 
                     b.Property<Guid>("AirlineId")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("AutoSuspendOnMaintenance")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
 
                     b.Property<DateTimeOffset>("CreatedUtc")
                         .HasColumnType("TEXT");

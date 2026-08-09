@@ -43,7 +43,10 @@ public static class AirlineEndpoints
         group.MapDelete("/airline", DeleteAsync);
     }
 
-    private static async Task<IResult> CreateAsync(
+    // internal, not private, so tests can drive it directly against an isolated RouteTestContext -
+    // same convention as GetSummaryAsync below and FleetEndpoints.TakeLoanAsync/BuyAsync, which the
+    // new starting-loan cap tests (tests/FSOps.Server.Tests) follow exactly.
+    internal static async Task<IResult> CreateAsync(
         CreateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var name = (request.Name ?? string.Empty).Trim();
@@ -135,6 +138,26 @@ public static class AirlineEndpoints
             if (loanRequest.TermMonths is < 1 or > 360)
             {
                 return Results.BadRequest(new { error = "startingLoan.termMonths must be between 1 and 360." });
+            }
+
+            // A starting loan can never be bounded by LoanEligibilityCalculator's cash-flow-based
+            // cap the way a mid-game loan (FleetEndpoints.TakeLoanAsync) is - a brand-new airline's
+            // trailing cash flow is always exactly 0, and MaxMonthlyPayment(0) is always 0, so that
+            // check would reject every starting loan of any size rather than cap it. Instead this
+            // playstyle's own flat, hand-authored ceiling applies - see LoanConfig.MaxStartingLoanPrincipal's
+            // own doc. Refused outright, never silently clamped: a player who asks for more than the
+            // cap must be told so and given both figures, exactly like TakeLoanAsync's eligibility
+            // refusal below, not quietly handed a smaller loan than they requested.
+            if (loanRequest.Amount > economyConfig.Loan.MaxStartingLoanPrincipal)
+            {
+                return Results.BadRequest(new
+                {
+                    error = $"A starting loan of {loanRequest.Amount:F2} exceeds the maximum {economyConfig.Loan.MaxStartingLoanPrincipal:F2} " +
+                             $"allowed for a new {playstyle} airline. Try a smaller amount, or grow your airline first and borrow again " +
+                             "once it has a trading history.",
+                    requestedAmount = loanRequest.Amount,
+                    maxStartingLoanPrincipal = economyConfig.Loan.MaxStartingLoanPrincipal,
+                });
             }
 
             // The rate is ALWAYS computed, never accepted from the request - see docs/PLAN.md "Loan

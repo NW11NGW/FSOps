@@ -4,9 +4,12 @@ import { Banknote, Building2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { BuyLeaseDialog } from '@/components/fleet/BuyLeaseDialog'
+import { EndLeaseDialog } from '@/components/fleet/EndLeaseDialog'
 import { FleetTable } from '@/components/fleet/FleetTable'
 import { LoanDialog } from '@/components/fleet/LoanDialog'
 import { RenameAircraftDialog } from '@/components/fleet/RenameAircraftDialog'
+import { SellAircraftDialog } from '@/components/fleet/SellAircraftDialog'
+import { PerformMaintenanceDialog } from '@/components/maintenance/PerformMaintenanceDialog'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -26,6 +29,8 @@ export function Fleet() {
   const [renaming, setRenaming] = useState<FleetAircraftSummary | null>(null)
   const [confirmRelease, setConfirmRelease] = useState<FleetAircraftSummary | null>(null)
   const [reservationBusyId, setReservationBusyId] = useState<string | null>(null)
+  const [disposing, setDisposing] = useState<FleetAircraftSummary | null>(null)
+  const [performingMaintenanceId, setPerformingMaintenanceId] = useState<string | null>(null)
 
   function handleFleetChanged() {
     fleetQuery.refetch()
@@ -114,6 +119,8 @@ export function Fleet() {
         status={fleetQuery.status}
         onRename={setRenaming}
         onToggleReservation={handleToggleReservation}
+        onDispose={setDisposing}
+        onPerformMaintenance={(aircraft) => setPerformingMaintenanceId(aircraft.id)}
         emptyAction={
           <Button onClick={() => setBuyLeaseOpen(true)}>
             <Plus />
@@ -125,6 +132,23 @@ export function Fleet() {
       <BuyLeaseDialog open={buyLeaseOpen} onOpenChange={setBuyLeaseOpen} onSuccess={handleFleetChanged} />
       <LoanDialog open={loanOpen} onOpenChange={setLoanOpen} onSuccess={handleFleetChanged} />
       <RenameAircraftDialog aircraft={renaming} onOpenChange={(open) => !open && setRenaming(null)} onSuccess={handleFleetChanged} />
+
+      <SellAircraftDialog
+        aircraft={disposing?.ownership === 'Owned' ? disposing : null}
+        onOpenChange={(open) => !open && setDisposing(null)}
+        onSuccess={handleFleetChanged}
+      />
+      <EndLeaseDialog
+        target={disposing?.ownership === 'Leased' ? { id: disposing.id, registration: disposing.registration } : null}
+        onOpenChange={(open) => !open && setDisposing(null)}
+        onSuccess={handleFleetChanged}
+      />
+
+      <PerformMaintenanceDialog
+        fleetAircraftId={performingMaintenanceId}
+        onOpenChange={(open) => !open && setPerformingMaintenanceId(null)}
+        onSuccess={handleFleetChanged}
+      />
 
       <Dialog open={confirmRelease !== null} onOpenChange={(open) => !open && setConfirmRelease(null)}>
         <DialogContent>

@@ -149,11 +149,11 @@ public static class FlightEconomicsPoster
         Post(db, flight, LedgerCategory.TicketRevenue, result.TicketRevenue, utc, $"Ticket revenue: {result.PaxBooked} pax x {route.BaseFare:F2}");
         Post(db, flight, LedgerCategory.LandingFees, -result.LandingFee, utc, $"Landing fee at {arrivalAirport.Icao}");
         Post(db, flight, LedgerCategory.Handling, -result.HandlingFee, utc, $"Handling fee at {arrivalAirport.Icao}");
-        Post(db, flight, LedgerCategory.Handling, -result.ParkingFee, utc, $"Parking fee at {arrivalAirport.Icao}");
-        Post(db, flight, LedgerCategory.Handling, -result.PassengerCharge, utc, $"Passenger charges at {arrivalAirport.Icao} ({result.PaxBooked} pax)");
-        Post(db, flight, LedgerCategory.Handling, -result.TurnaroundFee, utc, $"Turnaround/gate fee at {arrivalAirport.Icao}");
+        Post(db, flight, LedgerCategory.ParkingFees, -result.ParkingFee, utc, $"Parking fee at {arrivalAirport.Icao}");
+        Post(db, flight, LedgerCategory.PassengerCharges, -result.PassengerCharge, utc, $"Passenger charges at {arrivalAirport.Icao} ({result.PaxBooked} pax)");
+        Post(db, flight, LedgerCategory.TurnaroundFees, -result.TurnaroundFee, utc, $"Turnaround/gate fee at {arrivalAirport.Icao}");
         Post(db, flight, LedgerCategory.Maintenance, -result.MaintenanceAccrual, utc, "Maintenance accrual");
-        Post(db, flight, LedgerCategory.Salary, -result.CrewCost, utc, "Crew cost (this sector)");
+        Post(db, flight, LedgerCategory.CrewCost, -result.CrewCost, utc, "Crew cost (this sector)");
 
         flight.RevenuePosted = true;
         return result;

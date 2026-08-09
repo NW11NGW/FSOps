@@ -64,6 +64,14 @@ public static class FlightEndpoints
             return Results.NotFound(new { error = "Route not found." });
         }
 
+        // Reservation is the sole gate on both sides (docs/PLAN.md "3a", decided 2026-08-09): the
+        // player may ONLY fly an aircraft reserved to them. This is enforced here as well as by
+        // OptionsAsync only ever OFFERING reserved airframes - never trust the client to have
+        // respected what it was shown, the same way every other write endpoint in this app
+        // re-validates server-side rather than assuming the UI enforced it. Position is checked here
+        // too (it never was before this pass) - "you can only start a flight from where the aircraft
+        // actually is" (docs/PLAN.md "Aircraft positioning") applies exactly as much to a
+        // hand-crafted request as to one built by clicking through the Fly screen.
         FleetAircraft? fleetAircraft;
         if (request.FleetAircraftId is Guid fleetAircraftId)
         {
@@ -73,18 +81,29 @@ public static class FlightEndpoints
             {
                 return Results.BadRequest(new { error = "The selected aircraft is not an active member of your fleet." });
             }
+
+            if (!fleetAircraft.ReservedForPlayer)
+            {
+                return Results.BadRequest(new { error = $"{fleetAircraft.Registration} is not reserved to you - reserve it from the Fleet page before flying it." });
+            }
+
+            if (!string.Equals(fleetAircraft.LocationIcao, route.DepartureIcao, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = $"{fleetAircraft.Registration} is at {fleetAircraft.LocationIcao}, not {route.DepartureIcao} - choose another aircraft or fly it back." });
+            }
         }
         else
         {
             var candidates = await db.FleetAircraft
-                .Where(f => f.AirlineId == airline.Id && f.Status == FleetAircraftStatus.Active)
+                .Where(f => f.AirlineId == airline.Id && f.Status == FleetAircraftStatus.Active &&
+                            f.ReservedForPlayer && f.LocationIcao == route.DepartureIcao)
                 .ToListAsync(ct);
             fleetAircraft = candidates.OrderBy(f => f.CreatedUtc).FirstOrDefault();
         }
 
         if (fleetAircraft is null)
         {
-            return Results.BadRequest(new { error = "Your fleet has no active aircraft available to fly this route." });
+            return Results.BadRequest(new { error = $"No aircraft reserved to you is available at {route.DepartureIcao} to fly this route." });
         }
 
         var aircraftType = await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId], ct);
@@ -296,6 +315,10 @@ public static class FlightEndpoints
         // FlightLifecycleService's telemetry completion path, which this manual path mirrors.
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
 
+        // Resolved regardless of whether airline lookup succeeds below - see the matching comment
+        // in FlightLifecycleService.FinalizeFlightAsync, which this manual path mirrors.
+        var pilot = await db.Pilots.FirstOrDefaultAsync(p => p.Id == flight.PilotId, ct);
+
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
         if (fleetAircraft is not null)
         {
@@ -311,11 +334,15 @@ public static class FlightEndpoints
 
             if (airline is not null)
             {
-                MaintenancePoster.PostFlightHours(db, fleetAircraft, airline, economyConfigCatalog.Get(airline.Playstyle), flightHours, now);
+                MaintenancePoster.PostFlightHours(db, fleetAircraft, pilot, airline, economyConfigCatalog.Get(airline.Playstyle), flightHours, now);
             }
             else
             {
                 fleetAircraft.AirframeHours += flightHours;
+                if (pilot is not null)
+                {
+                    pilot.HoursFlown += flightHours;
+                }
             }
 
             // No reliable telemetry means no reliable fuel reading either (that's the whole
@@ -468,6 +495,16 @@ public static class FlightEndpoints
         // StartAsync above), regardless of which aircraft or route would otherwise be used.
         var hasFlightInProgress = await db.Flights.AnyAsync(f => f.AirlineId == airline.Id && f.Status == FlightStatus.InProgress, ct);
 
+        // 3a: reservation is the sole gate - the Fly screen offers exactly the RESERVED airframes
+        // that are at the departure airport and serviceable. Every aircraft actually present at the
+        // departure airport is still LISTED (never silently omitted, per 2b's "disabled with one
+        // short reason" rule and the 2026-08-09 defect this fixes - a player who cannot fly an
+        // aircraft needs to see it and know why, not wonder why it vanished), just marked unflyable
+        // with a reason when it isn't reserved, is busy, or is grounded. This also fixes the
+        // unrelated root cause behind "only one of four aircraft at EGLL was offered": the previous
+        // version picked a single `.FirstOrDefault()` candidate per ROUTE regardless of how many
+        // aircraft were actually parked there - every aircraft at the departure airport is now its
+        // own option.
         var options = new List<object>();
         foreach (var route in routes)
         {
@@ -479,64 +516,93 @@ public static class FlightEndpoints
                 continue;
             }
 
-            var readyAircraft = fleet
-                .Where(f => f.LocationIcao == route.DepartureIcao && f.Status == FleetAircraftStatus.Active)
+            var atDeparture = fleet
+                .Where(f => f.LocationIcao == route.DepartureIcao)
                 .OrderBy(f => f.CreatedUtc)
-                .FirstOrDefault();
+                .ToList();
 
-            string? reason = null;
-            var consideredAircraft = readyAircraft;
-
-            if (readyAircraft is null)
+            var aircraftOptions = atDeparture.Select(aircraft =>
             {
-                var atDeparture = fleet.Where(f => f.LocationIcao == route.DepartureIcao).ToList();
-                var inFlight = atDeparture.FirstOrDefault(f => f.Status == FleetAircraftStatus.InFlight);
-                var inMaintenance = atDeparture.FirstOrDefault(f => f.Status == FleetAircraftStatus.InMaintenance);
-
-                if (inFlight is not null)
+                // Priority matters here (2b: "one short reason ... ending in an action that fixes
+                // it"): a hard physical blocker must be reported BEFORE reservation, because
+                // reservation is a one-click fix and the others are not. Leading with "not reserved
+                // to you" on an aircraft that is ALSO in maintenance sends the player to reserve it,
+                // then back here to find it still can't fly - telling them to do something that
+                // will not actually work is the same class of bug as the old "you'd need a route"
+                // wording (docs/PLAN.md "2b"). Only say "not reserved" when reserving genuinely is
+                // sufficient to let them fly.
+                string? reason = null;
+                if (aircraft.Status == FleetAircraftStatus.InFlight)
                 {
-                    reason = $"Your aircraft at {route.DepartureIcao} is currently in flight.";
-                    consideredAircraft = inFlight;
+                    reason = $"{aircraft.Registration} is currently in flight.";
                 }
-                else if (inMaintenance is not null)
+                else if (aircraft.Status == FleetAircraftStatus.InMaintenance)
                 {
                     // "Why and until when", not merely "in maintenance" - see docs/PLAN.md's E1
                     // brief. GroundedUntilUtc should always be set whenever Status is InMaintenance
                     // (MaintenancePoster sets both together), but a plain fallback covers the
                     // theoretical gap rather than showing a broken/missing date to the player.
-                    reason = inMaintenance.GroundedUntilUtc is { } until
-                        ? $"Your aircraft at {route.DepartureIcao} is in maintenance until {until:yyyy-MM-dd HH:mm} UTC."
-                        : $"Your aircraft at {route.DepartureIcao} is in maintenance.";
-                    consideredAircraft = inMaintenance;
+                    reason = aircraft.GroundedUntilUtc is { } until
+                        ? $"{aircraft.Registration} is in maintenance until {until:yyyy-MM-dd HH:mm} UTC."
+                        : $"{aircraft.Registration} is in maintenance.";
                 }
-                else
+                else if (hasFlightInProgress)
                 {
-                    var activeLocations = fleet
-                        .Where(f => f.Status == FleetAircraftStatus.Active)
-                        .Select(f => f.LocationIcao)
-                        .Distinct()
-                        .ToList();
-                    reason = activeLocations.Count > 0
-                        ? $"No aircraft at {route.DepartureIcao} - your fleet is currently at {string.Join(", ", activeLocations)}."
-                        : "No active aircraft is available in your fleet.";
+                    // Also a hard blocker independent of THIS aircraft's own reservation - reserving
+                    // it would not let a second flight start while one is already in progress.
+                    reason = "A flight is already in progress - complete or abandon it before starting another.";
                 }
-            }
-            else if (hasFlightInProgress)
+                else if (!aircraft.ReservedForPlayer)
+                {
+                    reason = "Not reserved to you - reserve it from the Fleet page to fly it.";
+                }
+
+                var aircraftType = aircraftTypesById.TryGetValue(aircraft.AircraftTypeId, out var matchedType) ? matchedType : null;
+                int? aircraftBlockMinutes = null;
+                if (aircraftType is not null)
+                {
+                    var aircraftPreview = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline.StrategyProfile);
+                    aircraftBlockMinutes = aircraftPreview.BlockTimeBreakdown.TotalMinutes;
+                }
+
+                return new
+                {
+                    fleetAircraftId = aircraft.Id,
+                    aircraft.Registration,
+                    aircraftTypeId = aircraftType?.Id,
+                    aircraftTypeName = aircraftType?.Name,
+                    paxCapacity = aircraftType?.PaxCapacity,
+                    estimatedBlockMinutes = aircraftBlockMinutes,
+                    isFlyable = reason is null,
+                    reason,
+                };
+            }).ToList();
+
+            var isFlyable = aircraftOptions.Any(a => a.isFlyable);
+
+            string? routeReason = null;
+            if (!isFlyable)
             {
-                reason = "A flight is already in progress - complete or abandon it before starting another.";
+                routeReason = aircraftOptions.Count == 0
+                    ? NoAircraftAtDepartureReason(fleet, route.DepartureIcao)
+                    : null; // per-aircraft reasons already cover it when at least one aircraft is present
             }
 
-            var isFlyable = readyAircraft is not null && !hasFlightInProgress;
-
-            var aircraftType = consideredAircraft is not null && aircraftTypesById.TryGetValue(consideredAircraft.AircraftTypeId, out var matchedType)
-                ? matchedType
-                : fallbackAircraftType;
+            // Route-level distance/block-time preview: whichever aircraft type is actually flyable
+            // (so the preview matches what the player can pick), falling back to the first present
+            // type, then the airline-wide fallback - purely for a sensible preview figure, never
+            // used to pick which aircraft is offered.
+            var previewType = aircraftOptions.FirstOrDefault(a => a.isFlyable) is { } flyableOption
+                ? aircraftTypesById.GetValueOrDefault(flyableOption.aircraftTypeId ?? Guid.Empty)
+                : atDeparture.Count > 0 && aircraftTypesById.TryGetValue(atDeparture[0].AircraftTypeId, out var firstType)
+                    ? firstType
+                    : fallbackAircraftType;
 
             int? estimatedBlockMinutes = null;
             double? distanceNm = route.DistanceNm;
-            if (aircraftType is not null)
+            if (previewType is not null)
             {
-                var preview = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline.StrategyProfile);
+                var preview = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, previewType, airline.StrategyProfile);
                 estimatedBlockMinutes = preview.BlockTimeBreakdown.TotalMinutes;
             }
 
@@ -551,17 +617,23 @@ public static class FlightEndpoints
                 distanceNm,
                 estimatedBlockMinutes,
                 isFlyable,
-                fleetAircraftId = readyAircraft?.Id,
-                aircraftRegistration = readyAircraft?.Registration,
-                // The Fly screen's brief needs this to show "N booked / capacity" - already
-                // resolved above for the block-time estimate, so exposing it here is free.
-                aircraftTypeId = aircraftType?.Id,
-                paxCapacity = aircraftType?.PaxCapacity,
-                reason = isFlyable ? null : reason,
+                reason = isFlyable ? null : routeReason,
+                aircraftOptions,
             });
         }
 
         return Results.Ok(options);
+    }
+
+    /// <summary>Route-level fallback reason when NO fleet aircraft at all is physically at the
+    /// departure airport - the per-aircraft reasons in <c>aircraftOptions</c> cover every other
+    /// unflyable case, since there is at least one aircraft present to explain.</summary>
+    private static string NoAircraftAtDepartureReason(IReadOnlyList<FleetAircraft> fleet, string departureIcao)
+    {
+        var knownLocations = fleet.Select(f => f.LocationIcao).Distinct().ToList();
+        return knownLocations.Count > 0
+            ? $"No aircraft at {departureIcao} - your fleet is currently at {string.Join(", ", knownLocations)}."
+            : "Your fleet has no aircraft.";
     }
 
     private static async Task<Flight?> LoadOwnedFlightAsync(FsOpsDbContext db, ICurrentUser currentUser, Guid flightId, CancellationToken ct)

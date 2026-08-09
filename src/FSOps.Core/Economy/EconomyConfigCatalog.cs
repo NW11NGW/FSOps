@@ -147,14 +147,23 @@ public sealed class EconomyConfigCatalog
                 // Realistic borrowing costs to match every other True-life figure - a higher base
                 // rate and the plan's 8% hard cap, both above Casual's 2.5%/5.0% (see LoanConfig's
                 // own doc). See docs/PLAN.md "Loan interest is set by the simulation, never by the
-                // player".
-                Loan = new PlaystyleLoanOverrides { BaseAnnualRatePct = 4.0, CapAnnualRatePct = 8.0 },
+                // player". MaxStartingLoanPrincipal 5,000,000 -> £101,381.97/month at the 8.0% cap
+                // rate over 60 months - roughly 2x the 2,500,000 starting capital, the same
+                // capital-multiple feel as Casual's cap; there is no solo-income figure to compare
+                // it against since True-life is not designed to be solo-profitable (see LoanConfig's
+                // own doc and GET /airline/playstyles' own description).
+                Loan = new PlaystyleLoanOverrides { BaseAnnualRatePct = 4.0, CapAnnualRatePct = 8.0, MaxStartingLoanPrincipal = 5_000_000m },
                 // True-life cancels an unflyable virtual flight with a real cost rather than
                 // Casual's quiet skip - see docs/PLAN.md's Playstyle behaviour table and
                 // UnflyableScheduleConfig's own doc. Sized as a modest multiple of a typical
                 // sector's fixed per-sector costs (turnaround/handling), not a punitive figure -
                 // it needs to bite a badly-planned schedule, not bankrupt one bad week.
                 UnflyableSchedule = new PlaystyleUnflyableScheduleOverrides { CancellationFee = 350m },
+                // True-life's early-exit penalties are harsher than Casual's, like every other
+                // figure that differs by playstyle - see LeaseEarlyTerminationConfig/
+                // LoanEarlySettlementConfig's own docs.
+                LeaseEarlyTermination = new PlaystyleLeaseEarlyTerminationOverrides { FeeMonths = 1.0 },
+                LoanEarlySettlement = new PlaystyleLoanEarlySettlementOverrides { FeePercentOfRemainingBalance = 0.04m },
             }),
         };
 
@@ -230,8 +239,26 @@ public sealed class EconomyConfigCatalog
         {
             BaseAnnualRatePct = overrides.Loan.BaseAnnualRatePct,
             CapAnnualRatePct = overrides.Loan.CapAnnualRatePct,
+            MaxStartingLoanPrincipal = overrides.Loan.MaxStartingLoanPrincipal,
+        },
+        // Entirely from the playstyle's own override block, same reasoning as Loan above - harsher
+        // in True-life like every other figure that differs by playstyle - see
+        // LeaseEarlyTerminationConfig's own doc.
+        LeaseEarlyTermination = new LeaseEarlyTerminationConfig
+        {
+            FeeMonths = overrides.LeaseEarlyTermination.FeeMonths,
+        },
+        // Entirely from the playstyle's own override block, same reasoning as LeaseEarlyTermination
+        // above - see LoanEarlySettlementConfig's own doc.
+        LoanEarlySettlement = new LoanEarlySettlementConfig
+        {
+            FeePercentOfRemainingBalance = overrides.LoanEarlySettlement.FeePercentOfRemainingBalance,
         },
         UsedAircraft = baseConfig.UsedAircraft,
+        // Shared across playstyles - see Depreciation's own doc (what a worn airframe is worth on
+        // the secondhand market doesn't depend on how realistically the SELLING airline chose to be
+        // billed elsewhere).
+        Depreciation = baseConfig.Depreciation,
     };
 
     /// <summary>Shape used only to pick the "casual"/"trueLife" properties out of the same JSON
@@ -258,6 +285,10 @@ public sealed class EconomyConfigCatalog
         public PlaystyleLoanOverrides Loan { get; init; } = new();
 
         public PlaystyleUnflyableScheduleOverrides UnflyableSchedule { get; init; } = new();
+
+        public PlaystyleLeaseEarlyTerminationOverrides LeaseEarlyTermination { get; init; } = new();
+
+        public PlaystyleLoanEarlySettlementOverrides LoanEarlySettlement { get; init; } = new();
     }
 
     private sealed class PlaystyleAirlineStartupOverrides
@@ -284,10 +315,22 @@ public sealed class EconomyConfigCatalog
         public double BaseAnnualRatePct { get; init; }
 
         public double CapAnnualRatePct { get; init; }
+
+        public decimal MaxStartingLoanPrincipal { get; init; }
     }
 
     private sealed class PlaystyleUnflyableScheduleOverrides
     {
         public decimal CancellationFee { get; init; }
+    }
+
+    private sealed class PlaystyleLeaseEarlyTerminationOverrides
+    {
+        public double FeeMonths { get; init; }
+    }
+
+    private sealed class PlaystyleLoanEarlySettlementOverrides
+    {
+        public decimal FeePercentOfRemainingBalance { get; init; }
     }
 }

@@ -79,6 +79,19 @@ public enum FlightStatus
     /// for True-life) - there is no `if (playstyle)` branch anywhere in the resolution logic.
     /// </summary>
     Cancelled,
+
+    /// <summary>
+    /// A virtual pilot's scheduled occurrence that could not fly because its aircraft is grounded
+    /// for a maintenance check, on a schedule with <see cref="PilotSchedule.AutoSuspendOnMaintenance"/>
+    /// set - see docs/PLAN.md "A schedule option: suspend during maintenance and resume
+    /// automatically". Recorded and visible in history exactly like <see cref="Skipped"/> (no
+    /// ledger lines at all - never a <see cref="LedgerCategory.CancellationFee"/>, because the
+    /// schedule isn't at fault), but distinct from Skipped so the reason ("suspended for
+    /// maintenance" vs. "the schedule genuinely can't be flown as built") is never conflated in the
+    /// UI or history. Resumption is automatic: the very next occurrence after the aircraft comes
+    /// out of maintenance resolves normally, with no separate "un-suspend" step anywhere.
+    /// </summary>
+    Suspended,
 }
 
 public enum FlightEventType
@@ -98,6 +111,31 @@ public enum LedgerCategory
     Handling,
     Maintenance,
     Salary,
+
+    /// <summary>
+    /// Per-sector crew cost, distinct from <see cref="Salary"/>, which is the monthly pilot wage.
+    /// These were both posted as Salary until the Finances page needed to separate variable cost
+    /// from fixed - a sector's crew cost varies with flying, a monthly wage does not, and telling
+    /// them apart from the ledger category alone was impossible. Stored as text (see
+    /// LedgerTransactionConfiguration), so adding this value needs no migration.
+    /// </summary>
+    CrewCost,
+
+    /// <summary>
+    /// Parking charges at the arrival airport. Split out of <see cref="Handling"/> for the same
+    /// reason as <see cref="CrewCost"/> - see that member.
+    /// </summary>
+    ParkingFees,
+
+    /// <summary>
+    /// Per-passenger charges levied by the arrival airport. Split out of <see cref="Handling"/>.
+    /// </summary>
+    PassengerCharges,
+
+    /// <summary>
+    /// Turnaround and gate fees at the arrival airport. Split out of <see cref="Handling"/>.
+    /// </summary>
+    TurnaroundFees,
     LeasePayment,
     LoanPayment,
     AircraftPurchase,

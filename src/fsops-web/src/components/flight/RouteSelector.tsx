@@ -105,13 +105,15 @@ function RoutePairCard({
         </p>
       )}
 
-      {isFlyable && active.availableAircraft.length > 0 && (
+      {isFlyable && active.aircraftOptions.some((a) => a.isFlyable) && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {active.availableAircraft.map((aircraft) => (
-            <Badge key={aircraft.fleetAircraftId} variant="secondary" className="font-mono">
-              {aircraft.registration || aircraft.icaoType}
-            </Badge>
-          ))}
+          {active.aircraftOptions
+            .filter((a) => a.isFlyable)
+            .map((aircraft) => (
+              <Badge key={aircraft.fleetAircraftId} variant="secondary" className="font-mono">
+                {aircraft.registration || aircraft.icaoType}
+              </Badge>
+            ))}
         </div>
       )}
     </button>
@@ -134,7 +136,7 @@ export function RouteSelector({ pairs, selectedPairId, onSelect, optionsUnavaila
     [pairs, query, airlineIcaoCode],
   )
 
-  const readyNow = optionsUnavailable ? [] : filtered.filter((pair) => pair.isFlyable && pair.active.availableAircraft.length > 0)
+  const readyNow = optionsUnavailable ? [] : filtered.filter((pair) => pair.isFlyable && pair.active.aircraftOptions.some((a) => a.isFlyable))
   const readyNowIds = new Set(readyNow.map((pair) => pair.pairId))
   const rest = filtered.filter((pair) => !readyNowIds.has(pair.pairId))
   const flyable = rest.filter((pair) => pair.isFlyable)

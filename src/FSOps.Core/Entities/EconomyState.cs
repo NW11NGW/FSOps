@@ -29,4 +29,17 @@ public class EconomyState
     public decimal FuelPricePerKg { get; set; }
 
     public int WorldSeed { get; set; }
+
+    /// <summary>
+    /// Cursor for the "while you were away" catch-up summary (docs/PLAN.md "'While you were away' -
+    /// the app must explain catch-up") - independent of <see cref="LastProcessedUtc"/> and
+    /// <see cref="LastScheduleResolvedUtc"/>, which are billing/scheduling watermarks the resolver
+    /// services own and advance continuously. This one instead marks "the player has been shown
+    /// everything up to here" and only ever moves when the summary is explicitly acknowledged (see
+    /// MaintenanceEndpoints' away-summary endpoints) - so polling the summary mid-session is always
+    /// safe and never consumes it. Nullable and left null until the first acknowledgement, same
+    /// "no opinion until something explicitly sets it" convention as
+    /// <see cref="LastScheduleResolvedUtc"/> - a brand-new airline has nothing to catch up on.
+    /// </summary>
+    public DateTimeOffset? AwaySummaryLastViewedUtc { get; set; }
 }

@@ -147,7 +147,7 @@ public class FlightManualCompletionAndAbandonTests
 
         var ledgerLines = await ctx.Db.LedgerTransactions.Where(t => t.FlightId == flight.Id).ToListAsync();
         var maintenanceLine = Assert.Single(ledgerLines, t => t.Category == LedgerCategory.Maintenance);
-        var crewLine = Assert.Single(ledgerLines, t => t.Category == LedgerCategory.Salary);
+        var crewLine = Assert.Single(ledgerLines, t => t.Category == LedgerCategory.CrewCost);
 
         Assert.Equal(-expectedMaintenance, maintenanceLine.Amount);
         Assert.Equal(-expectedCrew, crewLine.Amount);

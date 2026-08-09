@@ -98,3 +98,73 @@ export interface LoanQuote {
   trailing30DayNetOperatingCashFlow: number
   maxDebtServiceFraction: number
 }
+
+/**
+ * Getting rid of an aircraft - see docs/PLAN.md "Getting rid of an aircraft - returning a lease
+ * and selling". Present when this aircraft is on a virtual pilot's standing weekly schedule; when
+ * non-null the disposal is blocked (`canSell`/`canEndLease` is false) and `blockReason` says which
+ * pilot and how many legs/week, rather than silently unassigning it.
+ */
+export interface StandingScheduleConflict {
+  pilotId: string
+  pilotName: string
+  scheduleEntryCount: number
+}
+
+/** GET /fleet/{id}/sale-quote - preview of selling this OWNED aircraft right now. Read-only and
+ *  side-effect-free, safe to call on every render of a confirmation dialog. */
+export interface SaleQuote {
+  fleetAircraftId: string
+  registration: string
+  aircraftTypeName: string
+  conditionPercent: number
+  airframeHours: number
+  newPrice: number
+  resaleFactorApplied: number
+  saleValue: number
+  isGroundedForMaintenance: boolean
+  isLastAircraft: boolean
+  standingScheduleConflict: StandingScheduleConflict | null
+  canSell: boolean
+  blockReason: string | null
+  /** Selling never pays off an outstanding loan - repayments continue as scheduled. Always
+   *  server-authored so the wording can't drift from what SellAsync actually does. */
+  loanNote: string
+}
+
+/** POST /fleet/{id}/sell response. */
+export interface SaleResult {
+  fleetAircraftId: string
+  saleValue: number
+  cashBalance: number
+}
+
+/** GET /fleet/{id}/lease-termination-quote - preview of ending this LEASED aircraft's lease right
+ *  now. `nextScheduledPaymentUtc`/`currentPeriodStartUtc` are null only when no active lease was
+ *  found (see `canEndLease`/`blockReason` in that case). */
+export interface LeaseTerminationQuote {
+  fleetAircraftId: string
+  leaseId: string | null
+  registration: string
+  aircraftTypeName: string
+  monthlyRate: number
+  currentPeriodStartUtc: string | null
+  nextScheduledPaymentUtc: string | null
+  daysIntoCurrentPeriod: number
+  proRataAmount: number
+  earlyTerminationFee: number
+  totalCharge: number
+  isLastAircraft: boolean
+  standingScheduleConflict: StandingScheduleConflict | null
+  canEndLease: boolean
+  blockReason: string | null
+}
+
+/** POST /fleet/{id}/end-lease response. */
+export interface LeaseTerminationResult {
+  fleetAircraftId: string
+  proRataAmount: number
+  earlyTerminationFee: number
+  totalCharge: number
+  cashBalance: number
+}

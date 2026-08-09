@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, and the monthly billing cycle that keeps it all honest all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
+This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, and hiring virtual pilots to keep your airline flying while you're away, all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
 
 ## Table of contents
 
@@ -29,15 +29,23 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 - [The monthly billing cycle](#the-monthly-billing-cycle)
 - [Fuel and tankering](#fuel-and-tankering)
 - [Buying, leasing and financing aircraft](#buying-leasing-and-financing-aircraft)
+- [Reserving an aircraft for yourself](#reserving-an-aircraft-for-yourself)
+- [Selling an aircraft, ending a lease, and settling a loan early](#selling-an-aircraft-ending-a-lease-and-settling-a-loan-early)
+- [The aircraft catalogue and registrations](#the-aircraft-catalogue-and-registrations)
 - [Maintenance](#maintenance)
 - [Hiring and assigning virtual pilots](#hiring-and-assigning-virtual-pilots)
+  - [Building a weekly schedule](#building-a-weekly-schedule)
+- [The wall-clock economy: flying while you're away](#the-wall-clock-economy-flying-while-youre-away)
+- [The "while you were away" summary](#the-while-you-were-away-summary)
+- [The Finances page](#the-finances-page)
+- [The live operations map](#the-live-operations-map)
 - [Statistics dashboards](#statistics-dashboards)
 - [In-game panel](#in-game-panel)
 - [A worked example, start to finish](#a-worked-example-start-to-finish)
 
 ## Current build
 
-Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, and run a fleet — buying, leasing, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying. Virtual pilots, and the Pilots/Finances/Statistics pages, are still being built; each is marked below.
+Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page to see exactly where the money went. The Statistics page and the in-game panel are still being built; each is marked below.
 
 ## Creating your airline
 
@@ -74,10 +82,11 @@ Reachable from the main navigation once your airline exists. Most of Settings ap
 
 ### Airline
 
-Your airline's name, accent colour, and strategy all live here and can be changed at any time (home base and playstyle are shown for reference but are fixed once you've founded your airline — see [Playstyles](#playstyles) for why):
+Your airline's name, accent colour, strategy, and your own name as its founding pilot all live here and can be changed at any time (home base and playstyle are shown for reference but are fixed once you've founded your airline — see [Playstyles](#playstyles) for why):
 
 - **Name** — 2 to 40 characters, the same limits as at founding.
 - **Accent colour** — a preset swatch or a custom hex value, used throughout the UI for highlights and selected states.
+- **Your name** — 1 to 40 characters. This is you, the player: it's shown on every flight you fly and alongside your entry on the [Pilots page](#hiring-and-assigning-virtual-pilots), the same as it was when you set it (or left it blank) at founding.
 - **Strategy** — see [Strategy profiles](#strategy-profiles) above for what each one means. Changing it here is **going forward only**: it changes the fares and demand suggested for new routes and which routes get an advisory note from here on, and never touches completed flights, posted ledger entries, or the fares already set on your existing routes. Each profile's card shows its real fares, price sensitivity, typical load factor, cost and route-advice figures, fetched live — if that fetch fails (for example, right after FSOps was updated while running), the cards say so and offer a retry, and choosing a profile still works even without the figures loaded.
 
 ### Currency
@@ -175,13 +184,13 @@ FSOps needs a live SimConnect connection to track anything, so make sure MSFS 20
 The Fly screen opens on a **"Choose a route"** card listing every route your airline has built (see [Building routes](#building-routes)). If you have more than a handful of routes, a search box lets you filter by airport code, airport name, or flight number. Routes are grouped by whether you can actually fly them right now:
 
 - **Ready now** — routes with a fleet aircraft physically sitting at the departure airport, marked with a green badge.
-- **Other routes** / **Not flyable right now** — routes with no aircraft currently at the departure airport, each showing the specific reason (for example, that your fleet's aircraft is at a different airport, currently in flight, or in maintenance). See [Round trips and where your aircraft actually is](#round-trips-and-where-your-aircraft-actually-is) for how an aircraft's recorded location changes as you fly.
+- **Other routes** / **Not flyable right now** — routes with no aircraft currently at the departure airport, each showing the specific reason (for example, that your fleet's aircraft is at a different airport, currently in flight, in maintenance, or not reserved to you — see [Reserving an aircraft for yourself](#reserving-an-aircraft-for-yourself) below). See [Round trips and where your aircraft actually is](#round-trips-and-where-your-aircraft-actually-is) for how an aircraft's recorded location changes as you fly.
 
 Each row shows the airport pair, flight number, distance, estimated block time, and which aircraft (by registration or type) is available. There's currently no "free flight" option for flying something outside your route network — you can only fly routes you've built on the Routes page.
 
 ### The flight brief
 
-Selecting a flyable route opens the **"Flight brief"** card. If more than one aircraft is available for the route, you can choose which one to fly as a set of chips; otherwise FSOps uses your fleet's first available aircraft automatically. Below that sit six figures at a glance: **distance**, **cruise altitude**, **block time**, **block fuel**, **passengers**, and **expected revenue** — the same demand-model figures shown while planning the route (see [The economy simulation](#the-economy-simulation)), evaluated fresh for today. Passengers and revenue here are still an estimate: the actual ticket revenue is only booked and posted once the flight completes, and if you started the flight but demand ticks over to a new day before you land, the posted figures come from whatever the market looks like at completion, not at the moment you checked the brief.
+Selecting a flyable route opens the **"Flight brief"** card. Every fleet aircraft physically parked at the departure airport shows as its own chip — not just the ones you can actually take. A chip you can fly is clickable; one you can't is shown disabled, greyed out, with the reason on hover and repeated underneath the chip row in full (for example, *"G-VIRF is not reserved to you - reserve it from the Fleet page to fly it."*, with a link straight there). FSOps picks the first flyable aircraft for you by default, but you can switch between any that are actually available. Below the chips sit six figures at a glance: **distance**, **cruise altitude**, **block time**, **block fuel**, **passengers**, and **expected revenue** — the same demand-model figures shown while planning the route (see [The economy simulation](#the-economy-simulation)), evaluated fresh for today. Passengers and revenue here are still an estimate: the actual ticket revenue is only booked and posted once the flight completes, and if you started the flight but demand ticks over to a new day before you land, the posted figures come from whatever the market looks like at completion, not at the moment you checked the brief.
 
 A tabbed panel breaks two of those figures down further:
 
@@ -269,18 +278,18 @@ Every completed flight posts itemised lines to your airline's append-only ledger
 
 A flight completed with estimates (after an interruption — see [Ending a flight](#ending-a-flight-and-what-happens-if-it-gets-interrupted)) posts ticket revenue and normal costs but never a landing-quality bonus, since nothing was actually measured on it, and there's no landing-quality bonus in the model in the first place — payment has never depended on how well you landed. A flight where slew or a position jump was detected posts no ticket revenue at all (see [Flight integrity](#flight-integrity)) — though fuel already bought before departure stays charged, exactly as it would in reality.
 
-How to do it: no separate action — the economy runs automatically off the routes you fly and the fares you set. Virtual pilots will plug into this same ledger once they land — earning and spending money the same way a player-flown sector does, no separate "virtual economy."
+How to do it: no separate action — the economy runs automatically off the routes you fly and the fares you set. Virtual pilots plug into this exact same ledger — see [Hiring and assigning virtual pilots](#hiring-and-assigning-virtual-pilots) — earning and spending money the same way a player-flown sector does, with no separate "virtual economy."
 
 ## The monthly billing cycle
 
 Founding your airline, or adding an aircraft to your fleet later, only posts the up-front cost (a lease deposit, or a purchase price). From then on, three kinds of cost post automatically every **30 days of real-world wall-clock time** — a "month" here is a rolling 30-day window from whenever the last one was billed, not a calendar month:
 
 - **Lease payments** — the monthly rate for every leased aircraft in your fleet, itemised per aircraft.
-- **Pilot salaries** — your own salary as the founding pilot, and any others once hiring pilots lands.
+- **Pilot salaries** — your own salary as the founding pilot, and every virtual pilot's salary (£9,000/month each) once you've hired any — see [Hiring and assigning virtual pilots](#hiring-and-assigning-virtual-pilots). A pilot is billed whether or not they've flown anything that period.
 - **Insurance** — a flat monthly figure per aircraft in your fleet, whether leased or owned (Casual £6,000, True-life £50,000 — see [Playstyles](#playstyles)).
 - **Loan repayments** — every outstanding loan (a startup loan, or one taken later from the Fleet page) amortises here: part interest, part principal, same as a real loan, until it's paid off.
 
-This runs whether or not FSOps is open. If you close FSOps for a few days and reopen it, the billing cycle catches up on everything that fell due while it was closed, all at once, rather than skipping it — so **don't be surprised by a larger-than-usual charge the next time you open FSOps after a break**. It can't be tricked by winding your system clock forward either: the cycle tracks a strictly forward-moving watermark and only ever bills for time that has genuinely passed. Since nothing currently flies your routes for you (virtual pilots aren't built yet — see [below](#hiring-and-assigning-virtual-pilots)), an airline you aren't actively flying still loses money every month from these charges alone.
+This runs whether or not FSOps is open. If you close FSOps for a few days and reopen it, the billing cycle catches up on everything that fell due while it was closed, all at once, rather than skipping it — so **don't be surprised by a larger-than-usual charge the next time you open FSOps after a break**. It can't be tricked by winding your system clock forward either: the cycle tracks a strictly forward-moving watermark and only ever bills for time that has genuinely passed. Without any virtual pilots flying a schedule, an airline you aren't actively flying still loses money every month from these charges alone — hiring pilots and giving them a standing schedule (see [Hiring and assigning virtual pilots](#hiring-and-assigning-virtual-pilots)) is what turns that around, since their flights earn revenue against your fixed costs on the same wall clock.
 
 ## Fuel and tankering
 
@@ -299,7 +308,54 @@ The **Fleet** page (main navigation) shows every aircraft you own or lease — r
 - **Buy new** — the aircraft's full purchase price, paid once, with no ongoing lease payment. It's yours outright, at 100% condition with zero hours — but airline aircraft genuinely cost tens of millions, so this is a milestone funded by retained profit or a loan, not an opening move.
 - **Buy used** — 55% of the new price, but it starts already worn: 70% of the way to both its next A-check and its next C-check, and at 70% condition rather than 100%. The saving is real, but you're buying it back through an earlier trip to maintenance, not for free.
 
+Both the lease and buy dialogs let you search the catalogue and pick a **registration** for the aircraft before confirming — see [The aircraft catalogue and registrations](#the-aircraft-catalogue-and-registrations) below.
+
 **Loans** are available from the same page (**Take out a loan**). You choose an amount and a term; the interest rate is never something you pick — it's computed automatically from how much of your airline's trailing 30-day net operating cash flow (excluding one-off injections like starting capital or another loan's own proceeds) the new loan's payment would consume, scaling from the playstyle's base rate up to its hard cap (5% Casual, 8% True-life) the more of your capacity it uses. A **brand-new airline has no trading history yet, so its cash flow is exactly zero at creation — which means a startup loan is always priced at the cap.** That's not a bug: it's the correct price for an unproven borrower with no track record. As your airline's cash flow grows from flying, a later loan can price in below the cap. The loan dialog always shows the real rate, monthly repayment and total interest before you commit — never an estimate that could disagree with what taking the loan actually charges.
+
+### Reserving an aircraft for yourself
+
+Every aircraft in your fleet shows a **reservation** toggle on the Fleet page: **reserved for you to fly**, or **released to virtual pilots**. This is a hard rule now, not a preference — it's the single control that decides who is allowed to fly each aircraft, and the two sides can never both claim the same one:
+
+- **You can only fly an aircraft that's reserved to you.** The Fly screen and the flight brief only ever offer your reserved airframes; anything else shows disabled with **"Not reserved to you - reserve it from the Fleet page to fly it."**
+- **A reserved aircraft is never offered to a virtual pilot's schedule.** It doesn't appear as an option when building or editing a schedule, so a virtual pilot can never end up assigned to the aircraft you're about to fly — the conflict simply can't be created.
+- **Reserve and release are the only way an aircraft moves between the two pools.** Toggling the switch on the Fleet page is the whole mechanism; nothing else changes it behind your back once your fleet exists.
+- **Reserving an aircraft that already has scheduled legs is refused, by default.** FSOps tells you exactly which pilot and which legs stand in the way rather than silently dropping them; you can confirm again to clear those legs and reserve it anyway, and FSOps confirms afterward exactly what was cleared.
+- **Releasing an aircraft always works**, even one you're about to fly or currently flying — a reserved aircraft was never claimed by the scheduler in the first place, so there's nothing on the other side to conflict with. Releasing simply means you can no longer fly it until you reserve it again.
+- **With exactly one aircraft, this choice is explicit rather than automatic:** a brand-new airline's founding aircraft starts out reserved to you, and the moment your fleet grows to a second aircraft FSOps makes sure at least one aircraft is still reserved to you (never forcing a specific one — see below). Releasing your only reserved aircraft is allowed, but FSOps warns you plainly first, since it means your whole fleet becomes fair game for virtual pilots and nothing is held back for you — you can reserve one again at any time.
+
+If you're restoring an older save from before this rule existed, see [Troubleshooting](troubleshooting.md#a-restored-save-had-an-aircrafts-reservation-released) for what FSOps does automatically to resolve a database where an aircraft was marked both reserved and scheduled.
+
+## Selling an aircraft, ending a lease, and settling a loan early
+
+Acquiring aircraft was always possible; getting rid of one, or clearing debt early, now is too — all three actions live on the Fleet page (loan repayment is also on the [Finances page](#the-finances-page)), and all three follow the same pattern: **you're shown a firm figure before you commit, and if that figure has genuinely moved by the time you confirm, FSOps refuses the action and shows you the new one rather than silently charging something different.** That isn't a bug or an error to work around — it's a safety feature. The figures involved (an aircraft's condition, wall-clock time since your last lease payment, a loan's outstanding balance) can all move in the background while a confirmation dialog is sitting open, most often because a virtual pilot's flight or the monthly billing cycle landed in between, so FSOps re-checks rather than trusting a number that might already be stale. If you see this, just re-open the action — the fresh figure will be right there.
+
+### Selling an owned aircraft
+
+Available for any aircraft you **own** outright (not leased). The sale value is **depreciated** — it falls with the aircraft's airframe hours and its condition, and drops further if it's currently grounded for a check — so buying an aircraft and immediately selling it again always loses money, and flying it first and then selling costs you more still. FSOps shows the sale value, the new-aircraft price it was worked out from, the aircraft's current condition and hours, before you confirm. Selling is blocked while the aircraft is actually flying, and while it's on a virtual pilot's standing schedule (FSOps names the pilot and the leg count rather than silently unassigning it — remove it from their schedule first). A grounded-for-maintenance aircraft can still be sold, at a worse figure — exactly the situation where you'd want to get rid of one. **Selling does not pay off any loan against your airline** — loans are borrowed against your airline's cash flow, not secured on a specific aircraft, so your repayments continue exactly as scheduled; FSOps states this plainly on the quote. Selling your last aircraft is allowed, with a clear warning that it leaves your airline unable to fly.
+
+### Ending a lease early
+
+Available for any aircraft you **lease**. Ending it before the end of a billing period charges a **pro-rata amount** for the part of the current 30-day period you've actually had it, plus a separate **early-termination fee** — so timing the return around a payment doesn't dodge anything, and leasing stays a real commitment rather than a free rental you can hand back the moment it stops suiting you. The same blockers apply as selling (not while flying, not while on a standing schedule, loan unaffected), plus FSOps won't let the charge take your cash balance negative.
+
+### Settling a loan early, fully or partially
+
+From the Finances page's Loans tab (or the Fleet page): **pay off a loan in full**, or **overpay any amount** against the principal.
+
+- **Full settlement** shows the outstanding balance, an **early-settlement fee**, the total payoff figure, and the interest you'll save by clearing it now, before you confirm.
+- **Overpaying** reduces what you owe by exactly the amount you pay — it **shortens how long the loan runs**, not your monthly payment, which stays the same until the loan finishes early. There's no settlement fee on an overpayment; the fee only applies to closing a loan out completely.
+- Either action is blocked if it would take your cash balance negative.
+
+## The aircraft catalogue and registrations
+
+FSOps' catalogue covers 25 real airliner types across three categories, each with a real seat count, range, cruise speed, and a lease rate and purchase price for both playstyles:
+
+- **Narrowbody** — Airbus A319/A320/A321 and their neo variants, Boeing 737-700/-800/-900 and MAX 8, Boeing 757-200.
+- **Widebody** — Airbus A330-200/-300, A350-900, A380-800, Boeing 767-300ER, 777-300ER, 787-9, 747-8.
+- **Regional** — Embraer E170/E175/E190/E195, Bombardier CRJ-700/-900, ATR 42-600/72-600, Dash 8 Q400.
+
+The buy/lease dialog has a search box (matches ICAO type, manufacturer, or name — try "A350", "Boeing", or "737") and a category filter, so finding the aircraft you actually fly doesn't mean scrolling a long list.
+
+**Registrations** are generated in the format your airline's home country actually uses, derived from your hub airport at the moment you acquire each aircraft (an aircraft already in your fleet is never retroactively re-registered if you never change hub): a UK-hubbed airline gets tails like `G-EZBA`, Germany `D-AIMA`, France `F-GXXX`, Ireland `EI-XXX`, the Netherlands `PH-XXX`, Spain `EC-XXX`, and the US its own `N` + one-to-five-character format starting with a digit (`N737FS`). Every acquisition dialog pre-fills a fresh, correctly-formatted suggestion — hit the shuffle button for another, or type your own registration to match a specific livery (uppercase letters, digits and hyphens, unique within your fleet — FSOps doesn't enforce a country's format on a custom entry, since you know your own repaint better than a validator does). Renaming an aircraft already in your fleet works the same way, from the Fleet page.
 
 ## Maintenance
 
@@ -314,13 +370,78 @@ How long a check grounds the aircraft depends on your [playstyle](#playstyles):
 
 While grounded, the aircraft shows **In maintenance** on the Fleet page with the exact time it'll be back, and any route that would need it shows as not flyable on the Fly screen with the same reason and return time — see [Troubleshooting](troubleshooting.md#an-aircraft-is-grounded-for-maintenance) if you weren't expecting it. It's released automatically the moment its downtime elapses; nothing needs to be pressed. A used aircraft (see [above](#buying-leasing-and-financing-aircraft)) starts 70% of the way into both cycles, so its first check comes around much sooner than a fresh airframe's would.
 
+**A check never grounds an aircraft mid-flight.** Hours only accrue, and a check only actually triggers, at the moment a flight completes — for a flight you're tracking yourself, one you complete manually, or a virtual pilot's flight alike. If a check would have become due partway through a sector, it simply waits until shutdown; nothing about maintenance can pull an aircraft out from under a flight already in progress. This holds regardless of playstyle and is a permanent rule, not a setting.
+
+**A grounded aircraft suspends a virtual pilot's schedule instead of cancelling it — a choice you control per pilot.** Above the calendar in the schedule builder, a **Pause during maintenance** switch (on by default) decides what happens if that pilot's assigned aircraft is grounded when one of their scheduled legs comes due. It's a property of the pilot's whole weekly schedule, not any single day or leg.
+
+- **On (the default):** the occurrence is recorded as **Suspended** rather than skipped or cancelled — no cancellation fee under either playstyle, since the aircraft needing a check isn't a mistake in the schedule. It resumes on its own the moment the aircraft is released; nothing needs rebuilding.
+- **Off:** every occurrence due while the aircraft is grounded is recorded normally instead — **Skipped** with no charge under Casual, or **Cancelled** with a real fee under True-life, exactly as for any other unflyable occurrence (see below). The builder shows a warning the moment you switch it off: under True-life, a two-week C-check against a daily schedule means **fourteen separate cancellation fees** for something the pilot couldn't have avoided, so think carefully before turning it off on that playstyle.
+
+Switch it back on at any time — it applies to occurrences from that point on, and doesn't retroactively change flights already recorded.
+
+**Bringing a check forward yourself.** The Fleet page has a **Perform maintenance now** action on any aircraft that isn't already grounded or airborne. It shows, for both an A-check and a C-check: the cost, the downtime, how many hours remain until that check would fall due naturally, and which pilots' schedules (pilot, day, route) would be affected — all before you confirm. The trade-off is real and stated plainly: you pay the **full cost** of the check and **forfeit whatever hours were left** on the current cycle, in exchange for choosing exactly when the downtime lands rather than having it ambush you mid-week. It's blocked while the aircraft is flying, for the same reason maintenance never interrupts a flight in progress above.
+
 ## Hiring and assigning virtual pilots
 
-**Coming in a later update.**
+As your airline grows, you won't want to fly every route yourself. The **Pilots** page (main navigation) is where virtual pilots — hires who fly a standing weekly schedule for you, on the real-world clock, including while FSOps itself is closed — are hired, released, and given their schedules.
 
-What this is: as your airline grows, you won't want to fly every route yourself. Virtual pilots are hires who fly your scheduled routes automatically, on the real-world clock — including while FSOps itself is closed. Until this lands, nothing flies your routes for you, but the [monthly billing cycle](#the-monthly-billing-cycle) charges you regardless — an idle airline loses money today.
+### Hiring and releasing
 
-How to do it: from a pilots screen, you'll hire a pilot and assign them to one or more routes with a schedule. From that point, their flights complete in the background over real time and feed into your airline's economy and statistics the same way a flight you flew yourself would, just without the landing-quality detail that only comes from a flight tracked live through the sim.
+Select **Hire pilot**, optionally give them a name (leave it blank and they're named "First Officer" plus a number), and confirm. There's no upfront hiring cost — a new pilot costs you nothing until the next [monthly billing cycle](#the-monthly-billing-cycle) tick, which charges their salary (the same **£9,000/month** every pilot earns, including you) whether or not they've flown anything yet. You can hire as many pilots as you want; each one needs their own schedule to actually earn their keep.
+
+The Pilots table shows every pilot you employ — your own entry alongside every virtual pilot you've hired — with their status (**Available**, **Flying**, or **Inactive**), skill rating, hours flown, monthly salary, and (for virtual pilots) a weekly summary of sectors flown and expected revenue once they have a schedule. **Your own hours flown accrue from your tracked flights** the same way a virtual pilot's do from theirs, so your entry keeps up to date with how much you've actually flown. **Release** removes a pilot; it can't be undone, and it's blocked while they're actually mid-flight — release them once they land, or wait it out.
+
+### Skill and landing quality
+
+A virtual pilot's skill rating (starting at 50 for every hire, the same as your own) drives the delay variance and simulated landing quality the seeded economy generates for their flights, since there's no live telemetry to measure a real landing from. It's the only thing that varies between virtual pilots' flights beyond the schedule itself — there's currently no way to train or improve a pilot's rating.
+
+### Building a weekly schedule
+
+Open a pilot's schedule from the Pilots page. Each virtual pilot gets **one week-long calendar that repeats indefinitely** — set it once and they fly that pattern every week until you change it. The grid is laid out like a diary: **time runs down, days run across**, and each leg occupies a block sized to its full gate-to-gate duration (preflight, taxi, climb, cruise, descent, taxi-in — not just airborne time), so a day that's genuinely too full to fit is visibly over-stuffed rather than failing with an error later.
+
+**An aircraft belongs to the whole duty day, not to one leg.** Click an empty day (or its "+" button) and FSOps asks you to **pick an aircraft first** — every fleet aircraft is listed, with anything that can't be used for that day shown disabled and why (in maintenance until a stated time, or reserved to you — with a link straight to the Fleet page to release it). Only once an aircraft is chosen does FSOps offer the legs *that aircraft* can actually fly from wherever it will be. This is deliberate: because one aircraft covers the whole day, "does the next leg depart from where the last one landed" holds automatically rather than needing to be checked leg by leg, and a gap shown between two legs always genuinely means a turnaround on that one airframe. Changing the aircraft assigned to a day that already has legs on it asks you to confirm first, since it clears them.
+
+**Two views of the same week, plus a read-only overview.** Toggle between **by pilot** (this pilot's whole week) and **by aircraft** (where each of your aircraft is and what it's doing) while editing. On the Pilots page, a separate, read-only **schedule overview** shows every aircraft in your fleet as a row across the week, legs colour-coded by pilot — the place to answer "is my fleet actually being used", at a glance, across every pilot at once. Editing always happens in the per-pilot view; the overview is for seeing the whole picture.
+
+**Anything that can't fly is shown, never hidden.** An aircraft or a leg you can't currently pick appears disabled with **one short reason** and, wherever there's a fix, a link straight to the place that applies it — reserved aircraft link to the Fleet page, a missing repositioning leg tells you to schedule one rather than sending you to create a route you already have. Saving a schedule with a genuine conflict (two same-origin legs on different aircraft in one day, an aircraft double-booked across pilots, not enough turnaround or rest) is refused with the conflicts spelled out in plain language, naming the aircraft, the day, and what would fix it.
+
+**Rest, duty length and turnaround are enforced, cyclically across the week** (so Saturday's last leg connects to the following Monday's first, and a pilot's last flown day still gets its rest before their week starts again): at least **10 hours' rest** between a pilot's duty days, a maximum **13-hour duty day**, and at least **45 minutes'** turnaround between two legs on the same aircraft.
+
+**A blank week is the hardest part of any planner**, so an empty schedule offers a **Suggest a starter schedule** button: FSOps proposes a same-day out-and-back on weekday mornings for whichever aircraft and routes are actually available, checking every leg against the real rules as it builds it, so what you get is always something you could save immediately and adjust from there — never a proposal that would fail its own validation.
+
+Once a pilot has a schedule, their flights resolve automatically — see [The wall-clock economy](#the-wall-clock-economy-flying-while-youre-away) below for exactly how and when.
+
+## The wall-clock economy: flying while you're away
+
+A virtual pilot's scheduled flights don't complete while you watch — they complete against the **real-world clock**, whether or not FSOps is even running. Every 60 seconds (and once immediately on startup, so a long-closed app catches up right away rather than waiting a minute), FSOps checks every virtual pilot's schedule for legs whose departure time has passed and resolves them:
+
+- **A flyable occurrence is flown as a full economic citizen** — it goes through exactly the same economics as a flight you fly yourself: ticket revenue, fuel, landing/handling/parking/passenger fees, maintenance accrual, and crew cost all post to your ledger, the aircraft's hours and position update, its condition wears, and it can trigger a maintenance grounding just as a player flight can.
+- **An occurrence that isn't flyable — the assigned aircraft is still elsewhere, in maintenance, or already airborne — is recorded rather than silently skipped or dropped.** What happens next depends on your [playstyle](#playstyles): under **Casual**, it's recorded as **Skipped** with no cost — the airline forgives a schedule you haven't perfected yet. Under **True-life**, it's recorded as **Cancelled**, with a real cancellation fee posted to your ledger — a badly-planned schedule genuinely costs you, which is what gives the schedule builder's warnings weight. Either way, the specific reason is stored on the flight record, the same way it would be explained while you were building the schedule.
+
+**Closing FSOps for a while and reopening it catches up on everything that was due, all at once**, exactly like the monthly billing cycle does — don't be surprised to see a batch of completed (or skipped/cancelled/suspended) flights and their ledger lines dated across the time you were away, rather than trickling in one at a time. Catch-up is capped per pass (at most 500 occurrences, looking no further than about 400 days ahead of where it left off), so an extremely long gap resolves over a few passes a minute apart instead of in one unbounded burst, but it still resolves in full. It can't be tricked by winding your system clock forward or back either — resolution only ever advances for time that has genuinely, provably passed.
+
+## The "while you were away" summary
+
+Because billing and virtual flights both resolve against the real-world clock rather than the time FSOps happens to be open, closing the app for a while and reopening it can land a materially different cash balance with no warning — several months of lease payments arriving at once looks exactly like a bug unless something explains it. So on startup, if enough happened while you were gone, FSOps shows a **"While you were away"** dialog before anything else: how long the app was closed, everything charged broken down by category, what your virtual pilots flew and earned (sectors, revenue, cost, net), any maintenance that fell due, and any flight that was skipped, cancelled or suspended, with the reason for each. It links straight through to the [Finances page's](#the-finances-page) ledger for the full detail, and a **Got it** button dismisses it — it won't reappear for the same window once acknowledged, only for whatever happens next. A very short gap (a normal restart, a quick reload) never triggers it; there has to be something genuine to report.
+
+## The Finances page
+
+The **Finances** page (main navigation) is where you actually run the airline from, rather than piece its state together from the Fleet and Pilots pages. Four figures sit at the top always: your **cash balance** and its change over the last 30 days, and your **income**, **expenditure** and **net profit or loss** for the current 30-day billing period. Below that, tabs cover each area in turn:
+
+- **Leases** — every active lease: aircraft, type, monthly rate, and the real date its next payment falls due (a rolling 30 days from your airline's own clock, never "the 1st of the month" — see [The monthly billing cycle](#the-monthly-billing-cycle)), plus your total monthly lease commitment across the fleet and an **End lease** action for each — see [above](#selling-an-aircraft-ending-a-lease-and-settling-a-loan-early).
+- **Loans** — every loan: principal, outstanding balance, interest rate, monthly payment, remaining term, and interest still to pay, with **Repay** taking you to full settlement or an overpayment (see [above](#selling-an-aircraft-ending-a-lease-and-settling-a-loan-early)).
+- **Pilots** — every pilot's monthly salary, sectors flown, ledger-derived revenue and operating cost, and an estimated total cost and net contribution for the window shown. The estimate columns are labelled **"Est."** and carry a tooltip explaining why: they add the pilot's monthly salary prorated to the period you're looking at, and a prorated figure is never itself a posted ledger line — the real salary line posts in full on its own monthly cycle, wherever that falls. Everything else on this tab is real, ledger-derived money.
+- **Costs** — your operating costs split into **fixed** (leases, salaries, insurance, loan repayments) and **variable** (fuel, landing, handling, parking, passenger charges, turnaround, maintenance, crew), because they behave completely differently: fixed costs are owed whether or not you fly, variable ones only bite when you do.
+- **Routes** — profit and loss per route: sectors flown, ledger-derived revenue, cost and profit for the window, so you can see which routes in your network are actually worth flying rather than guessing from the fare alone.
+- **Ledger** — every transaction, filterable by category, newest first, each drillable to the flight that produced it where one exists.
+
+Every figure that isn't explicitly marked as an estimate comes straight from posted ledger transactions, the same rule the rest of the app follows — nothing shown here can disagree with what actually moved your cash balance.
+
+## The live operations map
+
+The **Dashboard**'s "Live operations" card shows your whole route network plus every aircraft currently in the air — your own tracked flight if you're flying, and every virtual pilot's currently-airborne scheduled leg, all on the same map. A virtual pilot's aircraft isn't a stored position: it's calculated fresh each time from their schedule and how much of that leg's block time has elapsed, so it's always consistent with how that flight will actually resolve once its time comes.
+
+Hover any aircraft for a flight card: flight number, route, pilot name, aircraft registration and type, scheduled departure and estimated arrival times (in UTC), elapsed versus remaining time, percentage complete, and current phase (taxi out, climb, cruise, descent, taxi in). Your own aircraft is badged **You**; every other aircraft is badged **Virtual**, so it's always clear which one you're actually flying. When nothing is airborne, the map simply shows your network with no aircraft on it — no error, no placeholder text needed.
 
 ## Statistics dashboards
 

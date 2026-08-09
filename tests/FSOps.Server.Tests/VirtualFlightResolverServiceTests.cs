@@ -176,7 +176,7 @@ public class VirtualFlightResolverServiceTests
         Assert.Contains(LedgerCategory.Fuel, categories);
         Assert.Contains(LedgerCategory.LandingFees, categories);
         Assert.Contains(LedgerCategory.Maintenance, categories);
-        Assert.Contains(LedgerCategory.Salary, categories);
+        Assert.Contains(LedgerCategory.CrewCost, categories);
 
         // Full round trip - the aircraft is back where it started.
         var fleetAircraftId = await FleetAircraftIdAsync(ctx);
@@ -194,7 +194,9 @@ public class VirtualFlightResolverServiceTests
         var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
         await SeedRoundTripScheduleAsync(ctx, pilot, outbound, inbound);
         await SeedEconomyStateAsync(ctx, Base);
-        await GroundTheOnlyAircraftAsync(ctx, until: Base.AddDays(400));
+        // Unflyable because the aircraft is somewhere it shouldn't be - a schedule the player built
+        // badly, not maintenance the simulation imposed (see MisplaceTheOnlyAircraftAsync's doc).
+        await MisplaceTheOnlyAircraftAsync(ctx, wrongIcao: "EGSS");
 
         // RouteTestContext's airline defaults to AirlinePlaystyle.Casual.
         var now = Base.AddDays(1); // captures only the first week's round trip, not the next one too
@@ -232,7 +234,9 @@ public class VirtualFlightResolverServiceTests
         var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
         await SeedRoundTripScheduleAsync(ctx, pilot, outbound, inbound);
         await SeedEconomyStateAsync(ctx, Base);
-        await GroundTheOnlyAircraftAsync(ctx, until: Base.AddDays(400));
+        // Unflyable because the aircraft is somewhere it shouldn't be - a schedule the player built
+        // badly, not maintenance the simulation imposed (see MisplaceTheOnlyAircraftAsync's doc).
+        await MisplaceTheOnlyAircraftAsync(ctx, wrongIcao: "EGSS");
 
         var now = Base.AddDays(1); // captures only the first week's round trip, not the next one too
         var clock = new FakeClock(now);
@@ -263,7 +267,7 @@ public class VirtualFlightResolverServiceTests
         {
             Assert.Equal(LedgerCategory.CancellationFee, t.Category);
             Assert.Equal(-expectedFee, t.Amount);
-            Assert.Contains("in maintenance", t.Description);
+            Assert.Contains("still at", t.Description);
         });
     }
 
@@ -360,6 +364,23 @@ public class VirtualFlightResolverServiceTests
         var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == fleetAircraftId);
         aircraft.Status = FleetAircraftStatus.InMaintenance;
         aircraft.GroundedUntilUtc = until;
+        await ctx.Db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Makes an occurrence unflyable for a schedule-quality reason (the aircraft is parked
+    /// somewhere other than where this leg departs from) rather than a maintenance grounding - see
+    /// MaintenanceScheduleSuspensionTests for the maintenance case, which resolves differently
+    /// (Suspended, no fee under any playstyle) now that PilotSchedule.AutoSuspendOnMaintenance
+    /// defaults on. The two Skipped/Cancelled tests below need a cause that stays Skipped/Cancelled
+    /// regardless of that flag, since what they're actually proving is "a badly-planned schedule
+    /// bites under True-life and doesn't under Casual" - not anything about maintenance.
+    /// </summary>
+    private static async Task MisplaceTheOnlyAircraftAsync(RouteTestContext ctx, string wrongIcao)
+    {
+        var fleetAircraftId = await FleetAircraftIdAsync(ctx);
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == fleetAircraftId);
+        aircraft.LocationIcao = wrongIcao;
         await ctx.Db.SaveChangesAsync();
     }
 

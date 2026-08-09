@@ -87,6 +87,21 @@
     "startingConditionPercent": 70,
     "startingAirframeHours": 18000
   },
+  // Selling an owned aircraft - see docs/PLAN.md "Selling an owned aircraft must lose money on the
+  // spread". Shared across playstyles: what a worn airframe is worth on the secondhand market
+  // doesn't depend on how realistically the SELLING airline chose to be billed elsewhere. Anchored,
+  // not guessed - with these defaults a used aircraft bought at exactly usedAircraft's starting
+  // state (70% condition, 70% into both maintenance cycles) and immediately resold values at
+  // exactly 0.50 of the playstyle's new price, strictly below the 0.55 it cost to buy, so even a
+  // used-aircraft flip loses money. newAircraftResaleFactor alone (0.80) already makes a
+  // buy-new-sell-immediately round trip a loss before any wear is applied.
+  "depreciation": {
+    "newAircraftResaleFactor": 0.80,
+    "conditionDepreciationWeight": 0.30,
+    "cycleWearDepreciationWeight": 0.30,
+    "groundedForMaintenancePenalty": 0.05,
+    "minResaleFactor": 0.10
+  },
   // Shared across both playstyles - the founding pilot's salary is already a realistic figure and
   // needs no game-balance treatment (see docs/PLAN.md "The starter lease is a deliberate
   // game-balance number"). Everything else that differs by playstyle (starting capital, lease
@@ -189,15 +204,34 @@
     // capAnnualRatePct (a loan borrowed right up to the limit) - the cap is a hard ceiling that can
     // never be exceeded, asserted by a boundary test. Casual's friendlier 2.5%-5.0% band matches its
     // forgiving figures everywhere else in this block.
+    // maxStartingLoanPrincipal: the largest STARTING loan (taken at airline creation, always priced
+    // at capAnnualRatePct since a brand-new airline has zero trailing cash flow) AirlineEndpoints
+    // will accept - see LoanConfig.MaxStartingLoanPrincipal's own doc for why this can't reuse
+    // LoanEligibilityCalculator's cash-flow-based cap. 250,000 -> £4,718.31/month over 60 months,
+    // 10.4% of the tested ~45,485 typical Casual monthly income and over 4x the 60,000 starting
+    // capital - chosen by the user from worked numbers across three candidate cap bases.
     "loan": {
       "baseAnnualRatePct": 2.5,
-      "capAnnualRatePct": 5.0
+      "capAnnualRatePct": 5.0,
+      "maxStartingLoanPrincipal": 250000
     },
     // A virtual pilot's flight that can't fly (aircraft in maintenance, still away, or otherwise
     // unavailable) is skipped quietly under Casual - recorded in history, no financial penalty at
     // all. See docs/PLAN.md's Playstyle behaviour table and FlightStatus.Skipped.
     "unflyableSchedule": {
       "cancellationFee": 0
+    },
+    // Ending a lease before it would otherwise have been billed - see docs/PLAN.md "Returning a
+    // lease early must cost something". A flat fee in months' rent on top of the pro-rata charge
+    // for the current billing period already used - see LeaseEarlyTerminationConfig's own doc.
+    "leaseEarlyTermination": {
+      "feeMonths": 0.5
+    },
+    // Paying off a loan's full remaining balance early - see docs/PLAN.md "Paying a loan back...
+    // Charge a modest early-settlement fee". Only closing a loan entirely carries this fee (never a
+    // partial overpayment) - see LoanEarlySettlementConfig's own doc.
+    "loanEarlySettlement": {
+      "feePercentOfRemainingBalance": 0.02
     }
   },
   "trueLife": {
@@ -263,9 +297,15 @@
     },
     // Realistic borrowing costs - hard-capped at 8% per docs/PLAN.md's playstyle table, above
     // Casual's 5% the same way every other True-life figure is realistic rather than game-balanced.
+    // maxStartingLoanPrincipal: see the "casual" block's own comment above for why this exists
+    // separately from the cash-flow-based mid-game cap. 5,000,000 -> £101,381.97/month over 60
+    // months at the 8.0% cap rate - roughly 2x the 2,500,000 starting capital, matching Casual's
+    // cap by the same capital-multiple; True-life has no solo-income figure to compare against
+    // since a single aircraft flown casually is a real loss by design (see GET /airline/playstyles).
     "loan": {
       "baseAnnualRatePct": 4.0,
-      "capAnnualRatePct": 8.0
+      "capAnnualRatePct": 8.0,
+      "maxStartingLoanPrincipal": 5000000
     },
     // A virtual pilot's flight that can't fly is CANCELLED under True-life, with a real cost -
     // "clearly reported", per docs/PLAN.md's Playstyle behaviour table (see
@@ -274,6 +314,14 @@
     // bankrupt one bad week.
     "unflyableSchedule": {
       "cancellationFee": 350
+    },
+    // Harsher early-exit penalties than Casual, like every other True-life figure - see
+    // leaseEarlyTermination/loanEarlySettlement's own docs in the "casual" block above.
+    "leaseEarlyTermination": {
+      "feeMonths": 1.0
+    },
+    "loanEarlySettlement": {
+      "feePercentOfRemainingBalance": 0.04
     }
   },
   // Pilot rest/duty and minimum turnaround for the weekly schedule builder - see docs/PLAN.md

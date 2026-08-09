@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom'
 
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
+import { AwaySummaryDialog } from '@/components/maintenance/AwaySummaryDialog'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useAirlineSummary } from '@/hooks/useAirlineSummary'
@@ -27,6 +28,10 @@ export function AppShell() {
         </div>
       </div>
       <Toaster position="bottom-right" />
+      {/* Mounted app-wide (not per-page) so "while you were away" surfaces on whatever route the
+          player lands on first, not only when they happen to open the Dashboard - see
+          AwaySummaryDialog's own doc comment for why it is safe to mount unconditionally. */}
+      <AwaySummaryDialog />
     </TooltipProvider>
   )
 }

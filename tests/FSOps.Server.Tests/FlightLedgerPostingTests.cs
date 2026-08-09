@@ -74,8 +74,19 @@ public class FlightLedgerPostingTests
         Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.Fuel && t.Amount < 0);
         Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.LandingFees && t.Amount < 0);
         Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.Maintenance && t.Amount < 0);
-        Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.Salary && t.Amount < 0);
-        Assert.True(ledgerLines.Count(t => t.Category == LedgerCategory.Handling) >= 3, "expected handling, parking, passenger charges and turnaround, all under Handling");
+        Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.CrewCost && t.Amount < 0);
+
+        // Each airport charge posts under its own category. They were all posted as Handling until
+        // the Finances page needed to separate variable cost from fixed and found the categories
+        // indistinguishable - the only way to tell them apart was the description text, which is
+        // display wording and must never be what the accounts are built on.
+        Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.Handling && t.Amount < 0);
+        Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.ParkingFees && t.Amount < 0);
+        Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.PassengerCharges && t.Amount < 0);
+        Assert.Contains(ledgerLines, t => t.Category == LedgerCategory.TurnaroundFees && t.Amount < 0);
+
+        // Per-sector crew cost is not the monthly wage, and a sector posts no monthly wage at all.
+        Assert.DoesNotContain(ledgerLines, t => t.Category == LedgerCategory.Salary);
     }
 
     [Fact]

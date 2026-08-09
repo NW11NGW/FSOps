@@ -57,3 +57,25 @@ export function formatCoordinates(lat: number, lon: number): string {
   const lonDirection = lon >= 0 ? 'E' : 'W'
   return `${Math.abs(lat).toFixed(4)}°${latDirection}, ${Math.abs(lon).toFixed(4)}°${lonDirection}`
 }
+
+/**
+ * A real calendar date, e.g. "31 Aug 2026". Used for lease/loan dates on the Finances page - the
+ * app's billing runs on a rolling 30-day cycle from the airline's own clock, not calendar months,
+ * so callers must show an actual date rather than implying "the 1st of the month". Returns
+ * "-" for a null/unparseable input so callers never render "Invalid Date".
+ */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+/** A calendar date plus time, e.g. "31 Aug 2026, 14:32" - for ledger rows and other precise
+ *  timestamps where the date alone would be ambiguous. */
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}

@@ -304,6 +304,33 @@ public class PilotScheduleValidatorTests
         Assert.Contains(result.Conflicts, c => c.Contains("rest") || c.Contains("hours"));
     }
 
+    /// <summary>
+    /// Regression for the 2026-08-09 real-use defect (docs/PLAN.md "2c"): a duty day was accepted
+    /// with two legs, both EGPH -&gt; EGLL, on two DIFFERENT airframes (G-PKS0, then a rendered "38m
+    /// turnaround", then G-LHRE) - impossible, because after the first leg the first aircraft is at
+    /// EGLL, and the second aircraft was never checked to be at EGPH at all. Root cause:
+    /// <c>ValidateAircraftChains</c> groups strictly by <c>FleetAircraftId</c>, so two legs on
+    /// different aircraft in the same pilot-day were never compared to each other - each aircraft's
+    /// own (single-leg) chain looked completely fine in isolation. This exact shape - two
+    /// same-origin legs, one duty day, two different airframes - must now be rejected by the
+    /// aircraft-per-duty-day invariant before continuity is even checked.
+    /// </summary>
+    [Fact]
+    public void Validate_TwoSameOriginLegsOneDutyDay_DifferentAirframes_IsRejected()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(13, 5, 0), RouteBack, AircraftX), // EGPH -> EGGD on G-ONEX
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(14, 50, 0), RouteBack, AircraftY), // EGPH -> EGGD on G-TWOY
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("G-TWOY"));
+        Assert.Contains(result.Conflicts, c => c.Contains("single") && c.Contains("aircraft"));
+    }
+
     [Fact]
     public void Validate_TwoPilotsSharingOneAircraftOnDifferentDays_WithoutOverlap_IsValid()
     {

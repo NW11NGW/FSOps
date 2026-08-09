@@ -135,11 +135,34 @@ public sealed class EconomyConfig
     /// </summary>
     public LoanConfig Loan { get; init; } = new();
 
+    /// <summary>
+    /// The penalty for ending a lease before it would otherwise have been billed - see docs/PLAN.md
+    /// "Returning a lease early must cost something". Resolved per playstyle by
+    /// <see cref="EconomyConfigCatalog"/>, like <see cref="FleetFinance"/>/<see cref="Loan"/> above -
+    /// harsher in True-life like every other figure that differs by playstyle. See
+    /// <see cref="LeaseEarlyTerminationConfig"/>'s own doc for what the fee sits alongside.
+    /// </summary>
+    public LeaseEarlyTerminationConfig LeaseEarlyTermination { get; init; } = new();
+
+    /// <summary>
+    /// The fee for paying off a loan's full remaining balance before term - see docs/PLAN.md "Paying
+    /// a loan back... Charge a modest early-settlement fee". Resolved per playstyle by
+    /// <see cref="EconomyConfigCatalog"/>, same pattern as <see cref="LeaseEarlyTermination"/> above.
+    /// </summary>
+    public LoanEarlySettlementConfig LoanEarlySettlement { get; init; } = new();
+
     /// <summary>Purchasing a used, rather than new, airframe - see docs/PLAN.md "Used aircraft -
     /// cheap to buy, expensive to run". Shared across playstyles: the discount and the wear a used
     /// airframe starts with are a property of the used-aircraft market, not a game-balance figure
     /// that differs by how realistically the player wants to be billed.</summary>
     public UsedAircraftConfig UsedAircraft { get; init; } = new();
+
+    /// <summary>The depreciation curve <see cref="FSOps.Core.Finance.AircraftDepreciationCalculator"/>
+    /// reads when quoting a sale - see docs/PLAN.md "Selling an owned aircraft must lose money on the
+    /// spread". Shared across playstyles, like <see cref="UsedAircraft"/> - what a worn airframe is
+    /// worth on the secondhand market doesn't depend on how realistically the SELLING airline chose to
+    /// be billed elsewhere.</summary>
+    public AircraftDepreciationConfig Depreciation { get; init; } = new();
 
     /// <summary>
     /// Pilot rest/duty and minimum turnaround for the weekly schedule builder - see docs/PLAN.md
@@ -337,6 +360,12 @@ public sealed class EconomyConfig
                 $"Loan.CapAnnualRatePct ({Loan.CapAnnualRatePct}) must be greater than Loan.BaseAnnualRatePct ({Loan.BaseAnnualRatePct}).");
         }
 
+        if (Loan.MaxStartingLoanPrincipal <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Loan.MaxStartingLoanPrincipal must be positive, was {Loan.MaxStartingLoanPrincipal}.");
+        }
+
         if (UsedAircraft.PriceMultiplier is <= 0 or >= 1)
         {
             throw new InvalidOperationException(
@@ -414,6 +443,34 @@ public sealed class EconomyConfig
         if (UnflyableSchedule.CancellationFee < 0)
         {
             throw new InvalidOperationException($"UnflyableSchedule.CancellationFee cannot be negative, was {UnflyableSchedule.CancellationFee}.");
+        }
+
+        if (Depreciation.NewAircraftResaleFactor is <= 0 or > 1)
+        {
+            throw new InvalidOperationException(
+                $"Depreciation.NewAircraftResaleFactor must be in (0,1], was {Depreciation.NewAircraftResaleFactor}.");
+        }
+
+        if (Depreciation.ConditionDepreciationWeight < 0 || Depreciation.CycleWearDepreciationWeight < 0 || Depreciation.GroundedForMaintenancePenalty < 0)
+        {
+            throw new InvalidOperationException("Depreciation's wear weights (ConditionDepreciationWeight/CycleWearDepreciationWeight/GroundedForMaintenancePenalty) cannot be negative.");
+        }
+
+        if (Depreciation.MinResaleFactor <= 0 || Depreciation.MinResaleFactor > Depreciation.NewAircraftResaleFactor)
+        {
+            throw new InvalidOperationException(
+                $"Depreciation.MinResaleFactor must be in (0, Depreciation.NewAircraftResaleFactor={Depreciation.NewAircraftResaleFactor}], was {Depreciation.MinResaleFactor}.");
+        }
+
+        if (LeaseEarlyTermination.FeeMonths < 0)
+        {
+            throw new InvalidOperationException($"LeaseEarlyTermination.FeeMonths cannot be negative, was {LeaseEarlyTermination.FeeMonths}.");
+        }
+
+        if (LoanEarlySettlement.FeePercentOfRemainingBalance is < 0 or >= 1)
+        {
+            throw new InvalidOperationException(
+                $"LoanEarlySettlement.FeePercentOfRemainingBalance must be in [0,1), was {LoanEarlySettlement.FeePercentOfRemainingBalance}.");
         }
     }
 
@@ -575,11 +632,23 @@ public sealed class EconomyConfig
             // doc for why 2.5/5.0: a friendly base rate with a low ceiling, consistent with Casual
             // being the forgiving playstyle everywhere else. True-life's own figures (4.0/8.0) are
             // applied separately in EconomyConfigCatalog.Default()'s Resolve() call.
+            // MaxStartingLoanPrincipal 250,000 -> £4,718.31/month at the 5.0% cap rate over 60
+            // months, 10.4% of the tested ~45,485 typical Casual monthly income (see
+            // StartupTrajectoryTests.OneAircraft_OneLegADay_IsGenuinelyProfitable) and over 4x the
+            // 60,000 starting capital - a meaningful capital injection with comfortable headroom
+            // left, chosen by the user from worked numbers across three candidate cap bases.
             Loan = new LoanConfig
             {
                 BaseAnnualRatePct = 2.5,
                 CapAnnualRatePct = 5.0,
+                MaxStartingLoanPrincipal = 250_000m,
             },
+            // Casual figure - mirrors economy-config.json's "casual" block. True-life's own figure
+            // (1.0) is applied separately in EconomyConfigCatalog.Default()'s Resolve() call.
+            LeaseEarlyTermination = new LeaseEarlyTerminationConfig { FeeMonths = 0.5 },
+            // Casual figure - mirrors economy-config.json's "casual" block. True-life's own figure
+            // (0.04) is applied separately in EconomyConfigCatalog.Default()'s Resolve() call.
+            LoanEarlySettlement = new LoanEarlySettlementConfig { FeePercentOfRemainingBalance = 0.02m },
             UsedAircraft = new UsedAircraftConfig
             {
                 PriceMultiplier = 0.55m,
@@ -588,6 +657,8 @@ public sealed class EconomyConfig
                 StartingConditionPercent = 70,
                 StartingAirframeHours = 18_000,
             },
+            // Shared across playstyles - see Depreciation's own doc.
+            Depreciation = new AircraftDepreciationConfig(),
             // Casual figures - shared across playstyles (see the Scheduling property's own doc).
             // 10h rest / 13h max duty are ordinary short-haul crewing figures, comfortably inside
             // the 24h/day ceiling Validate() enforces; 45 minutes covers a realistic minimum
@@ -882,6 +953,112 @@ public sealed class LoanConfig
     public double BaseAnnualRatePct { get; init; } = 2.5;
 
     public double CapAnnualRatePct { get; init; } = 5.0;
+
+    /// <summary>
+    /// The largest principal a STARTING loan (AirlineEndpoints.CreateAsync, taken the moment an
+    /// airline is founded) may ever request - a flat, hand-authored per-playstyle figure, not a
+    /// formula. A starting loan can never use <see cref="FSOps.Core.Finance.LoanEligibilityCalculator"/>'s
+    /// cash-flow-based cap (<c>Evaluate</c>/<c>MaxMonthlyPayment</c>) the way a mid-game loan
+    /// (FleetEndpoints.TakeLoanAsync) does: a brand-new airline's trailing cash flow is always
+    /// exactly 0 (no ledger exists yet), and <c>MaxMonthlyPayment(0) == 0</c> by construction, so
+    /// reusing that check here would reject every starting loan of any size rather than cap it -
+    /// it would delete the feature, not bound it. This figure exists instead, authored directly per
+    /// playstyle the same way BaseAnnualRatePct/CapAnnualRatePct are - see economy-config.json's
+    /// "loan" blocks for the worked numbers behind 250,000 (Casual) and 5,000,000 (True-life).
+    /// </summary>
+    public decimal MaxStartingLoanPrincipal { get; init; } = 250_000m;
+}
+
+/// <summary>
+/// The depreciation curve <see cref="FSOps.Core.Finance.AircraftDepreciationCalculator"/> reads -
+/// see that class's own doc for the formula and docs/PLAN.md's requirement that sale value be
+/// "consistent with [the used-aircraft] curve, not a separate invented one" (<see cref="UsedAircraftConfig.PriceMultiplier"/>
+/// of 0.55 at 70% condition/70% into both maintenance cycles).
+/// <para>
+/// <b>Anchored, not guessed.</b> With the four defaults below, a used aircraft bought at exactly
+/// <see cref="EconomyConfig.UsedAircraft"/>'s starting state (70% condition, 70% into both cycles)
+/// and immediately resold values at exactly 0.50 of the playstyle's new price - strictly below the
+/// 0.55 it cost to buy, so even a used-aircraft flip loses money (see
+/// AircraftDepreciationCalculatorTests). A brand-new, zero-hour aircraft resold the instant it's
+/// bought values at exactly <see cref="NewAircraftResaleFactor"/> (0.80) - the "drove it off the
+/// apron" spread every real aircraft transaction carries, and on its own already makes a buy-then-
+/// sell round trip a loss with no wear involved at all.
+/// </para>
+/// </summary>
+public sealed class AircraftDepreciationConfig
+{
+    /// <summary>
+    /// The ceiling on resale value as a fraction of THIS playstyle's new price
+    /// (<see cref="EconomyConfig.PurchasePriceFor"/>) - what a zero-hour, 100%-condition aircraft
+    /// sells for the instant it changes hands. Below 1.0 on purpose: this alone is what makes
+    /// "buy new, sell immediately" a loss (see docs/PLAN.md "Test the round trip"), before any
+    /// wear-based depreciation is even applied.
+    /// </summary>
+    public decimal NewAircraftResaleFactor { get; init; } = 0.80m;
+
+    /// <summary>
+    /// Maximum fraction of <see cref="NewAircraftResaleFactor"/> lost to condition wear, reached at
+    /// <c>ConditionPercent == 0</c>. Scales linearly with <c>(100 - ConditionPercent) / 100</c>.
+    /// </summary>
+    public decimal ConditionDepreciationWeight { get; init; } = 0.30m;
+
+    /// <summary>
+    /// Maximum fraction lost to being close to due maintenance, reached when both
+    /// <c>HoursSinceACheck</c> and <c>HoursSinceCCheck</c> are at their interval (a check is
+    /// imminent either way). Scales with the average of the two cycles' progress toward their next
+    /// check - see <see cref="FSOps.Core.Finance.AircraftDepreciationCalculator"/>.
+    /// </summary>
+    public decimal CycleWearDepreciationWeight { get; init; } = 0.30m;
+
+    /// <summary>
+    /// Extra flat cut applied while the aircraft is <see cref="FSOps.Core.Entities.FleetAircraftStatus.InMaintenance"/> -
+    /// docs/PLAN.md "An aircraft grounded for maintenance can still be disposed of, at a worse
+    /// figure". Needed as its own term because a just-triggered check resets
+    /// HoursSinceACheck/HoursSinceCCheck to (near) zero the same flight it grounds the aircraft, so
+    /// the cycle-wear term alone would score a freshly-grounded aircraft as if it had low wear.
+    /// </summary>
+    public decimal GroundedForMaintenancePenalty { get; init; } = 0.05m;
+
+    /// <summary>Absolute floor on the resale multiplier, regardless of how worn or grounded the
+    /// aircraft is - a defensive clamp; the worst case the weights above can produce
+    /// (0.80 - 0.30 - 0.30 - 0.05 = 0.15) never actually reaches this.</summary>
+    public decimal MinResaleFactor { get; init; } = 0.10m;
+}
+
+/// <summary>
+/// The penalty for ending a lease before it would otherwise have been billed - see docs/PLAN.md
+/// "Returning a lease early must cost something". This app's leases are open-ended/rolling (no
+/// fixed term stored on <see cref="FSOps.Core.Entities.Lease"/>), so there is no "clean, penalty-
+/// free end of term" to distinguish from an early one - every termination this feature offers IS
+/// the early case, and the charge is what stands between leasing being a genuine commitment and it
+/// being a free rental. Two components, both itemised (see
+/// <see cref="FSOps.Core.Finance.LeaseTerminationCalculator"/>):
+/// <list type="bullet">
+/// <item>A pro-rata charge for the part of the current 30-day billing period already used, so
+/// timing the return around <see cref="FSOps.Server.Services.EconomyClockService"/>'s tick can
+/// never dodge rent that's already owed.</item>
+/// <item>This flat fee on top, in months' rent - the actual cost of exiting early, harsher in
+/// True-life like every other figure that differs by playstyle.</item>
+/// </list>
+/// </summary>
+public sealed class LeaseEarlyTerminationConfig
+{
+    public double FeeMonths { get; init; } = 0.5;
+}
+
+/// <summary>
+/// The fee for paying off a loan's full remaining balance before term - see docs/PLAN.md "Paying a
+/// loan back... Charge a modest early-settlement fee". Deliberately NOT charged on a partial
+/// overpayment (see <see cref="FSOps.Core.Finance.LoanSettlementCalculator.ApplyOverpayment"/>'s
+/// own doc for why) - only closing the loan entirely carries it, which is also the only way early
+/// settlement could ever be "gamed" (take a loan, immediately close it, pay nothing): the fee
+/// guarantees that always costs something, however briefly the loan existed.
+/// </summary>
+public sealed class LoanEarlySettlementConfig
+{
+    /// <summary>Fraction of the outstanding principal charged as a fee when paying it off in full
+    /// early.</summary>
+    public decimal FeePercentOfRemainingBalance { get; init; } = 0.02m;
 }
 
 /// <summary>

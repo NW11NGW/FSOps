@@ -105,8 +105,8 @@ public class Flight
 
     /// <summary>
     /// Human-readable reason this virtual-pilot occurrence could not fly - e.g. "G-OLAF is still at
-    /// EGPF from Tuesday" - set only for <see cref="FlightStatus.Skipped"/> and
-    /// <see cref="FlightStatus.Cancelled"/> flights. Null for every other status, including a
+    /// EGPF from Tuesday" - set for <see cref="FlightStatus.Skipped"/>, <see cref="FlightStatus.Cancelled"/>
+    /// and <see cref="FlightStatus.Suspended"/> flights. Null for every other status, including a
     /// normal Completed flight. See docs/PLAN.md "Conflicts must be explained in words".
     /// </summary>
     public string? UnflyableReason { get; set; }

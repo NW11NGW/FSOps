@@ -528,14 +528,24 @@ public sealed class FlightLifecycleService : IHostedService
             // airframe hours and any resulting A/C-check must still be applied even if, say, the
             // route was deleted mid-flight and the ticket revenue posting below has to skip.
             var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId);
+
+            // Resolved regardless of whether airline lookup succeeds below - a flight's pilot
+            // accrues the hours they flew either way, same as the airframe does in the fallback
+            // branch (see docs/PLAN.md "Known gap - pilot hours never accrue from player flights").
+            var pilot = await db.Pilots.FirstOrDefaultAsync(p => p.Id == flight.PilotId);
+
             if (airline is not null)
             {
                 MaintenancePoster.PostFlightHours(
-                    db, fleetAircraft, airline, _economyConfigCatalog.Get(airline.Playstyle), flightHours, completionUtc);
+                    db, fleetAircraft, pilot, airline, _economyConfigCatalog.Get(airline.Playstyle), flightHours, completionUtc);
             }
             else
             {
                 fleetAircraft.AirframeHours += flightHours;
+                if (pilot is not null)
+                {
+                    pilot.HoursFlown += flightHours;
+                }
             }
 
             // The persisted fuel asset the NEXT flight (or this aircraft's return leg) starts

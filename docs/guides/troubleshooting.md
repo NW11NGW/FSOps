@@ -13,8 +13,15 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [Strategy profile figures won't load](#strategy-profile-figures-wont-load)
 - [My fare or revenue numbers look different than yesterday](#my-fare-or-revenue-numbers-look-different-than-yesterday)
 - [An aircraft is grounded for maintenance](#an-aircraft-is-grounded-for-maintenance)
+- [An aircraft can't be flown because it isn't reserved](#an-aircraft-cant-be-flown-because-it-isnt-reserved)
+- [A restored save had an aircraft's reservation released](#a-restored-save-had-an-aircrafts-reservation-released)
+- [Selling, ending a lease, or settling a loan was refused because the figure changed](#selling-ending-a-lease-or-settling-a-loan-was-refused-because-the-figure-changed)
 - [A larger-than-usual charge appeared after leaving FSOps closed](#a-larger-than-usual-charge-appeared-after-leaving-fsops-closed)
 - [A loan's interest rate is higher than I expected](#a-loans-interest-rate-is-higher-than-i-expected)
+- [A starting loan was refused at founding](#a-starting-loan-was-refused-at-founding)
+- [A virtual pilot's flight was skipped, cancelled or suspended instead of flown](#a-virtual-pilots-flight-was-skipped-cancelled-or-suspended-instead-of-flown)
+- [A virtual pilot's aircraft isn't where I expected it](#a-virtual-pilots-aircraft-isnt-where-i-expected-it)
+- [I can't release a pilot](#i-cant-release-a-pilot)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
@@ -109,15 +116,39 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Cause:** Every aircraft needs an A-check every 500 flight hours and a C-check every 4,000 (see [Maintenance](user-guide.md#maintenance) in the user guide). A check due grounds the aircraft for a stated period — a few hours to a day under Casual, up to a fortnight for a True-life C-check — while it's serviced. This is expected behaviour, not a bug; a used aircraft (bought at a discount, already worn) reaches its first check sooner than a fresh airframe would.
 
-**Solution:** Wait it out — the aircraft is released automatically the moment its downtime elapses, no action needed, and the exact return time is always shown. If you need to keep flying that route in the meantime, use a different aircraft in your fleet if you have one, or add another from the Fleet page.
+**Solution:** Wait it out — the aircraft is released automatically the moment its downtime elapses, no action needed, and the exact return time is always shown. If you need to keep flying that route in the meantime, use a different aircraft in your fleet if you have one, or add another from the Fleet page. A "perform maintenance now" from the Fleet page can also bring a check forward on your own schedule instead of waiting for it to fall due naturally — see [Maintenance](user-guide.md#maintenance).
+
+## An aircraft can't be flown because it isn't reserved
+
+**Symptom:** On the Fly screen, an aircraft that's clearly sitting at the right airport still shows as not flyable, with the reason "Not reserved to you - reserve it from the Fleet page to fly it." — or the aircraft doesn't show up as an option in the flight brief at all beyond a disabled, greyed-out chip.
+
+**Cause:** This is expected, and it's the whole point of aircraft reservation (see [Reserving an aircraft for yourself](user-guide.md#reserving-an-aircraft-for-yourself)). Reservation is now a hard rule, not a hint — you can only fly an aircraft that's currently reserved to you, regardless of where it's parked or whether a virtual pilot happens to be using it. An aircraft you've released to virtual pilots is simply off-limits to you until you reserve it again.
+
+**Solution:** Go to the Fleet page and toggle that aircraft's reservation back to **reserved for you**. If it's currently on a virtual pilot's standing schedule, FSOps tells you which pilot and which legs before it lets you reserve it, and offers to clear them for you — do that, or edit the pilot's schedule yourself first if you'd rather keep those legs and use a different aircraft for this flight instead.
+
+## A restored save had an aircraft's reservation released
+
+**Symptom:** After restoring an older backup of your `%LOCALAPPDATA%\FSOps\` folder (see [Where your data lives](user-guide.md#where-your-data-lives)) and starting FSOps, an aircraft you're sure you had reserved for yourself now shows as released, or a route you expect to be able to fly shows "Not reserved to you" instead.
+
+**Cause:** Aircraft reservation used to be a soft preference, with nothing stopping an aircraft from ending up both marked reserved for you *and* scheduled onto a virtual pilot's standing schedule at the same time. Now that reservation is a hard, mutually exclusive rule, FSOps checks for exactly this contradiction once on every startup and resolves it automatically in favour of the schedule: if an aircraft is both reserved and has active scheduled legs, its **reservation is released** and its **schedule is kept untouched** — the reasoning being that a saved weekly schedule represents many deliberate decisions, while a reservation flag is one click and easy to have drifted under the old rules. This can only affect a save that predates aircraft reservation becoming a hard rule; a save created since then can never develop this contradiction in the first place.
+
+**Solution:** Nothing is broken and nothing needs undoing — the schedule the aircraft was already flying is exactly as it was. If you'd rather keep that aircraft for yourself, reserve it again from the Fleet page; FSOps will walk you through clearing the conflicting legs if you confirm. If this happened on an airline with more than one aircraft and it left you with **no** reserved aircraft at all, FSOps automatically reserves a different aircraft that has no scheduled legs of its own (preferring one at your home base) rather than leave you with nothing to fly — check the Fleet page to see which one, and reserve a different one yourself if you'd prefer.
+
+## Selling, ending a lease, or settling a loan was refused because the figure changed
+
+**Symptom:** Confirming a sale, an early lease return, or a loan payoff shows an error like "The sale value has changed since you last checked (was X, now Y) - please confirm the new figure." instead of completing the action.
+
+**Cause:** This is a safety feature working as intended, not an error. Every one of these three actions shows you a firm figure before you confirm it, then recomputes that exact figure again at the moment you actually click confirm and checks it matches what you were shown. If it's genuinely moved in between — most often because a virtual pilot's flight or the monthly billing cycle posted something in the background while your confirmation dialog was open — FSOps refuses to charge you a different number than the one on screen, rather than silently posting whatever the figure has become.
+
+**Solution:** Just try the action again. The dialog will show you the fresh figure, and confirming that one will go through normally (unless, of course, it drifts again in the same way).
 
 ## A larger-than-usual charge appeared after leaving FSOps closed
 
-**Symptom:** Opening FSOps after a break shows a bigger drop in cash balance than a single month's lease/insurance/salary would explain, or several lease/insurance/salary lines with the same or nearby dates in the ledger.
+**Symptom:** Opening FSOps after a break shows a bigger change in cash balance than you expected — more than a single month's lease/insurance/salary would explain, several lease/insurance/salary lines with the same or nearby dates in the ledger, or a batch of virtual-pilot flights all dated across the time you were away.
 
-**Cause:** This is expected. Lease payments, salaries, insurance and loan repayments post automatically every 30 days of real-world wall-clock time (see [The monthly billing cycle](user-guide.md#the-monthly-billing-cycle)), whether or not FSOps is running. If FSOps was closed for, say, 90 days, the next time it starts it catches up on all three months' worth of charges at once rather than skipping the time that was missed — that catch-up is capped at 24 periods (about two years) per pass, so an extremely long gap catches up over a few passes a minute apart rather than in one burst, but you'll still see it land as a lump rather than trickling in.
+**Cause:** This is expected, and it's two separate things landing at once. Lease payments, salaries, insurance and loan repayments post automatically every 30 days of real-world wall-clock time (see [The monthly billing cycle](user-guide.md#the-monthly-billing-cycle)); separately, every virtual pilot's scheduled flights resolve against the real-world clock too (see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away)). Neither waits for FSOps to be running. If FSOps was closed for, say, 90 days, the next time it starts it catches up on all three months' worth of billing *and* every flight any pilot was scheduled to fly in that window, all at once, rather than skipping the time that was missed — each catch-up is capped per pass (billing: 24 periods, about two years; virtual flights: 500 occurrences, looking about 400 days ahead), so an extremely long gap catches up over a few passes a minute apart rather than in one burst, but you'll still see it land as a lump rather than trickling in.
 
-**Solution:** Nothing to fix — check your airline's ledger (or the log files) for the dated lines to confirm they line up with the length of the gap. This can't be avoided by changing your system clock either: the billing cycle only ever counts genuinely elapsed wall-clock time.
+**Solution:** Nothing to fix — check your airline's ledger and flight history (or the log files) for the dated lines to confirm they line up with the length of the gap. This can't be avoided by changing your system clock either: both catch-up processes only ever count genuinely elapsed wall-clock time.
 
 ## A loan's interest rate is higher than I expected
 
@@ -126,6 +157,38 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 **Cause:** The rate is never something you choose — it's computed automatically from how much of your airline's trailing 30-day net operating cash flow the loan's monthly payment would consume, scaling from your playstyle's base rate up to its cap the more of that capacity it uses (see [Buying, leasing and financing aircraft](user-guide.md#buying-leasing-and-financing-aircraft)). A **brand-new airline has no trading history yet — its cash flow is exactly zero at the moment it's founded — so a startup loan is always priced at the cap.** That's the correct price for an unproven borrower, not a bug.
 
 **Solution:** Nothing to fix for a startup loan; it's always at the cap by design. For a loan taken later in the Fleet page, the rate falls as your airline's trailing cash flow grows from flying — if you want a lower rate, build up a few weeks of profitable flying first, or ask for a smaller amount or a longer term, both of which lower the payment relative to your capacity.
+
+## A starting loan was refused at founding
+
+**Symptom:** In the airline setup wizard's review step, requesting a startup loan shows an error like "A starting loan of X exceeds the maximum Y allowed for a new Casual airline" instead of letting you proceed.
+
+**Cause:** A startup loan (taken while founding your airline, before any trading history exists) is capped at a flat figure per playstyle — **£250,000 for Casual, £5,000,000 for True-life** — separate from the cash-flow-based cap that applies to a loan taken later from the Fleet page. A brand-new airline has no ledger yet, so its trailing cash flow is exactly zero, which is why a flat ceiling is used here instead: without it, the wizard could hand a new player a loan priced at the rate cap with a monthly payment far beyond what a solo airline can actually earn. The wizard's own loan option is off by default and starts at zero for exactly this reason — you have to deliberately opt in and choose an amount.
+
+**Solution:** Lower the requested amount to within your playstyle's cap, or found the airline without a startup loan and take one later from the Fleet page once you have some trading history — at that point the cap is based on your actual cash flow rather than a flat figure, and can grow well beyond the starting cap as your airline earns.
+
+## A virtual pilot's flight was skipped, cancelled or suspended instead of flown
+
+**Symptom:** A virtual pilot's flight history shows a leg marked **Skipped**, **Cancelled**, or **Suspended** rather than completed, sometimes with a cancellation fee posted to the ledger.
+
+**Cause:** A scheduled occurrence only flies if the aircraft assigned to it is actually available and at the right airport when its departure time arrives — see [The wall-clock economy](../guides/user-guide.md#the-wall-clock-economy-flying-while-youre-away). If it's mid-flight, or sitting at a different airport (most often because an earlier leg in the chain didn't land where the schedule expected), FSOps records the occurrence rather than silently dropping it or teleporting the aircraft, and what happens next depends on your playstyle: **Casual** records it as **Skipped** with no charge; **True-life** records it as **Cancelled** with a real cancellation fee, since a badly-planned schedule should genuinely cost something under that playstyle. If the reason is specifically that the aircraft is **in maintenance**, it's recorded as **Suspended** instead, under either playstyle — no cancellation fee, since the aircraft needing a check isn't a mistake in the schedule, and the occurrence resumes on its own the next time it's due once the aircraft is released.
+
+**Solution:** Check the flight record for the specific reason (it names the aircraft and where it actually is, or which check it's waiting on). For a **Skipped** or **Cancelled** occurrence, this usually means the pilot's weekly schedule has a gap — a leg that assumes the aircraft is somewhere it won't actually be that day, most often because a repositioning leg is missing from an earlier day. Adjust the schedule so each aircraft's chain of legs is geographically continuous. For a **Suspended** occurrence, there's nothing to fix — wait for the aircraft to come out of maintenance, or bring the check forward yourself with "Perform maintenance now" on the Fleet page if you'd rather control when the downtime lands.
+
+## A virtual pilot's aircraft isn't where I expected it
+
+**Symptom:** The Fleet page shows a virtual pilot's aircraft at a different airport than you expected, or a route you thought was flyable for that aircraft shows as not flyable.
+
+**Cause:** A completed virtual-pilot flight moves its aircraft's recorded location to wherever it actually landed, exactly the same rule as a player flight — see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is). If a pilot's schedule doesn't bring an aircraft back to where the next day's chain expects it to start, that next occurrence won't be flyable — see [above](#a-virtual-pilots-flight-was-skipped-or-cancelled-instead-of-flown).
+
+**Solution:** Check the aircraft's current location on the Fleet page against what the pilot's schedule assumes for each day, and adjust the schedule so a day's chain always starts from wherever the aircraft's previous chain actually left it.
+
+## I can't release a pilot
+
+**Symptom:** Selecting **Release** for a pilot on the Pilots page fails, or the release action isn't offered.
+
+**Cause:** A pilot can't be released while they're actually mid-flight (status **Flying**) — releasing them out from under an in-progress flight would leave that flight with no pilot to resolve against.
+
+**Solution:** Wait for their current flight to resolve (virtual pilots resolve automatically on the wall clock — see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away)), then release them.
 
 ## Where the database lives
 
@@ -180,13 +243,13 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 
 **Symptom:** A route you expect to be able to fly shows up under "Not flyable right now" on the Fly screen, with a reason like "No aircraft at {ICAO} — your fleet is currently at {other ICAO}."
 
-**Cause:** FSOps only lets you fly a route whose departure airport matches where one of your fleet aircraft is actually recorded as being (see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is)). A completed flight moves its aircraft to wherever it actually landed, so this is expected the first time you look at a fresh airline (your only aircraft is still sitting at your home base, so only routes leaving from there show as flyable) or any time your aircraft is genuinely elsewhere — mid-flight, in maintenance, or sitting at an airport you haven't flown a route back from yet.
+**Cause:** FSOps only lets you fly a route whose departure airport matches where one of your fleet aircraft is actually recorded as being (see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is)), **and** that aircraft must be reserved to you (see [An aircraft can't be flown because it isn't reserved](#an-aircraft-cant-be-flown-because-it-isnt-reserved) above). A completed flight moves its aircraft to wherever it actually landed, so this is expected the first time you look at a fresh airline (your only aircraft is still sitting at your home base, so only routes leaving from there show as flyable) or any time your aircraft is genuinely elsewhere — mid-flight, in maintenance, sitting at an airport you haven't flown a route back from yet, or released to virtual pilots rather than reserved to you.
 
 **Solution:** Fly a route departing from wherever your aircraft actually is. If you expect a route to be flyable because you believe your aircraft already landed at its departure airport, but it still isn't showing up, that points to something worth reporting rather than normal behaviour — check the [log files](#where-to-find-log-files) for what actually happened at the end of that earlier flight (for example, whether it completed normally or was abandoned, since an abandoned flight leaves the aircraft where it was rather than moving it).
 
 ## Where to find log files
 
-FSOps writes log output to a `logs/` folder inside the application's working directory (the folder you ran `dotnet run --project src/FSOps.Server` from, typically the repository root). Each run writes to a log file there — check the most recent one for errors around the time your issue occurred.
+FSOps writes log output to `%LOCALAPPDATA%\FSOps\logs\` — the same data directory the database lives in (see [Where the database lives](#where-the-database-lives)), not a folder relative to wherever you happen to run FSOps from. Each run writes to a dated log file there — check the most recent one for errors around the time your issue occurred.
 
 ## How to report a problem
 

@@ -93,9 +93,15 @@ public class MaintenanceTriggerTests
 
         var option = Assert.Single(options);
         Assert.False(option.IsFlyable);
-        Assert.NotNull(option.Reason);
-        Assert.Contains("maintenance", option.Reason, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("until", option.Reason, StringComparison.OrdinalIgnoreCase);
+        // The route-level reason is only set when NO aircraft is present at the departure airport
+        // at all - with the fleet's one aircraft physically there but grounded, the reason lives
+        // per-aircraft under aircraftOptions (see docs/PLAN.md "2b"/"3a" - the Fly screen now lists
+        // every aircraft present, never just one, each with its own reason).
+        var aircraftOption = Assert.Single(option.AircraftOptions);
+        Assert.False(aircraftOption.IsFlyable);
+        Assert.NotNull(aircraftOption.Reason);
+        Assert.Contains("maintenance", aircraftOption.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("until", aircraftOption.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -127,7 +133,9 @@ public class MaintenanceTriggerTests
         return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
-    private sealed record FlightOptionProbe(bool IsFlyable, string? Reason);
+    private sealed record FlightOptionProbe(bool IsFlyable, string? Reason, List<AircraftOptionProbe> AircraftOptions);
+
+    private sealed record AircraftOptionProbe(bool IsFlyable, string? Reason);
 
     private static async Task<Route> SeedRouteAsync(RouteTestContext ctx)
     {

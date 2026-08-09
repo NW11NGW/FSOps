@@ -1,12 +1,12 @@
 import { Banknote, Clock, Coins, ListChecks } from 'lucide-react'
 
-import type { DraftEntry } from './draftEntry'
+import type { DraftWeek } from './draftEntry'
 import { StatTile } from '@/components/shared/StatTile'
 import { useSettings } from '@/hooks/useSettings'
 import type { PilotSummary } from '@/types/pilot'
 
 interface WeeklySummaryProps {
-  draft: DraftEntry[]
+  week: DraftWeek
   pilot: PilotSummary
   /** True when the on-screen draft differs from what was last saved - the revenue/cost figures
    *  below come from the *saved* schedule, so this caveats them rather than implying they already
@@ -18,11 +18,12 @@ interface WeeklySummaryProps {
  *  and hours are computed live from the on-screen draft (always accurate); revenue and cost are
  *  the backend's own projection for the last *saved* schedule, shown only when it has supplied
  *  one - the API contract allows these to be absent in the first cut. */
-export function WeeklySummary({ draft, pilot, isDirty }: WeeklySummaryProps) {
+export function WeeklySummary({ week, pilot, isDirty }: WeeklySummaryProps) {
   const { fmt } = useSettings()
 
-  const sectors = draft.length
-  const hours = draft.reduce((sum, entry) => sum + entry.blockMinutes, 0) / 60
+  const days = Object.values(week).filter((d): d is NonNullable<typeof d> => Boolean(d))
+  const sectors = days.reduce((sum, day) => sum + day.legs.length, 0)
+  const hours = days.reduce((sum, day) => sum + day.legs.reduce((legSum, leg) => legSum + leg.blockMinutes, 0), 0) / 60
 
   const hasRevenue = pilot.weeklyEstimatedRevenue != null
   const hasCost = pilot.weeklyEstimatedCost != null

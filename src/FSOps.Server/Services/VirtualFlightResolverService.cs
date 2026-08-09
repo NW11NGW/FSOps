@@ -132,14 +132,14 @@ public sealed class VirtualFlightResolverService : BackgroundService
                     "System clock appears to have moved backwards for virtual-flight resolution: last resolved {LastResolved:o}, observed {Now:o}. " +
                     "Ignoring this tick - nothing is resolved and the watermark never moves backwards.",
                     lastResolved, now);
-                return new VirtualFlightResolutionResult(0, 0, 0, 0, ClockMovedBackwards: true, MoreCatchUpRemaining: false, lastResolved);
+                return new VirtualFlightResolutionResult(0, 0, 0, 0, 0, ClockMovedBackwards: true, MoreCatchUpRemaining: false, lastResolved);
             }
 
             var windowEnd = lastResolved.AddDays(MaxLookaheadDays);
             var cutoff = now < windowEnd ? now : windowEnd;
             if (cutoff <= lastResolved)
             {
-                return new VirtualFlightResolutionResult(0, 0, 0, 0, false, true, lastResolved);
+                return new VirtualFlightResolutionResult(0, 0, 0, 0, 0, false, true, lastResolved);
             }
 
             var context = await LoadContextAsync(db, _economyConfigCatalog, ct);
@@ -150,6 +150,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
             var completed = 0;
             var skipped = 0;
             var cancelled = 0;
+            var suspended = 0;
 
             foreach (var occurrence in toProcess)
             {
@@ -164,6 +165,9 @@ public sealed class VirtualFlightResolverService : BackgroundService
                         break;
                     case VirtualOccurrenceOutcome.Cancelled:
                         cancelled++;
+                        break;
+                    case VirtualOccurrenceOutcome.Suspended:
+                        suspended++;
                         break;
                 }
 
@@ -188,12 +192,12 @@ public sealed class VirtualFlightResolverService : BackgroundService
             if (toProcess.Count > 0)
             {
                 _logger.LogInformation(
-                    "Virtual-flight resolution processed {Count} occurrence(s) ({Completed} completed, {Skipped} skipped, {Cancelled} cancelled); now caught up to {LastResolved:o}.{More}",
-                    toProcess.Count, completed, skipped, cancelled, state.LastScheduleResolvedUtc,
+                    "Virtual-flight resolution processed {Count} occurrence(s) ({Completed} completed, {Skipped} skipped, {Cancelled} cancelled, {Suspended} suspended); now caught up to {LastResolved:o}.{More}",
+                    toProcess.Count, completed, skipped, cancelled, suspended, state.LastScheduleResolvedUtc,
                     moreCatchUpRemaining ? " More catch-up remains for the next pass." : string.Empty);
             }
 
-            return new VirtualFlightResolutionResult(toProcess.Count, completed, skipped, cancelled, false, moreCatchUpRemaining, state.LastScheduleResolvedUtc);
+            return new VirtualFlightResolutionResult(toProcess.Count, completed, skipped, cancelled, suspended, false, moreCatchUpRemaining, state.LastScheduleResolvedUtc);
         }
         finally
         {
@@ -314,9 +318,21 @@ public sealed class VirtualFlightResolverService : BackgroundService
 
         if (aircraft.Status == FleetAircraftStatus.InMaintenance)
         {
-            unflyableReason = aircraft.GroundedUntilUtc is { } until
+            var reason = aircraft.GroundedUntilUtc is { } until
                 ? $"{aircraft.Registration} is in maintenance until {until:yyyy-MM-dd HH:mm} UTC."
                 : $"{aircraft.Registration} is in maintenance.";
+
+            // Scoped to exactly this case - a schedule the player built badly (wrong location,
+            // aircraft already flying) still skips/cancels normally below; only maintenance the
+            // simulation imposed is eligible for suspension. See PilotSchedule.AutoSuspendOnMaintenance's
+            // own doc and docs/PLAN.md "A schedule option: suspend during maintenance and resume
+            // automatically".
+            if (occurrence.Schedule.AutoSuspendOnMaintenance)
+            {
+                return await ResolveSuspendedAsync(db, occurrence, reason, resolvedAtUtc, ct);
+            }
+
+            unflyableReason = reason;
         }
         else if (aircraft.Status == FleetAircraftStatus.InFlight)
         {
@@ -333,6 +349,47 @@ public sealed class VirtualFlightResolverService : BackgroundService
         }
 
         return await ResolveFlownAsync(db, occurrence, economyConfig, context.WorldSeed, resolvedAtUtc, ct);
+    }
+
+    /// <summary>
+    /// Records a maintenance-suspended occurrence: same shape as <see cref="ResolveUnflyableAsync"/>'s
+    /// Skipped case (a Flight row for history, no ledger line at all) but tagged
+    /// <see cref="FlightStatus.Suspended"/> rather than Skipped or Cancelled, so the UI can tell
+    /// "the schedule paused itself for a check" apart from "this occurrence genuinely couldn't fly".
+    /// No fee under any playstyle - see PilotSchedule.AutoSuspendOnMaintenance's doc for why a
+    /// cancellation fee would be the wrong signal here. Resumption needs no code of its own: the
+    /// very next occurrence for this schedule simply re-evaluates the aircraft's status again, and
+    /// once <see cref="MaintenanceReleaser"/> (or this service's own lazy release a few lines up)
+    /// has cleared the grounding, it resolves normally.
+    /// </summary>
+    private static async Task<VirtualOccurrenceOutcome> ResolveSuspendedAsync(
+        FsOpsDbContext db, PendingOccurrence occurrence, string reason, DateTimeOffset resolvedAtUtc, CancellationToken ct)
+    {
+        var flight = new Flight
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = occurrence.Airline.Id,
+            RouteId = occurrence.Route.Id,
+            ScheduleId = occurrence.Entry.Id,
+            FleetAircraftId = occurrence.Aircraft.Id,
+            PilotId = occurrence.Pilot.Id,
+            Status = FlightStatus.Suspended,
+            PlannedDepartureUtc = occurrence.Departure,
+            PlannedBlockMinutes = occurrence.BlockMinutes,
+            PaxBooked = 0,
+            PaxFlown = 0,
+            TitleFlown = string.Empty,
+            Revenue = 0m,
+            TotalCost = 0m,
+            RevenuePosted = true,
+            UnflyableReason = $"Schedule suspended - {reason}",
+            CreatedUtc = resolvedAtUtc,
+        };
+
+        db.Flights.Add(flight);
+
+        await Task.CompletedTask;
+        return VirtualOccurrenceOutcome.Suspended;
     }
 
     private static async Task<VirtualOccurrenceOutcome> ResolveUnflyableAsync(
@@ -450,8 +507,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
         // Full economic citizen: advances airframe hours, wears condition, and can trigger
         // maintenance exactly like a player's flight - see MaintenancePoster. A check triggered here
         // grounds the aircraft, which the NEXT occurrence's flyability check picks up naturally.
-        MaintenancePoster.PostFlightHours(db, aircraft, airline, economyConfig, flightHours, actualArrival);
-        occurrence.Pilot.HoursFlown += flightHours;
+        MaintenancePoster.PostFlightHours(db, aircraft, occurrence.Pilot, airline, economyConfig, flightHours, actualArrival);
 
         // No telemetry means no reliable in-flight fuel reading - same conservative "treat as
         // consumed" convention as FlightEndpoints.CompleteManualAsync uses for its own no-telemetry
@@ -505,6 +561,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
         Completed,
         Skipped,
         Cancelled,
+        Suspended,
     }
 }
 
@@ -515,10 +572,11 @@ public sealed record VirtualFlightResolutionResult(
     int FlightsCompleted,
     int FlightsSkipped,
     int FlightsCancelled,
+    int FlightsSuspended,
     bool ClockMovedBackwards,
     bool MoreCatchUpRemaining,
     DateTimeOffset? LastScheduleResolvedUtc)
 {
     public static VirtualFlightResolutionResult Empty(DateTimeOffset? lastScheduleResolvedUtc) =>
-        new(0, 0, 0, 0, false, false, lastScheduleResolvedUtc);
+        new(0, 0, 0, 0, 0, false, false, lastScheduleResolvedUtc);
 }

@@ -18,8 +18,8 @@ export function PilotScheduleDialog({ pilot, onOpenChange, onSaved }: PilotSched
         <DialogHeader>
           <DialogTitle>{pilot ? `${pilot.name}'s weekly schedule` : 'Weekly schedule'}</DialogTitle>
           <DialogDescription>
-            Build a standing weekly rotation - it repeats every week until you change it. Drag routes onto the
-            grid or use the day's add button.
+            Build a standing weekly rotation - it repeats every week until you change it. Pick an aircraft for
+            each day, then add the legs it can fly.
           </DialogDescription>
         </DialogHeader>
         {pilot && <ScheduleBuilder pilot={pilot} onSaved={onSaved} />}

@@ -25,6 +25,26 @@ public class PilotSchedule
     /// informational, shown in the UI as "last edited".</summary>
     public DateTimeOffset? UpdatedUtc { get; set; }
 
+    /// <summary>
+    /// When true (the default), an occurrence on this schedule whose aircraft is grounded for a
+    /// maintenance check is recorded as <see cref="FlightStatus.Suspended"/> instead of being
+    /// skipped or cancelled - no ledger line, and the schedule simply resumes on its own once the
+    /// aircraft comes out of maintenance. See docs/PLAN.md "A schedule option: suspend during
+    /// maintenance and resume automatically" - without this, a 14-day True-life C-check against a
+    /// daily schedule would charge fourteen cancellation fees for something the player could not
+    /// have avoided. Defaulted ON (see PilotScheduleConfiguration's explicit
+    /// <c>HasDefaultValue(true)</c> - a plain EF-scaffolded bool default would otherwise land on
+    /// false, silently reintroducing the fourteen-fee bug for every existing schedule).
+    /// <para>
+    /// Deliberately scoped to the maintenance-grounded case only: an occurrence that can't fly
+    /// because the aircraft is still away from an earlier leg, or already airborne, is a scheduling
+    /// problem the player caused and still skips/cancels normally either way - "the distinction
+    /// that matters: a cancellation fee is for a schedule the player built badly, not for
+    /// maintenance the simulation imposed" (docs/PLAN.md, same section).
+    /// </para>
+    /// </summary>
+    public bool AutoSuspendOnMaintenance { get; set; } = true;
+
     public DateTimeOffset? DeletedUtc { get; set; }
 }
 

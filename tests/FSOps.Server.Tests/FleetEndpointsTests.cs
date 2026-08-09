@@ -473,5 +473,128 @@ public class FleetEndpointsTests
         Assert.True(secondLoanAfter.AnnualInterestRate > firstLoanAfter.AnnualInterestRate);
     }
 
+    /// <summary>docs/PLAN.md "3a" - reserving an airframe a pilot is already scheduled to fly is
+    /// refused, naming the offending legs, rather than silently orphaning the schedule.</summary>
+    [Fact]
+    public async Task SetReservation_ReservingAnAircraftWithScheduledLegs_IsRefused_NamingTheLegs()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync();
+        aircraft.ReservedForPlayer = false; // schedulable
+        await ctx.Db.SaveChangesAsync();
+
+        var pilotResult = await PilotEndpoints.HireAsync(new HirePilotRequest("FO Reservation"), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var pilot = await ctx.Db.Pilots.SingleAsync(p => p.AirlineId == ctx.Airline.Id && !p.IsPlayer);
+
+        var outbound = new Route
+        {
+            Id = Guid.NewGuid(), AirlineId = ctx.Airline.Id, DepartureIcao = "EGGD", ArrivalIcao = "EGPH",
+            DistanceNm = 275.2, BaseFare = 89.00m, IsActive = true, CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        var inbound = new Route
+        {
+            Id = Guid.NewGuid(), AirlineId = ctx.Airline.Id, DepartureIcao = "EGPH", ArrivalIcao = "EGGD",
+            DistanceNm = 275.2, BaseFare = 89.00m, IsActive = true, CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.Routes.AddRange(outbound, inbound);
+        await ctx.Db.SaveChangesAsync();
+
+        var saveResult = await PilotEndpoints.SaveScheduleAsync(
+            pilot.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(0, aircraft.Id, new[]
+                {
+                    new DutyLegRequest("06:00:00", outbound.Id),
+                    new DutyLegRequest("08:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(saveResult));
+        _ = pilotResult;
+
+        var reserveResult = await FleetEndpoints.SetReservationAsync(
+            aircraft.Id, new SetReservationRequest(true), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status409Conflict, StatusCodeOf(reserveResult));
+
+        // Refused, so nothing changed - the aircraft is still schedulable and its legs still exist.
+        var reloaded = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraft.Id);
+        Assert.False(reloaded.ReservedForPlayer);
+        Assert.Equal(2, await ctx.Db.PilotScheduleEntries.CountAsync());
+    }
+
+    /// <summary>The explicit escape hatch - forceClearSchedule clears the offending legs and then
+    /// reserves the aircraft, echoing back what was cleared so the consequence is stated plainly.</summary>
+    [Fact]
+    public async Task SetReservation_ForceClear_ClearsTheLegsAndReserves()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync();
+        aircraft.ReservedForPlayer = false;
+        await ctx.Db.SaveChangesAsync();
+
+        await PilotEndpoints.HireAsync(new HirePilotRequest("FO ForceClear"), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var pilot = await ctx.Db.Pilots.SingleAsync(p => p.AirlineId == ctx.Airline.Id && !p.IsPlayer);
+
+        var outbound = new Route
+        {
+            Id = Guid.NewGuid(), AirlineId = ctx.Airline.Id, DepartureIcao = "EGGD", ArrivalIcao = "EGPH",
+            DistanceNm = 275.2, BaseFare = 89.00m, IsActive = true, CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        var inbound = new Route
+        {
+            Id = Guid.NewGuid(), AirlineId = ctx.Airline.Id, DepartureIcao = "EGPH", ArrivalIcao = "EGGD",
+            DistanceNm = 275.2, BaseFare = 89.00m, IsActive = true, CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.Routes.AddRange(outbound, inbound);
+        await ctx.Db.SaveChangesAsync();
+
+        await PilotEndpoints.SaveScheduleAsync(
+            pilot.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(0, aircraft.Id, new[]
+                {
+                    new DutyLegRequest("06:00:00", outbound.Id),
+                    new DutyLegRequest("08:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var reserveResult = await FleetEndpoints.SetReservationAsync(
+            aircraft.Id, new SetReservationRequest(true, ForceClearSchedule: true), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(reserveResult));
+
+        var reloaded = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraft.Id);
+        Assert.True(reloaded.ReservedForPlayer);
+
+        // The entries are soft-deleted, not hard-deleted - never destroy schedule history outright.
+        var liveEntries = await ctx.Db.PilotScheduleEntries.ToListAsync();
+        Assert.Empty(liveEntries); // excluded by the query filter once DeletedUtc is set
+    }
+
+    /// <summary>Releasing (reserved -> not reserved) never has legs to worry about - a reserved
+    /// aircraft was never offered to the scheduler in the first place - so it must always succeed
+    /// immediately with no clearing needed.</summary>
+    [Fact]
+    public async Task SetReservation_Releasing_NeverBlockedByLegs()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync();
+        aircraft.ReservedForPlayer = true;
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await FleetEndpoints.SetReservationAsync(
+            aircraft.Id, new SetReservationRequest(false), ctx.Db, ctx.CurrentUser, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+        var reloaded = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraft.Id);
+        Assert.False(reloaded.ReservedForPlayer);
+    }
+
     private static int StatusCodeOf(IResult result) => ((IStatusCodeHttpResult)result).StatusCode ?? 0;
 }

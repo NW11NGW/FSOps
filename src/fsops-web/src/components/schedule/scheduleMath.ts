@@ -1,4 +1,4 @@
-import type { DraftEntry } from './draftEntry'
+import type { DraftDay, DraftLeg, DraftWeek } from './draftEntry'
 import { MIN_BLOCK_PX, PX_PER_MIN, TIGHT_TURNAROUND_MINUTES } from './types'
 import { timeToMinutes } from '@/types/schedule'
 import type { DayOfWeek } from '@/types/schedule'
@@ -17,28 +17,31 @@ function zipConsecutive<T>(items: T[]): [T, T][] {
   return pairs
 }
 
-/** One rendered block for an entry that departs on this day - top/height are pixel offsets
- *  within the day column. `overflowMinutes` is how much of the leg spills past midnight into the
- *  next day's column (0 for the common case of a leg that lands the same day it departs). */
+/** One rendered block for a leg that departs on this day - top/height are pixel offsets within
+ *  the day column. `overflowMinutes` is how much of the leg spills past midnight into the next
+ *  day's column (0 for the common case of a leg that lands the same day it departs). */
 export interface PositionedBlock {
-  entry: DraftEntry
+  entry: DraftLeg
   top: number
   height: number
   overflowMinutes: number
-  /** True if this block's time range overlaps another entry on the same day - rendered as a
-   *  clear, unmissable conflict rather than one block silently hiding behind another. */
+  /** True if this block's time range overlaps another leg on the same duty day - rendered as a
+   *  clear, unmissable conflict rather than one block silently hiding behind another. Since a
+   *  duty day carries exactly one aircraft, any overlap here is a genuine double-booking, not an
+   *  artifact of two different airframes sharing a column. */
   overlapping: boolean
 }
 
 /** A continuation strip at the top of a day column for a leg that departed the previous day and
  *  is still "in the air" (gate-to-gate) past midnight. */
 export interface SpilloverBlock {
-  entry: DraftEntry
+  entry: DraftLeg
   height: number
 }
 
-/** The gap between two consecutive legs on the same day, purely for the "is this day
- *  over-stuffed" visual - see TIGHT_TURNAROUND_MINUTES. */
+/** The gap between two consecutive legs on the SAME duty day - always the same airframe, since a
+ *  day carries exactly one aircraft (docs/PLAN.md "2a"). Purely for the "is this day over-stuffed"
+ *  visual - see TIGHT_TURNAROUND_MINUTES. */
 export interface TurnaroundGap {
   top: number
   height: number
@@ -47,30 +50,32 @@ export interface TurnaroundGap {
 }
 
 export interface DayLayout {
+  fleetAircraftId: string | null
+  registration: string | null
   blocks: PositionedBlock[]
   spillovers: SpilloverBlock[]
   gaps: TurnaroundGap[]
 }
 
-/** Lays out every entry departing on `day`, plus any spillover from `day - 1`, into pixel
- *  positions the grid can render directly. Pure and side-effect free so it can run on every
- *  render without memoisation worries at the entry counts this feature deals with. */
-export function layoutDay(day: DayOfWeek, allEntries: DraftEntry[]): DayLayout {
+/** Lays out one day's legs, plus any spillover from the day before, into pixel positions the grid
+ *  can render directly. The turnaround gaps are computed purely from `day`'s own legs, which are
+ *  always the same airframe - there is no cross-aircraft gap to guard against. Pure and
+ *  side-effect free so it can run on every render without memoisation worries at the leg counts
+ *  this feature deals with. */
+export function layoutDay(day: DayOfWeek, week: DraftWeek): DayLayout {
   const previousDay = ((day + 6) % 7) as DayOfWeek
-  const todays = allEntries
-    .filter((e) => e.dayOfWeek === day)
-    .sort((a, b) => timeToMinutes(a.departureTimeUtc) - timeToMinutes(b.departureTimeUtc))
-  const previousDays = allEntries.filter((e) => e.dayOfWeek === previousDay)
+  const today: DraftDay | undefined = week[day]
+  const previous: DraftDay | undefined = week[previousDay]
 
-  const intervals = todays.map((entry) => {
+  const todaysLegs = today ? [...today.legs].sort((a, b) => timeToMinutes(a.departureTimeUtc) - timeToMinutes(b.departureTimeUtc)) : []
+
+  const intervals = todaysLegs.map((entry) => {
     const start = timeToMinutes(entry.departureTimeUtc)
     return { entry, start, end: start + entry.blockMinutes }
   })
 
   const blocks: PositionedBlock[] = intervals.map(({ entry, start, end }) => {
-    const overlapping = intervals.some(
-      (other) => other.entry.id !== entry.id && start < other.end && other.start < end,
-    )
+    const overlapping = intervals.some((other) => other.entry.id !== entry.id && start < other.end && other.start < end)
     const clippedEnd = Math.min(end, DAY_MINUTES)
     const rawHeight = (clippedEnd - start) * PX_PER_MIN
     return {
@@ -82,7 +87,7 @@ export function layoutDay(day: DayOfWeek, allEntries: DraftEntry[]): DayLayout {
     }
   })
 
-  const spillovers: SpilloverBlock[] = previousDays.flatMap((entry) => {
+  const spillovers: SpilloverBlock[] = (previous?.legs ?? []).flatMap((entry) => {
     const start = timeToMinutes(entry.departureTimeUtc)
     const overflow = Math.max(0, start + entry.blockMinutes - DAY_MINUTES)
     if (overflow <= 0) return []
@@ -101,7 +106,13 @@ export function layoutDay(day: DayOfWeek, allEntries: DraftEntry[]): DayLayout {
     })
   }
 
-  return { blocks, spillovers, gaps }
+  return {
+    fleetAircraftId: today?.fleetAircraftId ?? null,
+    registration: today?.registration ?? null,
+    blocks,
+    spillovers,
+    gaps,
+  }
 }
 
 /** Snaps a raw pixel offset within a day column to the nearest 5-minute mark, clamped to a valid
