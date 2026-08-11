@@ -23,10 +23,15 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # Node 24, matching the version this project is developed on. Not arbitrary: jsdom's bundled
+      # undici calls webidl.util.markAsUncloneable, which does not exist on Node 20, so the whole
+      # Vitest run dies at import with zero tests executed rather than failing a test. Keep this in
+      # step with the development Node — a CI that runs on a different runtime than anyone develops
+      # on tests something nobody ships.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: src/fsops-web/package-lock.json
 
