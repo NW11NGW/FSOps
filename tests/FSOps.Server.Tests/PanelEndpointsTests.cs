@@ -58,7 +58,7 @@ public sealed class PanelEndpointsTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
 
-        var result = await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        var result = await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None);
 
         var status = ValueOf<PanelOperationResult>(result);
         Assert.False(status.Installed);
@@ -80,7 +80,7 @@ public sealed class PanelEndpointsTests
         });
         await ctx.Db.SaveChangesAsync();
 
-        var before = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None));
+        var before = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None));
         Assert.False(before.Installed);
 
         var templateDirectory = Path.Combine(temp.Path, "template");
@@ -90,9 +90,82 @@ public sealed class PanelEndpointsTests
 
         PanelPackageInstaller.InstallOrRepair(community, templateDirectory, "5977");
 
-        var after = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, CancellationToken.None));
+        var after = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None));
         Assert.True(after.Installed);
         Assert.Equal("1.0.0", after.InstalledVersion);
+    }
+
+    [Fact]
+    public async Task GetStatus_WithAnExplicitPath_ReportsOnThatFolder_NotTheSavedOne()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        using var temp = new TempDirectory();
+
+        var saved = Path.Combine(temp.Path, "saved", "Community");
+        var other = Path.Combine(temp.Path, "other", "Community");
+        Directory.CreateDirectory(saved);
+        Directory.CreateDirectory(other);
+
+        ctx.Db.UserSettings.Add(new UserSettings
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ctx.CurrentUser.UserId,
+            CommunityFolderPath = saved,
+        });
+        await ctx.Db.SaveChangesAsync();
+
+        PanelPackageInstaller.InstallOrRepair(other, CreateTemplate(temp.Path), "5977");
+
+        // Saved folder has nothing; the explicitly-named one does. This is exactly the question
+        // Settings needs answered before it offers to move an install off an old folder.
+        var savedStatus = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None));
+        var otherStatus = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, other, CancellationToken.None));
+
+        Assert.False(savedStatus.Installed);
+        Assert.True(otherStatus.Installed);
+    }
+
+    [Fact]
+    public async Task GetStatus_WithAPathThatIsNotACommunityFolder_RefusesInsteadOfProbingIt()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        using var temp = new TempDirectory();
+
+        var result = await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, temp.Path, CancellationToken.None);
+
+        // Still a 200 - "that isn't a Community folder" is an answer to show the player, not a
+        // transport failure - but Success is false and it never looked at the folder's contents.
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+        var status = ValueOf<PanelOperationResult>(result);
+        Assert.False(status.Success);
+        Assert.NotNull(status.Reason);
+    }
+
+    [Fact]
+    public void Move_ReturnsBadRequest_AndKeepsTheOldInstall_WhenTheNewPathIsInvalid()
+    {
+        using var temp = new TempDirectory();
+        var community = Path.Combine(temp.Path, "Community");
+        Directory.CreateDirectory(community);
+        PanelPackageInstaller.InstallOrRepair(community, CreateTemplate(temp.Path), "5977");
+
+        var result = PanelEndpoints.MoveAsync(new MovePanelRequest(community, temp.Path));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
+        var value = ValueOf<PanelMoveResult>(result);
+        Assert.False(value.OldCopyRemoved);
+        Assert.True(File.Exists(Path.Combine(community, "fsops-panel", "manifest.json")));
+    }
+
+    /// <summary>Minimal stand-in for the shipped PanelTemplate folder, inside a throwaway temp dir.</summary>
+    private static string CreateTemplate(string root)
+    {
+        var templateDirectory = Path.Combine(root, "template");
+        var panelDir = Path.Combine(templateDirectory, "html_ui", "InGamePanels", "FSOpsPanel");
+        Directory.CreateDirectory(panelDir);
+        File.WriteAllText(Path.Combine(templateDirectory, "manifest.json"), "{\"title\":\"FSOps In-Game Panel\",\"package_version\":\"1.0.0\"}");
+        File.WriteAllText(Path.Combine(panelDir, "FSOpsPanel.config.js"), "window.FSOPS_PANEL_PORT = 5977;");
+        return templateDirectory;
     }
 
     [Fact]

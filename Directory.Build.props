@@ -11,4 +11,14 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <!-- The one place FSOps' version number is written down. AppVersion reads it back off the
+       assembly at runtime, and the health endpoint and heartbeat both display that - so this
+       property is what they all report. Leaving it unset is not neutral: MSBuild then emits an
+       informational version of "1.0.0", which is indistinguishable from a deliberate 1.0.0
+       release and would make the update checker believe the app is newer than every release
+       below it and go permanently silent. Bump this in step with the release tag. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
 </Project>

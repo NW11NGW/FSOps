@@ -9,7 +9,8 @@
   "manufacturer": "",
   "creator": "",
   "package_version": "1.0.0",
-  "minimum_game_version": "1.0.0",
+  "minimum_game_version": "1.7.35",
+  "minimum_compatibility_version": "7.26.0.214",
   "release_notes": {
     "neutral": {
       "LastUpdate": "",

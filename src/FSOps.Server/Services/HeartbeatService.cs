@@ -10,7 +10,9 @@ namespace FSOps.Server.Services;
 /// </summary>
 public sealed class HeartbeatService : BackgroundService
 {
-    private const string ServerVersion = "0.1.0";
+    // Resolved from the assembly rather than retyped, so the heartbeat, /api/v1/health and the
+    // update checker can never disagree about which build is running. See AppVersion.
+    private static readonly string ServerVersion = AppVersion.Current;
 
     private readonly IHubContext<LiveHub> _hub;
     private readonly SimTelemetryService _simTelemetry;

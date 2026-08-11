@@ -1,0 +1,89 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>FSOps.Desktop</RootNamespace>
+    <AssemblyName>FSOps.Desktop</AssemblyName>
+
+    <!-- x64 only, same reason as every other project here: the shell launches FSOps.Server, which
+         loads SimConnect's x64-only native DLL. Declaring the RID keeps "dotnet publish -r win-x64"
+         restoring the WebView2 native loader without extra command-line arguments. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+
+    <ApplicationIcon>fsops.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+
+    <!-- Ships roughly a dozen fewer localisation folders in the published output. No behavioural
+         change: the app has no localised resources of its own. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shell exposes nothing publicly - it is an executable, not a library - so the decision
+         logic worth testing (port planning, executable discovery, off-screen window rejection) is
+         internal by design and reached this way rather than by widening its surface. -->
+    <InternalsVisibleTo Include="FSOps.Desktop.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PrivateAssets: the shell is the only thing that renders, so nothing downstream needs
+         WebView2. Without this the package's targets flow into the test project and reintroduce
+         the same MSB3277 conflict removed below, in a project that never touches a web view. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- AppPaths only. The shell must never open the database or read world data - it is a window
+         and a process supervisor, nothing more - but it does need the same LocalAppData resolution
+         (and the same FSOPS_DATA_DIR override) so its WebView2 user-data folder and window state
+         land beside the database instead of next to a read-only Program Files executable. -->
+    <ProjectReference Include="..\FSOps.Core\FSOps.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The WebView2 package references its WinForms AND its WPF assembly unconditionally, and the
+       WPF one binds WindowsBase 5.0.0.0. This project is WinForms-only, so that arrives as an
+       MSB3277 assembly-version conflict against the WindowsBase facade in the .NET ref pack. The
+       alternatives are to switch UseWPF on (which drags the entire WPF framework into a
+       self-contained publish for an assembly never loaded) or to silence the warning (which hides
+       a real one later). Dropping the reference we do not use is the honest fix. -->
+  <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <_WebView2WpfReference Include="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+      <Reference Remove="@(_WebView2WpfReference)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The WebView2 package copies its native loader to runtimes\win-x64\native\WebView2Loader.dll
+       as plain content, which means it is NOT listed in the app's .deps.json and the runtime never
+       adds that folder to the native DLL search path. Framework-dependent builds survive this by
+       finding the loader in the NuGet cache; a self-contained publish on a machine with no .NET has
+       no such fallback, and CoreWebView2Environment throws
+       "Unable to load DLL 'WebView2Loader.dll' (0x8007007E)" before a window ever appears.
+
+       This was verified, not assumed: a published build without this target failed exactly that way
+       on the first launch from its own output folder. Copying the loader beside the executable puts
+       it in AppContext.BaseDirectory, which P/Invoke always probes. -->
+  <Target Name="CopyWebView2LoaderBesideApp" AfterTargets="Build">
+    <Copy SourceFiles="@(Content->WithMetadataValue('Filename', 'WebView2Loader'))"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyWebView2LoaderBesidePublishedApp" AfterTargets="Publish">
+    <Copy SourceFiles="@(Content->WithMetadataValue('Filename', 'WebView2Loader'))"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <!-- ApplicationIcon above only stamps the .exe's shell icon, which Windows exposes at a single
+         size. Embedding the same file lets the window load the full multi-resolution icon so the
+         taskbar, Alt+Tab and the title bar each pick the size they actually want. -->
+    <EmbeddedResource Include="fsops.ico" />
+  </ItemGroup>
+
+</Project>

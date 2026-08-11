@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom'
 
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
+import { UpdateNotice } from '@/components/layout/UpdateNotice'
 import { AwaySummaryDialog } from '@/components/maintenance/AwaySummaryDialog'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -20,6 +21,7 @@ export function AppShell() {
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar hubStatus={status} simConnected={heartbeat?.simConnected ?? false} airlineSummary={airlineSummary} />
+          <UpdateNotice />
           <main className="flex-1 overflow-y-auto scrollbar-thin">
             <div className="mx-auto w-full max-w-7xl px-6 py-6">
               <Outlet context={context} />

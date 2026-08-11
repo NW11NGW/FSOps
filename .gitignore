@@ -25,6 +25,16 @@ publish/
 *.user
 .vs/
 
+# Publish and installer output (scripts/publish.ps1, installer/). Both are large - a publish is
+# roughly 190 MB and an installer 60-100 MB - and both are regenerated from source on demand.
+artifacts/
+
+# --- MSFS SDK package-tool output ---
+# The compiled panel/InGamePanels/FSOpsPanel.spb IS committed - it is the whole point of the
+# build. These are the tool's scratch and staging folders, which are regenerated every run.
+src/fsops-ingame-panel/source/_out/
+src/fsops-ingame-panel/source/_Temp/
+
 # --- Node / frontend ---
 node_modules/
 dist/

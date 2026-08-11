@@ -69,7 +69,14 @@ export function CommunityFolderStep({ data, onChange }: CommunityFolderStepProps
     debounceRef.current = setTimeout(() => {
       validateCommunityFolder(path)
         .then(setValidation)
-        .catch(() => setValidation({ valid: false, reason: 'Could not check this path — check your connection.', resolvedPath: null }))
+        .catch(() =>
+          setValidation({
+            valid: false,
+            reason: 'Could not check this path — check your connection.',
+            resolvedPath: null,
+            exists: false,
+          }),
+        )
         .finally(() => setValidating(false))
     }, 350)
 
@@ -208,6 +215,16 @@ function ValidationHint({
   }
   if (!validation) {
     return null
+  }
+  if (validation.valid && !validation.exists) {
+    // Don't promise an install that will be refused: the installer won't create a Community folder
+    // that isn't there, because a folder FSOps invented isn't one MSFS reads.
+    return (
+      <p className="flex items-start gap-1.5 text-xs text-warning">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+        <span>That path looks right, but there&rsquo;s no folder there yet — double-check it, or set this up later in Settings.</span>
+      </p>
+    )
   }
   if (validation.valid) {
     return (

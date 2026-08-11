@@ -47,6 +47,13 @@
     </None>
   </ItemGroup>
 
+  <!-- Development-only settings have no business in a shipped install. Kept in the build output
+       (dotnet run needs it) but excluded from publish, so the installer - which copies the publish
+       folder verbatim on purpose, precisely so the two can never drift - simply never sees it. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <!-- The in-game panel package template (see src/fsops-ingame-panel/README.md) ships next to the
        built assembly, same reasoning as economy-config.json above - PanelPackageInstaller resolves
        it from AppContext.BaseDirectory so it works the same under "dotnet run" and a published exe.
@@ -62,6 +69,11 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+
+    <!-- Publish-only size trim: drops a dozen or so localisation folders from the self-contained
+         output (see scripts/publish.ps1). No behavioural change - the app ships no localised
+         resources of its own, and every string a user sees comes from the SPA. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
 </Project>

@@ -1,6 +1,8 @@
 # Getting Started
 
-This guide walks through installing the prerequisites, building FSOps, and running it for the first time.
+This guide walks through installing the prerequisites, building FSOps from source, and running it for the first time.
+
+**If you just want to use FSOps, you don't need any of this.** Download the installer from the [Releases page](https://github.com/NW11NGW/FSOps/releases) and follow the [Installation guide](installation.md) instead. The installer carries its own copy of the .NET runtime and the built UI, so there is nothing to install beforehand and nothing to compile — and it doesn't need administrator rights. This guide is for people who want to change FSOps, contribute to it, or run a build that hasn't been released yet.
 
 ## Table of contents
 
@@ -12,12 +14,12 @@ This guide walks through installing the prerequisites, building FSOps, and runni
 - [5. Run FSOps](#5-run-fsops)
 - [6. Found your airline](#6-found-your-airline)
 - [7. Connect to MSFS](#7-connect-to-msfs)
-- [What's not available yet](#whats-not-available-yet)
+- [Where things stand](#where-things-stand)
 - [Next steps](#next-steps)
 
 ## Before you start
 
-FSOps is early in development. This guide covers building and running FSOps, founding your airline through the setup wizard, and connecting to the simulator. For the step-by-step of actually flying a tracked flight once you're connected, see the [User Guide](user-guide.md#planning-and-flying-a-tracked-flight).
+FSOps is early in development. This guide covers building FSOps from source and running it, founding your airline through the setup wizard, and connecting to the simulator. For the step-by-step of actually flying a tracked flight once you're connected, see the [User Guide](user-guide.md#planning-and-flying-a-tracked-flight).
 
 ## 1. Install the prerequisites
 
@@ -48,7 +50,7 @@ From the repository root, restore and build the .NET solution:
 dotnet build
 ```
 
-This builds all four backend projects — `FSOps.Core`, `FSOps.Data`, `FSOps.Sim`, and `FSOps.Server` — plus the test project. The first run will take longer while NuGet packages are restored. If you're contributing rather than just running FSOps, `dotnet test` from the repository root runs the full backend xUnit suite.
+This builds all five .NET projects — `FSOps.Core`, `FSOps.Data`, `FSOps.Sim`, `FSOps.Server`, and the `FSOps.Desktop` window shell — plus the test projects. The first run will take longer while NuGet packages are restored. If you're contributing rather than just running FSOps, `dotnet test` from the repository root runs the full backend xUnit suite.
 
 ## 4. Build the frontend
 
@@ -86,6 +88,26 @@ http://localhost:5977
 
 The first time FSOps runs, it needs to import world airport and runway data into its local database — around 78,000 airports and their runways, sourced from a bundled dataset rather than downloaded, so it doesn't need internet access. This kicks off in the background as soon as the server starts and takes roughly half a minute; it doesn't hold up the airline setup wizard described below, which opens straight away, but airport search (including the wizard's home-base step) will only return complete results once the import has actually finished. If you land on the main Dashboard before it's done, a banner near the top shows its progress percentage until it completes; from then on it never runs again. Leave the terminal window open — closing it stops the server.
 
+### Running the desktop shell instead
+
+`dotnet run --project src/FSOps.Server` runs the server alone, which is usually what you want while developing — you get the logs in your terminal and your browser reloads on demand. Installed users don't launch it that way, though. They launch `FSOps.Desktop`, a thin window that starts the server as a child process and renders the UI inside itself:
+
+```
+dotnet run --project src/FSOps.Desktop
+```
+
+It's worth running at least once before you change anything near startup, because it's the only way to exercise the paths a real user hits — how the shell finds the server sitting next to it, how it picks a port, and how it behaves when the Edge WebView2 runtime is missing (it falls back to opening the UI in your default browser). Set `FSOPS_USE_BROWSER=1` to force that fallback on a machine that does have WebView2, which is the only practical way to test it.
+
+### Producing a packaged build
+
+To build the thing a user actually downloads — a self-contained folder that runs on a PC with no .NET installed:
+
+```
+.\scripts\publish.ps1
+```
+
+That builds the web UI, publishes both .NET applications into `artifacts\publish`, and then asserts that every asset the app resolves at runtime is present, so a half-populated output fails on your machine rather than on someone else's. To wrap that folder in the installer as well, see [installer/README](../../installer/README.md) — that step additionally needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer.
+
 ## 6. Found your airline
 
 FSOps opens straight into a full-screen setup wizard whenever no airline exists yet for your machine — on first run, and again any time you delete your airline from the settings danger zone (see the [user guide](user-guide.md#settings)). The wizard has eight steps:
@@ -113,12 +135,14 @@ You can see the connection state at a glance from two indicator pills in the top
 
 If FSOps can't reach the simulator, see [troubleshooting](troubleshooting.md#msfs-wont-connect-over-simconnect).
 
-## What's not available yet
+## Where things stand
 
-Founding an airline, planning a route network, flying a fully tracked flight with a post-flight report card, running a fleet (buying, leasing, selling, used aircraft, loans, maintenance), the monthly billing cycle that keeps charging you whether or not you fly, hiring virtual pilots to fly a standing weekly schedule on the real-world clock, a Finances page and a Statistics page for inspecting all of it, importing your SimBrief flight plan, seeing online VATSIM controllers on your live map, and an in-game MSFS panel, all work today (see the [User Guide](user-guide.md)). One thing is still missing:
+Founding an airline, planning a route network, flying a fully tracked flight with a post-flight report card, running a fleet (buying, leasing, selling, used aircraft, loans, maintenance), the monthly billing cycle that keeps charging you whether or not you fly, hiring virtual pilots to fly a standing weekly schedule on the real-world clock, a Finances page and a Statistics page for inspecting all of it, importing your SimBrief flight plan, seeing online VATSIM controllers on your live map, and an in-game MSFS panel, all work today.
 
-- **The in-game panel's MSFS toolbar button doesn't appear yet.** The panel itself installs correctly into your Community folder, but the small file that registers it with MSFS's toolbar hasn't been compiled — see [In-game panel](user-guide.md#in-game-panel) in the User Guide for exactly what that means and what still works in the meantime.
-- A packaged installer — for now, FSOps is built and run from source (this guide)
+Two gaps that earlier versions of this guide listed have since closed:
+
+- **FSOps ships as a packaged installer.** Building from source, which is what this guide covers, is no longer the only way to run it — see the [Installation guide](installation.md).
+- **The in-game panel's toolbar registration file is now compiled and ships with the app.** Earlier builds installed the panel's files into your Community folder but had no compiled `.spb`, so no MSFS toolbar button could appear. That file is now built and included in every release. If the button still doesn't show up for you, see [the toolbar button isn't there](troubleshooting.md#the-toolbar-button-isnt-there).
 
 See the [User Guide](user-guide.md) for a fuller description of everything above and how it behaves.
 

@@ -11,6 +11,7 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
   - [Starter aircraft](#starter-aircraft)
 - [Settings](#settings)
   - [Airline](#airline)
+  - [MSFS in-game panel](#msfs-in-game-panel)
 - [Building routes](#building-routes)
   - [Your route network on the map](#your-route-network-on-the-map)
   - [Round trips and where your aircraft actually is](#round-trips-and-where-your-aircraft-actually-is)
@@ -48,7 +49,7 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 
 ## Current build
 
-Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page and a Statistics page to see exactly where the money went. You can also import your latest SimBrief flight plan, see online VATSIM controllers on your live map, and use a compact panel inside MSFS itself — see [Statistics dashboards](#statistics-dashboards), [Plan in SimBrief](#plan-in-simbrief) and [In-game panel](#in-game-panel) below for each, including the one thing about the in-game panel that doesn't work yet.
+Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page and a Statistics page to see exactly where the money went. You can also import your latest SimBrief flight plan, see online VATSIM controllers on your live map, and use a compact panel inside MSFS itself — see [Statistics dashboards](#statistics-dashboards), [Plan in SimBrief](#plan-in-simbrief) and [In-game panel](#in-game-panel) below for each.
 
 ## Creating your airline
 
@@ -81,7 +82,7 @@ You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-8
 
 ## Settings
 
-Reachable from the main navigation once your airline exists. Most of Settings applies to your account (currency, units, theme, Community folder) rather than to a specific airline — the exception is the **Airline** section below, which edits your airline's own identity and strategy.
+Reachable from the main navigation once your airline exists. Most of Settings applies to your account (currency, units, theme, the MSFS in-game panel) rather than to a specific airline — the exception is the **Airline** section below, which edits your airline's own identity and strategy.
 
 ### Airline
 
@@ -111,11 +112,35 @@ Switch between light and dark theme at any time.
 
 Your SimBrief Pilot ID — find it on SimBrief under Account → Pilot ID. Set it and the Fly screen's flight brief pulls your latest OFP's fuel, cruise altitude, block time and filed route instead of FSOps' own estimate, but only when that plan matches the exact route you're about to fly — see [Plan in SimBrief](#plan-in-simbrief) below. Leave it blank (the default) and FSOps always uses its own built-in plan; nothing about your flight is sent anywhere without it, and it's entirely optional.
 
-### Community folder
+### MSFS in-game panel
 
-The path to your MSFS 2024 Community folder — where FSOps installs the [in-game panel](#in-game-panel)'s package, and where future add-on-aware features will look. You're offered this during the setup wizard already; this is where you set it if you skipped that step, or point FSOps at a different install later.
+One section covering both your MSFS 2024 Community folder and the [in-game panel](#in-game-panel) FSOps installs into it. The two are deliberately together: the folder only matters because of what's installed in it, and keeping them apart is what used to let the two quietly disagree.
 
-**One thing worth knowing:** changing this path here updates where FSOps *thinks* your Community folder is, but it doesn't, by itself, move or reinstall the panel package there — installing the panel currently only happens once, during the setup wizard. If you change your Community folder path after already installing the panel (for example, because you moved MSFS to a different drive), see [Troubleshooting](troubleshooting.md#i-changed-my-community-folder-in-settings-but-the-panel-didnt-move) for what that means and what to do about it today.
+Every time you open Settings, FSOps reads what is **actually on disk** rather than remembering what it once did, and tells you:
+
+- **Panel files** — whether the package is really there in the folder you've configured.
+- **Location** — the exact folder it's installed in, which is always a folder called `fsops-panel` directly inside your Community folder, and never anything else.
+- **Version** — the installed version, and whether it matches the one this copy of FSOps expects. If you update FSOps and the panel is older, it says so and asks you to reinstall.
+- **Connects to** — the port the installed panel calls FSOps on. This is written into the package when it's installed, so if FSOps later moves port, the panel goes on calling the old one and simply shows nothing in the sim. FSOps spots that mismatch and tells you to reinstall, because it's the kind of failure that otherwise looks like nothing is wrong at all.
+- **Toolbar button** — whether the compiled component MSFS needs to draw the FSOps button is present.
+
+Three actions sit underneath:
+
+- **Install panel** — appears when a folder is set but nothing is installed there. This is how you add the panel if you skipped it during the setup wizard.
+- **Reinstall / repair** — installs cleanly over whatever is there. Use it to update an older version, fix a package with files missing or edited, or repoint the panel after FSOps changes port. Safe to run as often as you like.
+- **Remove panel** — deletes the `fsops-panel` folder and nothing else. Your other add-ons are untouched, and so is everything about your airline. It asks you to confirm first, and you can install it again from the same place at any time.
+
+**Changing the folder.** If you edit the path and press **Save folder** while the panel is installed in the old one, FSOps asks what to do with the copy already sitting there rather than deciding for you — because both answers are reasonable, depending on whether you're pointing FSOps at a second MSFS install or correcting a mistake:
+
+- **Move the panel** installs it into the new folder and then removes the old copy. The new one is always written first, so if anything goes wrong you're left with the panel you already had, never with none at all.
+- **Just change the folder** saves the new path and leaves the old copy exactly where it is.
+
+Clearing the path entirely asks the same question, offering to remove the panel first rather than abandoning it in your Community folder.
+
+**Two refusals worth knowing about**, both deliberate:
+
+- FSOps will not install into, or delete, a folder called `fsops-panel` that it can't tell it created itself. If something else is using that name, it says so and leaves it alone — deleting a folder you nominated by mistake isn't something you could undo.
+- FSOps will not create a Community folder that isn't there. If the configured folder has been deleted or the sim has moved, it says the folder no longer exists and asks you to pick the new one, rather than helpfully building a folder MSFS will never read and reporting a successful install of a panel that can never appear.
 
 ### Danger zone: start over
 
@@ -507,20 +532,16 @@ A compact, read-only panel that shows your live flight and airline status inside
 
 ### Getting the panel into MSFS
 
-FSOps' setup wizard has a **"Connect your MSFS panel"** step: it looks for your Community folder automatically, lets you confirm or type a different path, and installs the panel package there when you finish the wizard. It's genuinely optional and skippable.
+There are two ways in, and they install exactly the same thing:
 
-**Right now, this wizard step is the only place the panel actually gets installed.** Settings → Community folder (see [Settings](#settings) above) lets you record or change the folder path FSOps uses for other purposes, but it doesn't install, reinstall or repair the panel package there — that action currently only runs once, during the wizard. If you skipped the step, see [The toolbar button isn't there](troubleshooting.md#the-toolbar-button-isnt-there) below. If you later move your MSFS install to a different Community folder, see [I changed my Community folder in Settings, but the panel didn't move](troubleshooting.md#i-changed-my-community-folder-in-settings-but-the-panel-didnt-move) instead.
+- **The setup wizard's "Connect your MSFS panel" step** looks for your Community folder automatically, lets you confirm or type a different path, and installs the panel when you finish. It's genuinely optional and skippable.
+- **Settings → [MSFS in-game panel](#msfs-in-game-panel)** does everything afterwards: it shows what's actually installed, and installs, reinstalls, repairs, moves or removes it. If you skipped the wizard step, this is where you add the panel later; if you move MSFS to another drive, this is where you move the panel with it.
 
-**Read this part carefully — it's the one gap in this feature, stated plainly rather than glossed over.** The button that would make an FSOps icon appear on MSFS's own toolbar needs one small file that hasn't been built yet — compiling it requires the Microsoft Flight Simulator SDK, a separate, free download from the MSFS SDK, and someone to run a one-time command with it. That file isn't included with FSOps today. **What this means in practice:**
+After installing, **restart MSFS if it's already running** — the sim reads its Community folder at startup, so a package added underneath a running sim won't appear until the next launch.
 
-- The panel package installs into your Community folder correctly, and FSOps tells you so honestly.
-- **No FSOps button currently appears on MSFS's own toolbar.** This isn't a bug for you to troubleshoot — the piece that registers the button with MSFS genuinely isn't there yet.
-- Nothing else about FSOps is affected. Everything above — the flight brief, live tracking, the report card, the full web UI at `http://localhost:5977` — works exactly the same with or without the in-game toolbar button.
-- **This has not yet been verified working inside MSFS itself**, since the toolbar button that would let you open it in-sim doesn't exist yet either. Treat it as installed-but-unconfirmed until a future update adds the missing file and someone can actually click the button in the sim.
+**One thing to be aware of.** The compiled component that registers the FSOps button with MSFS's toolbar is built with the Microsoft Flight Simulator SDK and ships with FSOps, so a normal install includes it and Settings reports **"Appears in the MSFS toolbar"**. If Settings ever says the toolbar button won't appear, that's FSOps telling you the file is genuinely missing from the install rather than reassuring you — use **Reinstall / repair**, and see [Troubleshooting](troubleshooting.md#the-toolbar-button-isnt-there) if it persists.
 
-If and when that file is added in a future update, the rest of the package is already correct and waiting for it — no changes to what's described above are expected, only a future update that adds the missing piece and a way to apply it without starting over.
-
-See [Troubleshooting](troubleshooting.md#the-toolbar-button-isnt-there) if you were expecting the toolbar button and it isn't there.
+Everything else about FSOps works the same with or without the in-game panel — the flight brief, live tracking, the report card and the full web UI at `http://localhost:5977` are unaffected either way.
 
 ## A worked example, start to finish
 

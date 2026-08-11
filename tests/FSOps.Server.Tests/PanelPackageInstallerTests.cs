@@ -263,6 +263,167 @@ public sealed class PanelPackageInstallerTests : IDisposable
     }
 
     // -----------------------------------------------------------------------------------
+    // Refusing to delete what FSOps did not create. The Community folder is a path the player
+    // typed and "fsops-panel" is a name anyone could have used - a recursive delete of someone
+    // else's folder is the one mistake here with no undo.
+    // -----------------------------------------------------------------------------------
+
+    [Fact]
+    public void Uninstall_RefusesToDeleteAnFsopsPanelFolderThatFsOpsDidNotCreate()
+    {
+        var impostor = Path.Combine(_communityFolder, "fsops-panel");
+        Directory.CreateDirectory(impostor);
+        File.WriteAllText(Path.Combine(impostor, "manifest.json"), """{ "title": "Somebody Else's Add-on" }""");
+        File.WriteAllText(Path.Combine(impostor, "precious.txt"), "not ours");
+
+        var result = PanelPackageInstaller.Uninstall(_communityFolder);
+
+        Assert.False(result.Success);
+        Assert.Contains("didn't create", result.Reason);
+        Assert.True(File.Exists(Path.Combine(impostor, "precious.txt")));
+    }
+
+    [Fact]
+    public void InstallOrRepair_RefusesToOverwriteAnFsopsPanelFolderThatFsOpsDidNotCreate()
+    {
+        var impostor = Path.Combine(_communityFolder, "fsops-panel");
+        Directory.CreateDirectory(impostor);
+        File.WriteAllText(Path.Combine(impostor, "precious.txt"), "not ours");
+
+        var result = PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        Assert.False(result.Success);
+        Assert.Equal("not ours", File.ReadAllText(Path.Combine(impostor, "precious.txt")));
+    }
+
+    [Fact]
+    public void Uninstall_RemovesAHalfWrittenInstall_RecognisedByTheConfigFileFsOpsGenerates()
+    {
+        // A previous install that died after writing the config but before the manifest must stay
+        // repairable and removable, not become permanently stuck.
+        var target = Path.Combine(_communityFolder, "fsops-panel");
+        var configDir = Path.Combine(target, "html_ui", "InGamePanels", "FSOpsPanel");
+        Directory.CreateDirectory(configDir);
+        File.WriteAllText(Path.Combine(configDir, "FSOpsPanel.config.js"), "window.FSOPS_PANEL_PORT = 5977;\n");
+
+        var result = PanelPackageInstaller.Uninstall(_communityFolder);
+
+        Assert.True(result.Success);
+        Assert.False(Directory.Exists(target));
+    }
+
+    [Fact]
+    public void InstallOrRepair_RepairsADamagedInstall_RestoringFilesDeletedByHand()
+    {
+        var first = PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var damaged = Path.Combine(first.InstalledPath!, "html_ui", "InGamePanels", "FSOpsPanel", "FSOpsPanel.html");
+        File.Delete(damaged);
+        Assert.False(File.Exists(damaged));
+
+        var repaired = PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        Assert.True(repaired.Success);
+        Assert.True(File.Exists(damaged));
+        Assert.Equal(PanelPackageInstaller.ExpectedPanelVersion, repaired.InstalledVersion);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Move - changing the Community folder in Settings
+    // -----------------------------------------------------------------------------------
+
+    private string CreateSecondCommunityFolder()
+    {
+        var second = Path.Combine(_root, "OtherInstall", "Packages", "Community");
+        Directory.CreateDirectory(second);
+        return second;
+    }
+
+    [Fact]
+    public void MoveInstall_InstallsIntoTheNewFolder_AndRemovesTheOldCopy()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var destination = CreateSecondCommunityFolder();
+
+        var result = PanelPackageInstaller.MoveInstall(_communityFolder, destination, _templateDirectory, "5977");
+
+        Assert.True(result.Success);
+        Assert.True(result.Install.Installed);
+        Assert.True(File.Exists(Path.Combine(destination, "fsops-panel", "manifest.json")));
+        Assert.True(result.OldCopyRemoved);
+        Assert.False(Directory.Exists(Path.Combine(_communityFolder, "fsops-panel")));
+    }
+
+    [Fact]
+    public void MoveInstall_WhenTheNewFolderIsRejected_LeavesTheOldCopyExactlyWhereItWas()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var notACommunityFolder = Path.Combine(_root, "OtherInstall", "Packages");
+        Directory.CreateDirectory(notACommunityFolder);
+
+        var result = PanelPackageInstaller.MoveInstall(_communityFolder, notACommunityFolder, _templateDirectory, "5977");
+
+        Assert.False(result.Success);
+        Assert.False(result.OldCopyRemoved);
+        // The whole point: a failed move never leaves the player with no panel at all.
+        Assert.True(File.Exists(Path.Combine(_communityFolder, "fsops-panel", "manifest.json")));
+    }
+
+    [Fact]
+    public void MoveInstall_ToTheSameFolder_ReinstallsInPlace_AndDoesNotDeleteWhatItJustWrote()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        var result = PanelPackageInstaller.MoveInstall(_communityFolder, _communityFolder, _templateDirectory, "6100");
+
+        Assert.True(result.Success);
+        Assert.False(result.OldCopyRemoved);
+        Assert.True(File.Exists(Path.Combine(_communityFolder, "fsops-panel", "manifest.json")));
+        var configPath = Path.Combine(_communityFolder, "fsops-panel", "html_ui", "InGamePanels", "FSOpsPanel", "FSOpsPanel.config.js");
+        Assert.Contains("6100", File.ReadAllText(configPath));
+    }
+
+    [Fact]
+    public void MoveInstall_WithNoPreviousFolder_JustInstalls()
+    {
+        var result = PanelPackageInstaller.MoveInstall(null, _communityFolder, _templateDirectory, "5977");
+
+        Assert.True(result.Success);
+        Assert.True(result.Install.Installed);
+        Assert.False(result.OldCopyRemoved);
+        Assert.Contains("no previous folder", result.OldCopyMessage);
+    }
+
+    [Fact]
+    public void MoveInstall_WhenTheOldFolderIsAlreadyGone_SucceedsWithoutClaimingItRemovedAnything()
+    {
+        var destination = CreateSecondCommunityFolder();
+        var vanished = Path.Combine(_root, "Deleted", "Packages", "Community");
+
+        var result = PanelPackageInstaller.MoveInstall(vanished, destination, _templateDirectory, "5977");
+
+        Assert.True(result.Success);
+        Assert.True(result.Install.Installed);
+        Assert.False(result.OldCopyRemoved);
+        Assert.Contains("nothing left", result.OldCopyMessage);
+    }
+
+    [Fact]
+    public void MoveInstall_WhenTheOldFolderHoldsSomethingFsOpsDidNotInstall_KeepsItAndSaysSo()
+    {
+        var impostor = Path.Combine(_communityFolder, "fsops-panel");
+        Directory.CreateDirectory(impostor);
+        File.WriteAllText(Path.Combine(impostor, "precious.txt"), "not ours");
+        var destination = CreateSecondCommunityFolder();
+
+        var result = PanelPackageInstaller.MoveInstall(_communityFolder, destination, _templateDirectory, "5977");
+
+        Assert.True(result.Success);
+        Assert.True(result.Install.Installed);
+        Assert.False(result.OldCopyRemoved);
+        Assert.True(File.Exists(Path.Combine(impostor, "precious.txt")));
+    }
+
+    // -----------------------------------------------------------------------------------
     // Status
     // -----------------------------------------------------------------------------------
 
@@ -285,6 +446,123 @@ public sealed class PanelPackageInstallerTests : IDisposable
         Assert.Equal("1.0.0", status.InstalledVersion);
         Assert.Equal(PanelPackageInstaller.ExpectedPanelVersion, status.ExpectedVersion);
         Assert.False(status.SpbPresent);
+    }
+
+    [Fact]
+    public void GetStatus_SaysTheFolderIsGone_RatherThanJustNotInstalled_WhenItHasBeenDeleted()
+    {
+        // "Not installed" would invite the player to press Install and wonder why nothing ever
+        // appears in the sim - the folder being gone is the actual thing they need to know.
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        Directory.Delete(_communityFolder, recursive: true);
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977");
+
+        Assert.False(status.Success);
+        Assert.False(status.Installed);
+        Assert.Contains("no longer exists", status.Reason);
+    }
+
+    [Fact]
+    public void InstallOrRepair_RefusesAMissingCommunityFolder_RatherThanCreatingAPhantomOne()
+    {
+        // Creating the tree would report a perfectly successful install of a panel MSFS will never
+        // load, because the sim only reads the Community folder it actually has.
+        var missing = Path.Combine(_root, "GoneAway", "Packages", "Community");
+
+        var result = PanelPackageInstaller.InstallOrRepair(missing, _templateDirectory, "5977");
+
+        Assert.False(result.Success);
+        Assert.Contains("doesn't exist", result.Reason);
+        Assert.False(Directory.Exists(missing));
+    }
+
+    [Fact]
+    public void ValidateCommunityFolder_ReportsExistenceSeparatelyFromShape()
+    {
+        var missing = Path.Combine(_root, "Packages", "NotYet", "Community");
+
+        var present = PanelPackageInstaller.ValidateCommunityFolder(_communityFolder);
+        var absent = PanelPackageInstaller.ValidateCommunityFolder(missing);
+
+        Assert.True(present.Valid);
+        Assert.True(present.Exists);
+        // Still a well-formed Community path - onboarding shouldn't reject it just because the sim
+        // isn't installed on this machine yet.
+        Assert.True(absent.Valid);
+        Assert.False(absent.Exists);
+    }
+
+    [Fact]
+    public void GetStatus_SpotsVersionDrift_WhenWhatIsOnDiskIsOlderThanExpected()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var manifestPath = Path.Combine(_communityFolder, "fsops-panel", "manifest.json");
+        File.WriteAllText(manifestPath, """{ "title": "FSOps In-Game Panel", "package_version": "0.9.0" }""");
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977");
+
+        Assert.True(status.Installed);
+        Assert.Equal("0.9.0", status.InstalledVersion);
+        Assert.NotEqual(status.InstalledVersion, status.ExpectedVersion);
+        Assert.Contains("reinstall", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetStatus_SpotsPortDrift_WhenFsOpsHasMovedPortSinceTheInstall()
+    {
+        // The panel calls FSOps on a port baked into its config at install time. Move FSOps to a
+        // different port and the installed panel goes on calling the old one, showing nothing in
+        // the sim with no error anywhere - so status has to be the thing that notices.
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5978");
+
+        Assert.True(status.Installed);
+        Assert.Equal("5977", status.InstalledPort);
+        Assert.Equal("5978", status.ExpectedPort);
+        Assert.Contains("5977", status.Message);
+        Assert.Contains("5978", status.Message);
+        Assert.Contains("reinstall", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetStatus_ReportsNoPortDrift_WhenThePortStillMatches()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977");
+
+        Assert.Equal("5977", status.InstalledPort);
+        Assert.Equal("5977", status.ExpectedPort);
+        Assert.DoesNotContain("port", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void InstallOrRepair_AfterAPortChange_ClearsTheDriftItJustFixed()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        Assert.NotEqual(
+            PanelPackageInstaller.GetStatus(_communityFolder, "5978").InstalledPort,
+            PanelPackageInstaller.GetStatus(_communityFolder, "5978").ExpectedPort);
+
+        var repaired = PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5978");
+
+        Assert.Equal("5978", repaired.InstalledPort);
+        Assert.Equal("5978", repaired.ExpectedPort);
+        var after = PanelPackageInstaller.GetStatus(_communityFolder, "5978");
+        Assert.Equal(after.ExpectedPort, after.InstalledPort);
+    }
+
+    [Fact]
+    public void GetStatus_RefusesAPathThatIsNotACommunityFolder_RatherThanProbingIt()
+    {
+        var arbitrary = Path.Combine(_root, "Packages");
+
+        var status = PanelPackageInstaller.GetStatus(arbitrary, "5977");
+
+        Assert.False(status.Success);
+        Assert.NotNull(status.Reason);
     }
 
     // -----------------------------------------------------------------------------------

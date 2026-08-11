@@ -1,0 +1,39 @@
+<!--
+  Package definition read by fspackagetool.exe via ..\FSOpsPanel.xml.
+
+  The asset group type is SPB ("SimPropBinary"), which is what MSFS 2024 calls the compiler that
+  turns a SimProp XML document into the binary form the simulator loads. There is no "InGamePanels"
+  asset type in the 2024 SDK's asset-type list despite the panel document declaring
+  Type="InGamePanels" internally - that attribute describes the document, SPB describes how to
+  compile it. Getting this wrong produces no output and no error, so it is worth stating.
+
+  The compiled file takes its name from the SOURCE FILE name, not from the <Filename> element
+  inside the document - PackageSources\FSOpsPanel.xml produces FSOpsPanel.spb. That is why the
+  source file is named for the panel rather than something descriptive like PanelDefinition.xml.
+
+  This package definition exists only to drive the compiler. The manifest.json it generates is
+  discarded: the real, shipped manifest is ..\..\package\manifest.json, which carries the
+  dependencies and title the simulator actually reads.
+-->
+<AssetPackage Name="fsops-panel" Version="0.1.0">
+	<ItemSettings>
+		<ContentType>SPB</ContentType>
+		<Title>FSOps Panel</Title>
+		<Manufacturer>FSOps</Manufacturer>
+		<Creator>FSOps</Creator>
+	</ItemSettings>
+	<Flags>
+		<VisibleInStore>false</VisibleInStore>
+		<CanBeReferenced>false</CanBeReferenced>
+	</Flags>
+	<AssetGroups>
+		<AssetGroup Name="InGamePanels">
+			<Type>SPB</Type>
+			<Flags>
+				<FSXCompatibility>false</FSXCompatibility>
+			</Flags>
+			<AssetDir>PackageSources\</AssetDir>
+			<OutputDir>InGamePanels\</OutputDir>
+		</AssetGroup>
+	</AssetGroups>
+</AssetPackage>

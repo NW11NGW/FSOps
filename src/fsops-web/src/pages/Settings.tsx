@@ -1,8 +1,9 @@
 import { AirlineSection } from '@/components/settings/AirlineSection'
 import { DataSection } from '@/components/settings/DataSection'
 import { DisplaySection } from '@/components/settings/DisplaySection'
+import { MsfsPanelSection } from '@/components/settings/MsfsPanelSection'
 import { SimBriefSection } from '@/components/settings/SimBriefSection'
-import { SimulatorSection } from '@/components/settings/SimulatorSection'
+import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PageHeader } from '@/components/shared/PageHeader'
 
 export function Settings() {
@@ -12,9 +13,10 @@ export function Settings() {
       <div className="space-y-6">
         <DisplaySection />
         <AirlineSection />
-        <SimulatorSection />
+        <MsfsPanelSection />
         <SimBriefSection />
         <DataSection />
+        <UpdatesSection />
       </div>
     </div>
   )

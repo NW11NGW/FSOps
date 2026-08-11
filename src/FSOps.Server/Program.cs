@@ -136,6 +136,20 @@ builder.Services.AddSingleton<StartupReconciliationState>();
 builder.Services.AddHttpClient("vatsim", client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<IVatsimNetworkClient, VatsimNetworkClient>();
 
+// The update check's transport - see UpdateChecker for why this exists at all and how far it is
+// allowed to go. Second and last outbound call the server makes, after VATSIM. Nothing is
+// registered as a hosted service on purpose: the check is lazy and cached on disk, so there is
+// deliberately nothing about updates on the startup path.
+//
+// The ten-minute handler timeout is a backstop for a large installer download, not the real
+// limit - the timeouts that matter (seconds for metadata, minutes for the asset) are enforced
+// inside GitHubReleaseClient, so a slow feed can never hold up a request that is merely asking
+// whether an update exists.
+builder.Services.AddHttpClient(GitHubReleaseClient.HttpClientName, client => client.Timeout = TimeSpan.FromMinutes(10));
+builder.Services.AddSingleton<IUpdateStorage, FileUpdateStorage>();
+builder.Services.AddSingleton<IGitHubReleaseClient, GitHubReleaseClient>();
+builder.Services.AddSingleton<UpdateChecker>();
+
 var app = builder.Build();
 
 // Migrations are fast (schema-only), so this runs synchronously before Kestrel starts
@@ -184,7 +198,7 @@ var apiV1 = app.MapGroup("/api/v1");
 apiV1.MapGet("/health", () => Results.Ok(new
 {
     status = "ok",
-    version = "0.1.0",
+    version = AppVersion.Current,
     serverTimeUtc = DateTime.UtcNow.ToString("o")
 }));
 
@@ -202,6 +216,7 @@ apiV1.MapPilotEndpoints();
 apiV1.MapMaintenanceEndpoints();
 apiV1.MapStatsEndpoints();
 apiV1.MapVatsimEndpoints();
+apiV1.MapUpdateEndpoints();
 apiV1.MapPanelEndpoints();
 apiV1.MapOperationsEndpoints();
 

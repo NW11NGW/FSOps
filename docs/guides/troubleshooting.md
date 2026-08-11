@@ -27,7 +27,11 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [SimBrief import did nothing](#simbrief-import-did-nothing)
 - [No controllers are showing](#no-controllers-are-showing)
 - [The toolbar button isn't there](#the-toolbar-button-isnt-there)
-- [I changed my Community folder in Settings, but the panel didn't move](#i-changed-my-community-folder-in-settings-but-the-panel-didnt-move)
+- [The panel opens but shows nothing](#the-panel-opens-but-shows-nothing)
+- [I moved my Community folder, or reinstalled MSFS](#i-moved-my-community-folder-or-reinstalled-msfs)
+- [FSOps never tells me about updates](#fsops-never-tells-me-about-updates)
+- [A downloaded update was rejected, or disappeared](#a-downloaded-update-was-rejected-or-disappeared)
+- [Where a downloaded update goes, and why FSOps won't run it](#where-a-downloaded-update-goes-and-why-fsops-wont-run-it)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
@@ -233,19 +237,83 @@ The most common cause is a pilot who was hired but never given a schedule, or on
 
 ## The toolbar button isn't there
 
-**Symptom:** You've installed the in-game panel (through the setup wizard's "Connect your MSFS panel" step), but no FSOps icon appears on MSFS 2024's own toolbar.
+**Symptom:** No FSOps icon appears on MSFS 2024's own toolbar, even though you've been through the "Connect your MSFS panel" step.
 
-**Cause:** The panel package installs correctly, but the one file that actually registers a button with MSFS's toolbar hasn't been built into this copy of FSOps yet — see [In-game panel](user-guide.md#in-game-panel) for the full explanation. This isn't something wrong with your install; FSOps' own install result already told you as much at the time, with a message along the lines of "Panel files installed, but this build of FSOps doesn't yet include the compiled panel component the toolbar needs."
+**Cause:** Almost always one of four ordinary things, and Settings → MSFS panel will tell you which. The panel is an ordinary MSFS package: it has to be present in the folder the sim actually reads from, and the sim only looks at that folder while it's starting.
 
-**Solution:** Nothing to fix on your end — this needs a future FSOps update that ships the missing compiled file. Everything else about FSOps works exactly the same without it, including the same compact view the panel would show, reachable in an ordinary browser tab at `http://localhost:5977/panel`.
+**Solutions, in order:**
 
-## I changed my Community folder in Settings, but the panel didn't move
+1. **Check the status badge in Settings → MSFS panel first.** It reads **Installed**, **Not installed**, **Not set up**, **Update available**, **Needs repair**, or **Needs attention**, and everything below depends on which one you're looking at. If it says anything other than **Installed**, use the **Install panel** or **Reinstall / repair** button right there and skip the rest of this list.
+2. **Restart MSFS.** This is the single most common cause. MSFS scans the Community folder once, at startup — a package added while the sim was already running is invisible to it until the next launch. Quit the simulator completely (not just back to the main menu) and start it again.
+3. **Check the Community folder is the one your sim actually uses.** A machine with more than one MSFS install — Steam and Microsoft Store, or a moved install — has more than one Community folder, and a package in the wrong one is completely inert. Settings → MSFS panel lists the folders it found on this PC; pick the one belonging to the copy of MSFS you actually launch, save it, and reinstall the panel into it.
+4. **Check the package isn't older than your sim expects.** The panel declares a `minimum_game_version` of **1.7.35**. An MSFS 2024 install older than that will ignore the package entirely and give no visible sign of having done so. Update the simulator.
+5. **If Settings says the toolbar button won't appear, believe it.** A normal install ships the compiled component that registers the button, and Settings confirms it with **"Appears in the MSFS toolbar"**. If it says otherwise, that file is genuinely missing from what was installed — not a limitation of this build. **Reinstall / repair** puts it back; if it says the same thing again straight afterwards, that's worth reporting (see [How to report a problem](#how-to-report-a-problem)).
+6. **As a fallback, the panel's view works in a browser.** The same compact view is always available at `http://localhost:5977/panel` in an ordinary browser tab, whether or not the toolbar button is working.
 
-**Symptom:** You moved your MSFS install (a different drive, a switch between Steam and Microsoft Store, or similar), updated the Community folder path in Settings, but the panel package is still sitting in the old location — or you're simply unsure whether it followed the change.
+## The panel opens but shows nothing
 
-**Cause:** Settings → Community folder currently only updates the path FSOps records for its own reference — it doesn't reinstall, move or repair the panel package to match. The panel is only ever installed once today, during the setup wizard, into whichever folder was configured at that exact moment; changing the path afterwards in Settings doesn't reach back and redo that install. This is a real, known gap in the current build, not intended behaviour — the underlying install/repair/uninstall logic already supports being re-run, there just isn't a button wired up to it outside the wizard yet.
+**Symptom:** The FSOps toolbar button is there and opens a panel window in MSFS, but the window is blank, stuck loading, or says it can't reach FSOps — while FSOps itself is running fine in your browser.
 
-**Solution:** There's no reinstall action to trigger today. The old install left behind in your previous Community folder's `fsops-panel` subfolder is harmless to leave in place (MSFS simply won't see it if that folder is no longer where the sim reads from) or can be deleted by hand if you'd like to tidy up. If you need the panel present at your new Community folder location, the only way to get it there right now is to delete your airline from Settings and go back through the setup wizard, which will offer the "Connect your MSFS panel" step again against the new path — a genuinely heavy-handed workaround for what should be a one-click fix, and worth knowing is on the list to be wired up properly.
+**Cause:** **Port drift.** The panel is a static package: when it's installed, the address of your FSOps server is baked into it. If FSOps later starts on a *different* port — most often because 5977 was already taken and it fell back to another, or because you set `FSOPS_PORT` yourself — the installed panel carries on calling the old address, which nothing is listening on any more. This is a genuinely nasty symptom because the panel looks perfectly installed from every angle: the files are all there, the version is right, the button works. Nothing about a blank window points at a port.
+
+FSOps detects this specific case and shows the panel's status badge as **Needs repair** in Settings → MSFS panel, with the mismatch named explicitly.
+
+**Solution:** Open Settings → MSFS panel and select **Reinstall / repair**. That rewrites the package against the port FSOps is actually on. Then restart MSFS so it picks the updated package up. If you'd rather this never happen again, keep FSOps on a fixed port — if 5977 is regularly claimed by something else on your machine, it's worth finding out what (see [The UI won't load / port 5977 is already in use](#the-ui-wont-load--port-5977-is-already-in-use)) rather than letting the port move around underneath the panel.
+
+## I moved my Community folder, or reinstalled MSFS
+
+**Symptom:** You moved your MSFS install (a different drive, a switch between Steam and Microsoft Store), reinstalled the simulator, or deleted the `fsops-panel` folder by hand — and you're unsure whether the panel followed, or Settings now shows it as **Not installed**.
+
+**Cause:** The panel lives inside your Community folder, so anything that changes or replaces that folder leaves it behind. FSOps checks what's actually on disk each time you open Settings rather than trusting what it installed previously, so the status badge reflects reality even when the change happened entirely outside FSOps.
+
+**Solution:** Open Settings → MSFS panel and set the Community folder to the new location — FSOps lists the folders it can find on this PC, or you can browse for it. When you change the folder and a panel is installed at the old one, FSOps **asks whether to move it**: it can install into the new folder and optionally remove the old copy, or just update the recorded path and leave everything alone. If you'd rather do it in steps, save the new folder first and then use **Install panel** (or **Reinstall / repair** if a stale copy is already there). Restart MSFS afterwards so it rescans. An old `fsops-panel` folder left behind somewhere the sim no longer reads is harmless, but **Remove the panel** will clean it up properly if you point the folder back at it first.
+
+## FSOps never tells me about updates
+
+**Symptom:** Settings → Updates always says you're on the latest version, or shows nothing at all, even though you know a newer release exists.
+
+**Cause:** The update check is deliberately built so that *every* way it can fail looks exactly like "you're up to date". Having no internet isn't an error worth interrupting anyone over, and a flight-simulator companion app has no business putting a red banner in front of you because a website was slow. So there's no error state to find — which does mean a genuine problem looks identical to good news. The usual reasons, in rough order of likelihood:
+
+1. **Update checks are switched off.** Settings → Updates has an On/Off control. Off means no request leaves your machine at all, for any reason — it isn't "check quietly and hide the answer".
+2. **The check simply hasn't run yet.** It runs at most once a day, lazily, and never during startup. If you've only just opened FSOps for the first time, the first check may not have completed. Select **Check now**.
+3. **GitHub couldn't be reached.** No internet, a captive-portal wifi, a corporate proxy, DNS trouble, or GitHub's API rate-limiting your address (which it does per-IP for unauthenticated requests, and shared/office addresses hit it more easily). When this happens the line beside **Check now** reads "could not reach the releases page, so nothing has changed", and the check retries on its own after a few hours rather than hammering away at it.
+4. **You dismissed that version.** Dismissing the notice silences that exact version permanently; a later release starts talking again. Settings → Updates always shows the update even after you've dismissed it — only the app-wide notice is hidden.
+5. **The release is a pre-release or a draft.** Neither is ever offered as an update, whether it's flagged as such on GitHub or simply carries a tag like `v0.3.0-rc.1`. This is intentional.
+6. **The release's tag isn't a version FSOps can compare.** A tag like `nightly` or `release-2026-08` isn't something a semantic comparison can rank against your build, so it's ignored rather than guessed at.
+
+**Solution:** Turn checks on if they're off, select **Check now**, and read the line beside it. If it says the releases page couldn't be reached, that's a network condition, not a broken install — try again later. Either way you can always download a new version yourself from the project's releases page; the in-app check is a convenience, never the only route.
+
+## A downloaded update was rejected, or disappeared
+
+**Symptom:** You selected **Download and verify** and got a message saying the download didn't match the release's checksum and was deleted — or an installer you'd already downloaded vanished when you went back for it.
+
+**Cause:** This is the safety check doing its job, and it's the most important thing this feature does. FSOps ships **unsigned** — there's no code-signing certificate — so the SHA-256 checksum published alongside each release is the only thing that distinguishes the installer the author actually built from whatever happened to arrive over your network. FSOps downloads that checksum first, downloads the installer to a temporary name, hashes the bytes that actually landed on disk, and only gives the file its real name if the two match exactly. Anything else — a corrupted or truncated download, a proxy that rewrote the file, a mirror serving something else — is deleted rather than handed to you.
+
+The same check runs *again* when you select **Show the installer**, because "verified twenty minutes ago" isn't the same statement as "these bytes are correct now". If the file changed on disk in between, it's deleted then instead.
+
+You'll also see the download refused outright, before anything is fetched, if a release publishes an installer with **no** `.sha256` file alongside it. There'd be nothing to verify it against, and an unverifiable unsigned installer is exactly what this is meant to prevent — so FSOps tells you the new version exists, links you to the release page, and declines to fetch it for you.
+
+**Solution:**
+
+1. Try the download once more. A single interrupted or corrupted transfer is by far the most common cause, and a retry usually just works.
+2. If it fails again, download the installer yourself from the release page. Then check it by hand before running it — download the `.sha256` file next to it and compare:
+   ```
+   Get-FileHash .\FSOps-Setup-x.y.z.exe -Algorithm SHA256
+   ```
+   The value it prints should match the one in the `.sha256` file, ignoring case. **If it doesn't match, don't run it** — that file is not what the author published, and where you got it from is worth being suspicious of.
+3. If the checksum keeps failing on a network you don't control (an office, a hotel, a school), that's worth knowing about in itself: something between you and GitHub is modifying downloads. Try a different network before assuming the release is at fault.
+
+## Where a downloaded update goes, and why FSOps won't run it
+
+A verified installer is written to:
+
+```
+%LOCALAPPDATA%\FSOps\updates\
+```
+
+Never beside the FSOps program files — those live under Program Files, which is read-only for a standard user. **Show the installer** opens that folder; it does not launch anything. Nothing in FSOps runs the installer, and that's a deliberate refusal rather than a missing feature: FSOps is unsigned, so an app that quietly downloaded and executed a program on your behalf would be building the exact problem the checksum exists to prevent — and it'd be doing it using trust you'd extended to FSOps, not to whatever it fetched. Deciding to run an unsigned installer is yours to make, in Explorer, where you can see what you're launching.
+
+To install an update: select **Show the installer**, close FSOps, then run the installer yourself from the folder that opens. If you'd rather not keep the downloaded file, deleting it is always safe — FSOps simply offers the download again next time, and turning update checks off deletes it for you.
 
 ## Where the database lives
 

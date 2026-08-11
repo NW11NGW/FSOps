@@ -34,6 +34,8 @@ This document describes how FSOps is put together: the solution layout, how a re
 - [SimBrief flight plan import](#simbrief-flight-plan-import)
 - [The VATSIM ATC layer](#the-vatsim-atc-layer)
 - [The in-game panel and PanelPackageInstaller](#the-in-game-panel-and-panelpackageinstaller)
+- [The desktop shell and how FSOps is published](#the-desktop-shell-and-how-fsops-is-published)
+- [The update checker](#the-update-checker)
 - [Testing](#testing)
 - [Layering diagram](#layering-diagram)
 
@@ -365,15 +367,30 @@ The `/panel` route (`src/fsops-web/src/pages/Panel.tsx`) is the compact, read-on
 - **Status** (`GetStatus`) is read-only, comparing the installed `manifest.json`'s `package_version` against `PanelPackageInstaller.ExpectedPanelVersion`.
 - **Uninstall** deletes exactly the `fsops-panel` sub-folder and nothing else in Community, through the same containment check as install.
 
-**The one honest gap.** `package/InGamePanels/FSOpsPanel.spb` — a binary file that registers the panel with MSFS's toolbar (its icon, panel ID, default size and docking) — is not in the repository. MSFS doesn't read `source/FSOpsPanelDefinition.xml` directly; it has to be compiled into the `.spb` by the MSFS SDK's `fspackagetool.exe`, a Windows tool that ships only with the separately-installed MSFS SDK, not the game itself, and it has not yet been run by anyone. Every install/repair still succeeds and writes every other file correctly (`InstallOrRepair`'s own tests assert this explicitly), but the result carries `SpbPresent: false` and `ToolbarWillAppearInSim: false`, with a message that says plainly that the FSOps button will not appear in MSFS's toolbar until a future update adds the compiled file — never a silent or optimistic success. The one-time fix, once someone with the SDK installed runs it, is documented in full in `src/fsops-ingame-panel/README.md`:
+**The compiled `.spb` — previously the one honest gap, now closed.** `package/InGamePanels/FSOpsPanel.spb` is the binary that registers the panel with MSFS's toolbar (icon, panel ID, default size and docking). MSFS never reads the panel's XML definition directly; it has to be compiled by the MSFS SDK's `fspackagetool.exe`, which ships only with the separately-installed SDK, not the game. It is now compiled and committed, and `SpbPresent`/`ToolbarWillAppearInSim` report true for a normal install. The reporting itself is unchanged and still honest: remove the file from a template and the installer still refuses to claim the toolbar button will appear.
 
-```
-fspackagetool.exe "<path-to-repo>\src\fsops-ingame-panel\source\FSOpsPanelDefinition.xml" -nomirroring
-```
+Rebuilding is only needed if the panel's *registration* changes — a different icon, panel ID or default size. The HTML/CSS/JS and the port are plain text and are never compiled, so neither a content change nor a port change needs the SDK. The command, and the full package/project layout, live in `src/fsops-ingame-panel/README.md`.
 
-— then moving the resulting `.spb` to `src/fsops-ingame-panel/package/InGamePanels/FSOpsPanel.spb` and committing it. Nothing else in the package needs to change for that to start working; `PanelPackageInstaller` already copies whatever is under `package/` (built into the server's output as `PanelTemplate/`) into the player's Community folder on the very next install, update or repair.
+Three properties of the package tool are worth repeating here because two of them fail **silently**, and an earlier version of this document recorded a command that could not have worked:
 
-**What the app currently exposes for this, and what it doesn't yet.** Detect, validate and install are wired to real UI — but only inside the one-time, skippable "Connect your MSFS panel" step of the airline setup wizard (`CommunityFolderStep.tsx`). `PanelPackageInstaller`'s repair and uninstall operations, and the `GetStatus` read, are real, tested backend capabilities (`POST /panel/install` is safely re-runnable as a repair; `DELETE /panel/uninstall`; `GET /panel/status`) with **no frontend caller anywhere yet** — this is unfinished UI over finished capability, not a gap in the underlying feature. Settings does have a Community-folder field (`SimulatorSection.tsx`), but today it only does `PUT /settings` to store the path for other features to read; it does not call `/panel/install` or `/panel/status`, so **changing the folder there does not reinstall or repair the panel at the new location** — see [Troubleshooting](guides/troubleshooting.md#the-toolbar-button-isnt-there) for what that means in practice and what to do about it today. Wiring the Settings page up to the existing endpoints is queued as follow-up work.
+- It takes a **project** file (`source/FSOpsPanel.xml`), not the panel definition, and there is no `-nomirroring` flag. The project references a package definition, which references the source folder — which is why one conceptual panel needs three XML files.
+- The asset group type is **`SPB`** ("SimPropBinary"), not `InGamePanels`. The panel document declares `Type="InGamePanels"` internally, but that describes the *document*; MSFS 2024's asset-type list contains no `InGamePanels` entry at all. Getting this wrong produces no output and no error.
+- The compiled file takes its name from the **source filename**, not from the `<Filename>` element inside the document — `PackageSources/FSOpsPanel.xml` is what makes `FSOpsPanel.spb`.
+
+The build also settled the `manifest.json` version fields, which had been inherited from MSFS-2020-era references: the 2024 SDK reported `minimum_game_version` **1.7.35** and `minimum_compatibility_version` **7.26.0.214**. That is stricter than the `1.0.0` previously declared, so a player on an older 2024 build would find the package simply does not load, with no error — lowering it back is the first thing to try if that is ever reported, since the panel uses no version-specific features.
+
+`PanelPackageInstaller` needed no change for any of this: it copies whatever is under `package/` (built into the server's output as `PanelTemplate/`) into the player's Community folder, so the new file was picked up by the existing glob.
+
+**What the app exposes for this.** The full lifecycle is now reachable from the UI. Onboarding still has its one-time, skippable "Connect your MSFS panel" step (`CommunityFolderStep.tsx`), and **Settings owns it from then on** through `MsfsPanelSection.tsx` — a single card holding both the Community-folder path *and* the panel's status and actions.
+
+That single-card shape is deliberate and is the fix for the original defect. Previously the folder lived in its own `SimulatorSection.tsx`, which only did `PUT /settings` to store the path; changing it did not reinstall or move the panel, so the old install was orphaned and the new folder got nothing. A folder field that can drift from the panel it governs is the same duplicate-source-of-truth mistake this codebase has been bitten by elsewhere, so the two were merged and `SimulatorSection.tsx` deleted.
+
+- **Status is read from disk on every load** and reports what is actually there: files present, location, installed version against expected, the port the installed panel calls, and the honest `ToolbarWillAppearInSim` flag.
+- **Changing the folder asks rather than assumes** — move the panel (install at the new location *first*, remove the old copy only once that succeeded, so the worst case is two copies and never none) or just change the path. Clearing the path offers to remove the panel first.
+- **Port drift is detected** by reading the port back out of the installed `FSOpsPanel.config.js` and comparing it with `ResolveConfiguredPort()`. This is a nastier failure than it sounds: the panel looks perfectly installed and renders nothing, giving the user no reason to suspect the port. Settings flags it and points at repair. Nothing rewrites the file on startup — writing into a player's Community folder unprompted on every launch is more invasive than the problem warrants — and an unreadable config reports null rather than inventing a mismatch.
+- **`GET /panel/status` takes an optional `?path=`** so Settings can ask what is on disk at a folder that is not the saved one. It goes through the same `ValidateCommunityFolder` gate as everything else, so it cannot be used to probe arbitrary disk.
+- **`IsOurPackage` guards every delete.** The old path in a folder change is untrusted input for *deletion*, which is considerably more dangerous than the write path, so the installer refuses to remove or overwrite an `fsops-panel` folder it cannot prove FSOps created.
+- **A missing Community folder refuses the install** rather than creating a phantom tree, which would have reported success for a panel MSFS could never load.
 
 ## How the SPA is chunked
 
@@ -384,6 +401,38 @@ This matters for the in-game panel more than for the browser. MapLibre is by far
 One honest caveat: the Dashboard's `LiveOpsMap` is gated on the live-operations request completing rather than on any user action, so MapLibre *is* fetched there shortly after the shell renders. It no longer blocks first paint, but the dashboard is not a map-free route.
 
 Every lazy boundary needs a designed fallback, not a blank area — `PageSkeleton` for routes, and map-sized `Skeleton` blocks for the map components so nothing shifts when they arrive.
+
+## The desktop shell and how FSOps is published
+
+`src/FSOps.Desktop` (`net8.0-windows`, x64, WinForms hosting `Microsoft.Web.WebView2`) is what a user actually launches. It exists so FSOps is an application with its own window, taskbar entry and icon rather than a browser tab that can be closed independently of the server still running behind it.
+
+**The server runs as a child process, not in-process.** Two reasons, and the second is the stronger one. `FSOps.Server`'s composition root is top-level statements with no callable entry point, so in-process hosting would have meant restructuring `Program.cs`. More importantly, the server must stay independently launchable — headless runs, serving the in-game panel with no desktop window open, and every integration test start it directly — and one startup path that everything shares is worth more than two that can drift apart. The orphan risk this creates is answered by `ChildProcessJob`, a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: kernel-enforced, so the server dies even when the shell is killed abruptly from Task Manager rather than closed tidily.
+
+**The asymmetry in that rule is deliberate and must not be "tidied up".** If the chosen port is already answering, the shell **attaches** to that server instead of starting a second one — there is one SQLite database per user — and on close it deliberately leaves that server running, because it did not start it. The job object never adopts a process the shell did not launch. This mirrors a hard rule that has been broken repeatedly in this project's history: only ever stop the process you started. Launching the desktop app while a browser copy is already running does the right thing, and killing the desktop app does not take the user's other session down with it.
+
+**A missing WebView2 runtime is never a dead end.** The display mode is decided *before* any window is constructed, so nobody sees a dead frame. Without WebView2 the SPA opens in the default browser and the app carries on working; the window still appears, small, owning the server's lifetime and giving a taskbar entry, saying in one line what happened and offering the runtime as an improvement rather than a prerequisite. It also falls back if WebView2 is present but fails to initialise later. `FSOPS_USE_BROWSER=1` forces this mode deliberately.
+
+**The bug this nearly shipped with, recorded because it is a whole class of bug.** The WebView2 package delivers its native loader at `runtimes\win-x64\native\WebView2Loader.dll` as **plain content**, so it never appears in the app's `.deps.json` and the .NET runtime never adds that folder to the native DLL search path. A framework-dependent build survives by finding the loader in the NuGet cache; a self-contained publish has no such fallback and throws `0x8007007E` before a window exists. It was invisible under `dotnet run` and fatal for the installed app — exactly the failure mode the project's "test it the way a user launches it" rule exists for, and the third time that rule has paid for itself. MSBuild targets now copy the loader beside the executable in both build and publish output, and `scripts/publish.ps1` asserts its presence rather than trusting it.
+
+**Publishing** is `scripts/publish.ps1`: builds the SPA, publishes both projects self-contained for `win-x64`, and asserts the resulting layout. The output is a **flat single folder** (~536 files, ~188 MB) meant to be copied verbatim. `FSOps.Server.exe` is located relative to `FSOps.Desktop.exe`, so the two must never be separated, and `WebView2Loader.dll` must remain at the root. `PanelTemplate/` ships inside it, compiled `.spb` included, which is how the installer carries the in-game panel without special handling.
+
+**The fixed-version WebView2 distribution was considered and rejected.** It roughly doubles the installer for a case already covered twice over, and it is a browser engine receiving no automatic security updates — FSOps would own patching Chromium in its own release cycle forever, and a stale engine is a worse outcome than no engine.
+
+## The update checker
+
+`UpdateChecker` (policy), `GitHubReleaseClient` (transport), `UpdateStateFile` (persistence) and `UpdateEndpoints` (`GET /update/status`, `POST /update/check`, `PUT /update/preferences`, `POST /update/dismiss`, `POST /update/download`, `POST /update/reveal`).
+
+**How far it goes, and why it stops there.** Check → notify → *the user clicks* → the server downloads → SHA-256 verify → open the containing folder. **It never runs the installer.** FSOps ships unsigned, so the published checksum is the only thing separating "the installer the author built" from "whatever arrived over the network". An app that silently executed a downloaded binary would be constructing precisely the attack path the checksum exists to close, using trust the user extended to FSOps rather than to what it fetched. The reveal endpoint hands ShellExecute only the **directory**, never the installer's own path, so no code path in FSOps can launch it even by mistake.
+
+**Download ordering is load-bearing.** The checksum is fetched *first* — no checksum means nothing is downloaded at all — then the asset streams to a `.part` name, is hashed **from disk** after the write completes, and only then moved into place. A failed or interrupted download can therefore never be mistaken for a verified one. Verification is re-checked at reveal time too, so a file swapped after verification is refused and deleted.
+
+**Nothing about updates is on the startup path.** There is deliberately no hosted service: the check is lazy and its result cached on disk at `%LOCALAPPDATA%\FSOps\update-state.json`. That file, rather than `UserSettings`, holds the preference precisely because a kill switch that cannot be read unless the database is up is not a kill switch. Switched off means no outbound request is attempted at all — verified live, not merely intended.
+
+**Every expected failure is a failed result, never an exception**: no network, timeout, malformed payload, rate-limiting, missing asset, missing checksum, draft, pre-release, or an older or equal version. HTTPS and a GitHub host allowlist are enforced before a byte is requested, and size caps against bytes actually written rather than a declared length.
+
+**On the "no external network" rule.** That constraint is a **frontend** one — it exists so the UI works inside an MSFS panel with no reliable internet, and the SPA still makes no external calls, everything going through FSOps' own API. Server-side this is the **second** outbound call, after VATSIM, not the first.
+
+Expected release shape: a non-draft, non-prerelease release tagged `v<major>.<minor>.<patch>`, carrying `FSOps-Setup-<version>.exe` and a sidecar named exactly `<installer name>.sha256`. The installer derives its version from `Directory.Build.props`, the same source `AppVersion` reads back, so the artefact name and the running version cannot drift — if they did, everyone already on the new version would be offered it forever.
 
 ## Testing
 
