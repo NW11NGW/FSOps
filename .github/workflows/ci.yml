@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    # Windows, not Linux: FSOps.Sim references SimConnect's native x64 libraries and the
+    # net461-targeted FsConnect wrapper, so the solution does not restore on a Linux runner.
+    # This is also the platform the app actually ships on, which makes it the honest place
+    # to run the tests.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: src/fsops-web/package-lock.json
+
+      - name: Restore
+        run: dotnet restore FSOps.sln
+
+      # Warnings are treated as failures deliberately: the project keeps a warning-free build,
+      # and letting one through here would quietly erode that.
+      - name: Build
+        run: dotnet build FSOps.sln --no-restore --configuration Release -warnaserror
+
+      - name: Test
+        run: dotnet test FSOps.sln --no-build --configuration Release --verbosity normal
+
+      - name: Install web dependencies
+        working-directory: src/fsops-web
+        run: npm ci
+
+      - name: Type-check web
+        working-directory: src/fsops-web
+        run: npx tsc --noEmit
+
+      - name: Test web
+        working-directory: src/fsops-web
+        run: npm run test:run
+
+      - name: Build web
+        working-directory: src/fsops-web
+        run: npm run build
