@@ -69,6 +69,11 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
       value: `${data.distanceUnit} · ${data.altitudeUnit} · ${data.weightUnit} · ${data.timeDisplay} · ${data.use24HourClock ? '24h' : '12h'}`,
       stepKey: 'currency',
     },
+    {
+      label: 'MSFS panel',
+      value: data.communityFolderPath ? data.communityFolderPath : 'Skipped — set up later in Settings',
+      stepKey: 'communityFolder',
+    },
   ]
 
   return (

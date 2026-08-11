@@ -21,6 +21,7 @@ export const WIZARD_STEPS = [
   { key: 'strategy', label: 'Strategy' },
   { key: 'aircraft', label: 'Aircraft' },
   { key: 'currency', label: 'Currency' },
+  { key: 'communityFolder', label: 'MSFS panel' },
   { key: 'review', label: 'Review' },
 ] as const
 
@@ -131,6 +132,9 @@ export interface WizardData {
   loanEnabled: boolean
   loanAmount: number
   loanTermMonths: number
+  /** null = skipped ("MSFS panel" step is genuinely optional - see docs/PLAN.md "The Community
+   *  folder is captured at onboarding..."). Never required to finish founding an airline. */
+  communityFolderPath: string | null
 }
 
 export const DEFAULT_WIZARD_DATA: WizardData = {
@@ -158,6 +162,7 @@ export const DEFAULT_WIZARD_DATA: WizardData = {
   loanEnabled: false,
   loanAmount: 0,
   loanTermMonths: 60,
+  communityFolderPath: null,
 }
 
 const ICAO_PATTERN = /^[A-Z]{2,3}$/
@@ -201,6 +206,9 @@ export const STEP_VALIDATORS: Record<WizardStepKey, (data: WizardData) => boolea
   strategy: isStrategyValid,
   aircraft: isAircraftValid,
   currency: isCurrencyValid,
+  // Always valid - "skippable, and offered again later rather than nagged" (docs/PLAN.md). An
+  // unconfirmed or empty path never blocks founding an airline.
+  communityFolder: () => true,
   review: isFinanceValid,
 }
 

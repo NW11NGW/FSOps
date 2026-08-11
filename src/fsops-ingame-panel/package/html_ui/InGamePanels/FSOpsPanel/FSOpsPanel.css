@@ -1,0 +1,51 @@
+/* Layout only - fills whatever size MSFS's toolbar panel chrome gives this window and lets the
+   iframe (FSOps' own SPA, /panel route) take every remaining pixel. Selector structure mirrors the
+   verified working reference this package is built from (bymaximus/msfs2020-toolbar-window-template,
+   same technique cited by the plan for Navigraph's panel and buzinin/msfs2024-efb-panel) - see
+   ../../../../README.md. */
+ingame-ui#FSOpsPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100% !important;
+  width: 100% !important;
+}
+ingame-ui#FSOpsPanel #FSOpsPanelWrap {
+  display: flex;
+  flex-direction: column;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  align-items: stretch !important;
+  flex: 1 1 auto !important;
+}
+ingame-ui#FSOpsPanel #FSOpsPanelWrap #FSOpsPanelIframe {
+  flex: 1 1 auto !important;
+  border: 0;
+  background: #0b0f14;
+}
+ingame-ui#FSOpsPanel .ingameUiContent {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  align-items: stretch !important;
+  flex: 1 1 auto !important;
+}
+ingame-ui#FSOpsPanel .ingameUiWrapper {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  align-items: stretch !important;
+  flex: 1 1 auto !important;
+}

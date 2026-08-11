@@ -9,6 +9,11 @@ export interface MapColors {
   border: string
   foreground: string
   mutedForeground: string
+  /** ATC coverage colour - deliberately distinct from `accent` (which the route network and the
+   *  player's own aircraft already use) so controller sector shading never reads as "more
+   *  network" at a glance. Legible against both the light and dark CARTO basemaps. */
+  atc: string
+  atcFill: string
 }
 
 /**
@@ -64,6 +69,7 @@ export function readMapColors(): MapColors {
   const border = read('--border', '217 33% 18%')
   const foreground = read('--foreground', '210 40% 96%')
   const mutedForeground = read('--muted-foreground', '215 20% 65%')
+  const warning = read('--warning', '38 92% 50%')
 
   return {
     accent: tokenToRgb(accent),
@@ -72,6 +78,8 @@ export function readMapColors(): MapColors {
     border: tokenToRgb(border),
     foreground: tokenToRgb(foreground),
     mutedForeground: tokenToRgb(mutedForeground),
+    atc: tokenToRgb(warning),
+    atcFill: tokenToRgb(warning, 0.12),
   }
 }
 

@@ -10,6 +10,17 @@ const KG_TO_LB = 2.20462
  * the user's chosen currency only at the point of display. `currency.rate`
  * is the multiplier from base units to that currency.
  */
+/**
+ * Dates are pinned to one locale rather than following whichever machine happens to render them.
+ * Passing `undefined` reorders the fields by OS locale - the same timestamp reads "31 Aug 2026"
+ * here and "Aug 31, 2026" on a US-configured machine - which makes the UI inconsistent between
+ * users and makes any assertion about a formatted date fail depending on where it runs. The
+ * numeric formatters above already pin a locale for exactly this reason; this brings dates in
+ * line. Time-of-day is a separate, deliberate concern: the user's UTC/local and 24-hour
+ * preferences are settings, not a locale guess.
+ */
+const DATE_LOCALE = 'en-GB'
+
 export function formatMoney(baseAmount: number, currency: CurrencyInfo): string {
   const converted = baseAmount * currency.rate
   const magnitude = Math.abs(converted)
@@ -68,7 +79,7 @@ export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+  return date.toLocaleDateString(DATE_LOCALE, { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 /** A calendar date plus time, e.g. "31 Aug 2026, 14:32" - for ledger rows and other precise
@@ -77,5 +88,5 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleString(DATE_LOCALE, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }

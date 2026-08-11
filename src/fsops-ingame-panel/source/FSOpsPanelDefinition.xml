@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="Windows-1252"?>
+<!--
+  Source definition for the FSOps toolbar panel's registration with MSFS (icon, panel ID, default
+  docking/size). This is NOT read directly by the simulator - it must be compiled into a binary
+  InGamePanels/FSOpsPanel.spb by the MSFS SDK's fspackagetool.exe and the result checked into
+  ../package/InGamePanels/FSOpsPanel.spb. See ../README.md for the exact command and why this step
+  cannot be automated in this repository.
+
+  Structure verified against a real, working community in-game toolbar panel
+  (bymaximus/msfs2020-toolbar-window-template's InGamePanels.InGamePanelDefinition, the same
+  toolbar-iframe technique the project's plan cites for Navigraph's panel and
+  buzinin/msfs2024-efb-panel) - not guessed.
+-->
+<SimBase.Document Type="InGamePanels" version="1,0">
+  <Filename>InGamePanel_FSOpsPanel.spb</Filename>
+  <InGamePanels.InGamePanelDefinition
+    id="PANEL_FSOPS_PANEL"
+    Name="FSOpsPanel"
+    url="html_UI/InGamePanels/FSOpsPanel/FSOpsPanel.html"
+    resizeDirections="Both"
+    minWidth="33"
+    minHeight="24"
+    defaultWidth="36"
+    defaultHeight="27"
+    defaultTop="33"
+    defaultRight="2"
+    icon="ICON_TOOLBAR_FSOPS_PANEL"
+    buttonVisible="true">
+  </InGamePanels.InGamePanelDefinition>
+</SimBase.Document>

@@ -47,6 +47,19 @@
     </None>
   </ItemGroup>
 
+  <!-- The in-game panel package template (see src/fsops-ingame-panel/README.md) ships next to the
+       built assembly, same reasoning as economy-config.json above - PanelPackageInstaller resolves
+       it from AppContext.BaseDirectory so it works the same under "dotnet run" and a published exe.
+       PanelPackageInstaller copies these files as-is into the player's Community folder; it never
+       modifies anything under here. -->
+  <ItemGroup>
+    <None Include="..\fsops-ingame-panel\package\**">
+      <Link>PanelTemplate\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>

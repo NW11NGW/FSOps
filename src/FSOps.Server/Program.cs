@@ -128,6 +128,14 @@ builder.Services.AddHostedService<VirtualFlightResolverService>();
 // Populated during startup, below - nothing can be added to the service collection after Build().
 builder.Services.AddSingleton<StartupReconciliationState>();
 
+// VATSIM's public data feed, fetched server-side only - the SPA never calls it directly, because
+// the UI also runs inside an MSFS panel with no reliable internet and no business making
+// third-party requests. A singleton so one cached fetch is shared by every client rather than one
+// request per poll; the timeout is deliberately generous but finite, since a slow feed must never
+// hold up a dashboard request.
+builder.Services.AddHttpClient("vatsim", client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<IVatsimNetworkClient, VatsimNetworkClient>();
+
 var app = builder.Build();
 
 // Migrations are fast (schema-only), so this runs synchronously before Kestrel starts
@@ -192,6 +200,9 @@ apiV1.MapFleetDisposalEndpoints();
 apiV1.MapFinanceEndpoints();
 apiV1.MapPilotEndpoints();
 apiV1.MapMaintenanceEndpoints();
+apiV1.MapStatsEndpoints();
+apiV1.MapVatsimEndpoints();
+apiV1.MapPanelEndpoints();
 apiV1.MapOperationsEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");

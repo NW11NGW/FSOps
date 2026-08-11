@@ -10,8 +10,8 @@ import { applyAccentColour } from '@/lib/theme'
 
 // Each page is its own chunk, fetched only when the player navigates there. This matters most for
 // routes that pull in maplibre-gl (Dashboard, Routes, and - via LiveFlightView - Fly indirectly):
-// none of that has to download before the app shell can even paint. It also keeps a future compact
-// /panel route (see docs/PLAN.md) from ever paying for the rest of the app's pages.
+// none of that has to download before the app shell can even paint. It also keeps the compact
+// /panel route (below) from ever paying for the rest of the app's pages.
 const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const Fly = lazy(() => import('@/pages/Fly').then((m) => ({ default: m.Fly })))
 const RoutesPage = lazy(() => import('@/pages/Routes').then((m) => ({ default: m.RoutesPage })))
@@ -20,6 +20,10 @@ const Pilots = lazy(() => import('@/pages/Pilots').then((m) => ({ default: m.Pil
 const Finances = lazy(() => import('@/pages/Finances').then((m) => ({ default: m.Finances })))
 const Stats = lazy(() => import('@/pages/Stats').then((m) => ({ default: m.Stats })))
 const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
+// Outside AppShell (below) - the in-game toolbar panel gets none of the sidebar/topbar chrome,
+// just its own compact content. See docs/PLAN.md's in-game panel section: same origin, same
+// SignalR live-flight data, but its own route so it never has to download the rest of the app.
+const Panel = lazy(() => import('@/pages/Panel').then((m) => ({ default: m.Panel })))
 
 function FullScreenSplash() {
   return (
@@ -59,6 +63,9 @@ function App() {
     <ErrorBoundary>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
+          {/* Not nested under AppShell - the toolbar panel has no sidebar/topbar, only its own
+              compact content (see Panel.tsx). */}
+          <Route path="panel" element={<Panel />} />
           <Route element={<AppShell />}>
             <Route index element={<Dashboard />} />
             <Route path="fly" element={<Fly />} />

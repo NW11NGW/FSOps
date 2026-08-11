@@ -49,3 +49,38 @@ export interface LiveOperationsResponse {
   aircraft: LiveAircraft[]
   network: LiveNetworkRoute[]
 }
+
+/**
+ * GET /api/v1/operations/atc - backs the dashboard's ATC layer (see docs/PLAN.md "VATSIM
+ * integration"). Deliberately narrower than the full network-traffic integration described
+ * there: this is online controllers only, and only ones covering an airport in the airline's own
+ * route network - never a global controller list, and never other pilots' traffic.
+ *
+ * `status` distinguishes "the feed answered but nobody relevant is online" (`'ok'` with an empty
+ * list) from "the feed itself could not be read" (`'unavailable'`) - the UI must tell these apart
+ * rather than showing the same empty state for both.
+ */
+export type VatsimAtcStatus = 'ok' | 'unavailable'
+
+export interface VatsimAtcController {
+  callsign: string
+  facilityLabel: string
+  frequency: string
+  /** Null when the callsign doesn't resolve to one of the airline's network airports (en-route/
+   *  oceanic CTR/FSS positions, or an airport-shaped callsign FSOps doesn't recognise) - such
+   *  controllers are dropped server-side before this ever reaches the client, so in practice
+   *  every entry here has a resolved airport. Left nullable to match the wire contract exactly
+   *  rather than assuming that invariant holds forever. */
+  airportIcao: string | null
+  airportName: string | null
+  latitudeDeg: number | null
+  longitudeDeg: number | null
+  visualRangeNm: number | null
+  logonTimeUtc: string
+}
+
+export interface VatsimAtcResponse {
+  status: VatsimAtcStatus
+  fetchedAtUtc: string | null
+  controllers: VatsimAtcController[]
+}

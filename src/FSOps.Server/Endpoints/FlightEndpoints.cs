@@ -20,6 +20,13 @@ public static class FlightEndpoints
     /// </summary>
     private static readonly TimeSpan TelemetryReconciliationWindow = TimeSpan.FromMinutes(10);
 
+    // Stateless - safe to share as singletons rather than requiring DI registration. Ordered
+    // SimBrief-first: ResolveFlightPlanAsync returns the first provider that succeeds, and
+    // BuiltInFlightPlanProvider always does (see its own doc comment), so this pair is guaranteed
+    // to produce a usable plan even when SimBrief is unreachable or no Pilot ID is configured.
+    private static readonly SimBriefFlightPlanProvider SimBriefProvider = new();
+    private static readonly BuiltInFlightPlanProvider BuiltInProvider = new();
+
     public static void MapFlightEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapPost("/flights/start", StartAsync);
@@ -29,7 +36,37 @@ public static class FlightEndpoints
         group.MapGet("/flights/{id:guid}", GetByIdAsync);
         group.MapGet("/flights", ListAsync);
         group.MapGet("/flights/options", OptionsAsync);
+        group.MapGet("/flights/plan-import", PlanImportAsync);
     }
+
+    /// <summary>
+    /// Composes the configured providers in priority order and returns the first plan any of them
+    /// can actually produce - SimBrief when a Pilot ID is set and its latest OFP matches this
+    /// route, the built-in estimator otherwise. Never throws and never returns a null outcome:
+    /// BuiltInFlightPlanProvider is always included last and always succeeds.
+    /// </summary>
+    private static async Task<FlightPlanOutcome> ResolveFlightPlanAsync(FlightPlanRequest request, CancellationToken ct)
+    {
+        var simBriefOutcome = await SimBriefProvider.GetPlanAsync(request, ct);
+        if (simBriefOutcome.Success)
+        {
+            return simBriefOutcome;
+        }
+
+        var builtInOutcome = await BuiltInProvider.GetPlanAsync(request, ct);
+        return MergeFallback(simBriefOutcome, builtInOutcome);
+    }
+
+    /// <summary>
+    /// Carries the failed provider's own reason for falling back (no Pilot ID, unknown Pilot ID, a
+    /// timeout, a city-pair mismatch, ...) forward onto the plan that's actually used -
+    /// BuiltInFlightPlanProvider itself never sets a message (it always succeeds outright), so
+    /// without this the player would see a plan with no explanation of why it isn't from SimBrief.
+    /// "Say so plainly" means WHY, not just THAT (docs/PLAN.md "Flight plan import"). A pure,
+    /// I/O-free function so this fallback contract is unit-testable without a network call.
+    /// </summary>
+    internal static FlightPlanOutcome MergeFallback(FlightPlanOutcome primaryOutcome, FlightPlanOutcome fallbackOutcome) =>
+        primaryOutcome.Success ? primaryOutcome : fallbackOutcome with { Message = primaryOutcome.Message };
 
     internal static async Task<IResult> StartAsync(
         StartFlightRequest request, FsOpsDbContext db, ICurrentUser currentUser,
@@ -128,6 +165,18 @@ public static class FlightEndpoints
 
         var plan = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline.StrategyProfile);
 
+        // Enrichment only - never touches the route, the aircraft, or the schedule, and never
+        // affects the fuel-uplift reconciliation below (that stays anchored to `plan`, the
+        // deterministic estimate, exactly as before). This purely decides what PlannedBlockMinutes
+        // and FuelPlannedKg record as "the plan" for this sector: a real SimBrief OFP when the
+        // player has a Pilot ID set and its latest plan matches this route, the same built-in
+        // estimate as before otherwise. See docs/PLAN.md "Flight plan import".
+        var userSettings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == currentUser.UserId, ct);
+        var flightPlanRequest = new FlightPlanRequest(departure, arrival, aircraftType, economyConfig, airline.StrategyProfile, userSettings?.SimBriefPilotId);
+        var flightPlanOutcome = await ResolveFlightPlanAsync(flightPlanRequest, ct);
+        var plannedBlockMinutes = flightPlanOutcome.Plan?.BlockTimeMinutes ?? plan.BlockTimeBreakdown.TotalMinutes;
+        var fuelPlannedKg = flightPlanOutcome.Plan?.BlockFuelKg ?? plan.FuelBreakdown.TotalFuelKg;
+
         var currentAircraft = telemetry.CurrentAircraft;
         var titleFlown = currentAircraft?.Title ?? string.Empty;
         var atcModel = currentAircraft?.AtcModel;
@@ -148,9 +197,9 @@ public static class FlightEndpoints
             PilotId = pilot.Id,
             Status = FlightStatus.InProgress,
             PlannedDepartureUtc = now,
-            PlannedBlockMinutes = plan.BlockTimeBreakdown.TotalMinutes,
+            PlannedBlockMinutes = plannedBlockMinutes,
             PaxBooked = aircraftType.PaxCapacity,
-            FuelPlannedKg = plan.FuelBreakdown.TotalFuelKg,
+            FuelPlannedKg = fuelPlannedKg,
             TitleFlown = titleFlown,
             TypeMismatch = typeMismatch,
             Revenue = 0m,
@@ -232,7 +281,10 @@ public static class FlightEndpoints
 
         lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes, fleetAircraft.FuelOnBoardKg);
 
-        return Results.Created($"/api/v1/flights/{flight.Id}", ToFlightDto(flight));
+        // planSource/planMessage are informational only, alongside the flight's own fields - never
+        // persisted (no schema change needed), just what "say so plainly" (docs/PLAN.md "Flight
+        // plan import") requires the player be told about where this sector's plan came from.
+        return Results.Created($"/api/v1/flights/{flight.Id}", ToFlightStartDto(flight, flightPlanOutcome));
     }
 
     internal static async Task<IResult> AbandonAsync(
@@ -661,6 +713,86 @@ public static class FlightEndpoints
         return Results.Ok(options);
     }
 
+    /// <summary>
+    /// The SimBrief import hand-off for the Fly screen's pre-flight brief: resolves the same plan
+    /// StartAsync would use for this route/aircraft pair (SimBrief when the player's Pilot ID has
+    /// a matching OFP, the built-in estimate otherwise) so the player can see - and be told about
+    /// a fallback - before committing to "Start flight". Purely a read: never creates, modifies,
+    /// or deletes a route, aircraft, or schedule, and starting nothing itself.
+    /// </summary>
+    internal static async Task<IResult> PlanImportAsync(
+        Guid routeId, Guid? fleetAircraftId, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.BadRequest(new { error = "Create an airline before importing a flight plan." });
+        }
+
+        var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == routeId && r.AirlineId == airline.Id, ct);
+        if (route is null)
+        {
+            return Results.NotFound(new { error = "Route not found." });
+        }
+
+        var departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
+        var arrival = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct);
+        if (departure is null || arrival is null)
+        {
+            return Results.Problem("This route's airports could not be found.", statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        AircraftType? aircraftType = null;
+        if (fleetAircraftId is Guid requestedAircraftId)
+        {
+            var requestedAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == requestedAircraftId && f.AirlineId == airline.Id, ct);
+            if (requestedAircraft is not null)
+            {
+                aircraftType = await db.AircraftTypes.FindAsync([requestedAircraft.AircraftTypeId], ct);
+            }
+        }
+
+        // No specific aircraft given (or it didn't resolve) - fall back to whatever's physically
+        // at the departure airport, then the airline's cheapest/first type, mirroring OptionsAsync's
+        // own fallback purely so there's still something sensible to plan against for display.
+        if (aircraftType is null)
+        {
+            // Materialise first - the SQLite provider can't translate ORDER BY over DateTimeOffset.
+            var atDeparture = (await db.FleetAircraft
+                    .Where(f => f.AirlineId == airline.Id && f.LocationIcao == route.DepartureIcao)
+                    .ToListAsync(ct))
+                .OrderBy(f => f.CreatedUtc)
+                .FirstOrDefault();
+            if (atDeparture is not null)
+            {
+                aircraftType = await db.AircraftTypes.FindAsync([atDeparture.AircraftTypeId], ct);
+            }
+        }
+
+        aircraftType ??= await db.AircraftTypes.OrderBy(t => t.IcaoType).FirstOrDefaultAsync(ct);
+        if (aircraftType is null)
+        {
+            return Results.Ok(new { available = false, source = (string?)null, message = "No aircraft type is available to plan against yet." });
+        }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+        var userSettings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == currentUser.UserId, ct);
+        var request = new FlightPlanRequest(departure, arrival, aircraftType, economyConfig, airline.StrategyProfile, userSettings?.SimBriefPilotId);
+        var outcome = await ResolveFlightPlanAsync(request, ct);
+
+        return Results.Ok(new
+        {
+            available = true,
+            source = outcome.ProviderName,
+            fromSimBrief = outcome.ProviderName == SimBriefProvider.Name,
+            message = outcome.Message,
+            blockFuelKg = outcome.Plan?.BlockFuelKg,
+            cruiseAltitudeFt = outcome.Plan?.CruiseAltitudeFt,
+            blockTimeMinutes = outcome.Plan?.BlockTimeMinutes,
+            routeString = outcome.Plan?.RouteString,
+        });
+    }
+
     /// <summary>Route-level fallback reason when NO fleet aircraft at all is physically at the
     /// departure airport - the per-aircraft reasons in <c>aircraftOptions</c> cover every other
     /// unflyable case, since there is at least one aircraft present to explain.</summary>
@@ -722,6 +854,15 @@ public static class FlightEndpoints
             fleetAircraft.LocationIcao = landing.Icao;
         }
     }
+
+    /// <summary>StartAsync's response: the flight's own fields (unchanged shape - ToFlightDto)
+    /// plus which provider's plan was actually used and, on a SimBrief fallback, why.</summary>
+    private static object ToFlightStartDto(Flight f, FlightPlanOutcome planOutcome) => new
+    {
+        flight = ToFlightDto(f),
+        planSource = planOutcome.ProviderName,
+        planMessage = planOutcome.Message,
+    };
 
     private static object ToFlightDto(Flight f) => new
     {

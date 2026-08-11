@@ -10,15 +10,36 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { buildMapStyle, readMapColors, type MapThemeMode } from '@/components/map/mapTheme'
 import { LiveFlightCard } from '@/components/map/LiveFlightCard'
+import { AtcControllerCard } from '@/components/map/AtcControllerCard'
+import { buildAtcSectorFeatures, controllerKeyFor } from '@/components/map/atcGeometry'
 import { Button } from '@/components/ui/button'
 import { boundsForPath, sampleGreatCirclePath, splitAntimeridian } from '@/lib/geo'
 import { cn } from '@/lib/utils'
 import type { LonLat } from '@/types/route'
-import type { LiveAircraft, LiveNetworkRoute } from '@/types/operations'
+import type { LiveAircraft, LiveNetworkRoute, VatsimAtcController } from '@/types/operations'
+import type { Polygon } from 'geojson'
 
 const NETWORK_SOURCE_ID = 'live-ops-network'
 const NETWORK_LAYER_ID = 'live-ops-network-line'
 const EMPTY_NETWORK_GEOJSON: FeatureCollection<LineString> = { type: 'FeatureCollection', features: [] }
+
+const ATC_SECTOR_SOURCE_ID = 'live-ops-atc-sectors'
+const ATC_SECTOR_FILL_LAYER_ID = 'live-ops-atc-sectors-fill'
+const ATC_SECTOR_LINE_LAYER_ID = 'live-ops-atc-sectors-line'
+const EMPTY_ATC_SECTOR_GEOJSON: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] }
+
+const RADIO_TOWER_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M4.9 16.1C1 20 1 20 1 20"/><path d="M7.8 13.2c-3 3-3 3-3 3"/><circle cx="12" cy="9" r="2"/><path d="M12 11v11"/><path d="M9 22h6"/><path d="M15.2 13.2c3 3 3 3 3 3"/><path d="M19.1 16.1c3.9 3.9 3.9 3.9 3.9 3.9"/></svg>'
+
+function controllerMarkerElement(label: string): HTMLDivElement {
+  const wrapper = document.createElement('div')
+  wrapper.className =
+    'flex size-6 items-center justify-center rounded-full border-2 border-warning bg-surface-elevated text-warning shadow-elevation-2 ring-2 ring-background'
+  wrapper.innerHTML = RADIO_TOWER_SVG
+  wrapper.setAttribute('role', 'img')
+  wrapper.setAttribute('aria-label', label)
+  return wrapper
+}
 
 /** Smooth interpolated-position transition duration - see docs/PLAN.md "update positions on a
  *  gentle interval ... with smooth transitions". Aircraft refresh about once a minute, so this
@@ -28,6 +49,11 @@ const MARKER_TRANSITION_MS = 1500
 interface LiveOpsMapProps {
   aircraft: LiveAircraft[]
   network: LiveNetworkRoute[]
+  /** Online VATSIM controllers covering the airline's own network - see docs/PLAN.md "VATSIM
+   *  integration". Omit (or pass an empty array) when the ATC layer has nothing to show; use
+   *  `atcUnavailable` to distinguish "nothing online" from "couldn't reach the feed". */
+  atcControllers?: VatsimAtcController[]
+  atcUnavailable?: boolean
   className?: string
 }
 
@@ -162,27 +188,32 @@ function animateMarker(entry: AircraftMarkerEntry, toLng: number, toLat: number,
  * component - it has different data shape (a whole fleet of moving markers, refreshed on a poll,
  * with smooth transitions) and a designed empty state neither of the other two needs.
  */
-export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
+export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavailable = false, className }: LiveOpsMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Map<string, AircraftMarkerEntry>>(new Map())
   const airportMarkersRef = useRef<Map<string, Marker>>(new Map())
+  const controllerMarkersRef = useRef<Map<string, Marker>>(new Map())
   const modeRef = useRef<MapThemeMode>('dark')
   const styleReadyRef = useRef(false)
   const firedInitialFitRef = useRef(false)
-  const latestRef = useRef({ aircraft, network })
+  const latestRef = useRef({ aircraft, network, atcControllers })
   const navigate = useNavigate()
   const navigateRef = useRef(navigate)
   const [tilesUnavailable, setTilesUnavailable] = useState(false)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
-  // Mirrors hoveredKey for the mount-only effect's closures (sync/move handler), which are
-  // created once and would otherwise only ever see the initial (null) hover state.
+  const [hoveredControllerKey, setHoveredControllerKey] = useState<string | null>(null)
+  const [hoveredControllerPos, setHoveredControllerPos] = useState<{ x: number; y: number } | null>(null)
+  // Mirrors hoveredKey/hoveredControllerKey for the mount-only effect's closures (sync/move
+  // handler), which are created once and would otherwise only ever see the initial (null) state.
   const hoveredKeyRef = useRef<string | null>(null)
+  const hoveredControllerKeyRef = useRef<string | null>(null)
 
-  latestRef.current = { aircraft, network }
+  latestRef.current = { aircraft, network, atcControllers }
   navigateRef.current = navigate
   hoveredKeyRef.current = hoveredKey
+  hoveredControllerKeyRef.current = hoveredControllerKey
 
   // Publishes the live map for console interrogation (queryRenderedFeatures etc.) when the debug
   // flag is set - same convention as RouteMap.tsx. Off by default.
@@ -191,6 +222,9 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
   }
 
   const hoveredAircraft = hoveredKey ? aircraft.find((ac) => keyFor(ac) === hoveredKey) ?? null : null
+  const hoveredController = hoveredControllerKey
+    ? atcControllers.find((c) => controllerKeyFor(c) === hoveredControllerKey) ?? null
+    : null
 
   // The hovered aircraft can vanish from a poll (landed, occurrence ended) - drop the stale card
   // rather than leaving it pinned to a marker that no longer exists.
@@ -200,6 +234,14 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
       setHoverPos(null)
     }
   }, [aircraft, hoveredKey])
+
+  // Same, for a controller that logs off between polls.
+  useEffect(() => {
+    if (hoveredControllerKey && !atcControllers.some((c) => controllerKeyFor(c) === hoveredControllerKey)) {
+      setHoveredControllerKey(null)
+      setHoveredControllerPos(null)
+    }
+  }, [atcControllers, hoveredControllerKey])
 
   useEffect(() => {
     const container = containerRef.current
@@ -233,14 +275,66 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
       setHoverPos({ x: rect.left + point.x, y: rect.top + point.y })
     }
 
+    const updateControllerHoverPosition = (key: string) => {
+      const marker = controllerMarkersRef.current.get(key)
+      const current = mapRef.current
+      const containerEl = containerRef.current
+      if (!marker || !current || !containerEl) return
+      const point = current.project(marker.getLngLat())
+      const rect = containerEl.getBoundingClientRect()
+      setHoveredControllerPos({ x: rect.left + point.x, y: rect.top + point.y })
+    }
+
     const sync = (fitBounds: boolean) => {
       const current = mapRef.current
       if (!current) return
-      const { aircraft: currentAircraft, network: currentNetwork } = latestRef.current
+      const { aircraft: currentAircraft, network: currentNetwork, atcControllers: currentAtc } = latestRef.current
 
       const networkSource = current.getSource(NETWORK_SOURCE_ID) as GeoJSONSource | undefined
       if (networkSource) {
         networkSource.setData(buildNetworkFeatures(currentNetwork))
+      }
+
+      const atcSectorSource = current.getSource(ATC_SECTOR_SOURCE_ID) as GeoJSONSource | undefined
+      if (atcSectorSource) {
+        atcSectorSource.setData(buildAtcSectorFeatures(currentAtc))
+      }
+
+      // Controller markers - static positions (an airport doesn't move), so unlike aircraft this
+      // is a plain add/remove/reposition diff with no animation.
+      const positionedControllers = currentAtc.filter((c) => c.latitudeDeg != null && c.longitudeDeg != null)
+      const nextControllerKeys = new Set(positionedControllers.map(controllerKeyFor))
+      for (const [key, marker] of controllerMarkersRef.current) {
+        if (!nextControllerKeys.has(key)) {
+          marker.remove()
+          controllerMarkersRef.current.delete(key)
+        }
+      }
+      for (const controller of positionedControllers) {
+        const key = controllerKeyFor(controller)
+        const label = `${controller.callsign} - ${controller.facilityLabel}${controller.airportName ? ` (${controller.airportName})` : ''}, ${controller.frequency}`
+        const existing = controllerMarkersRef.current.get(key)
+        if (existing) {
+          existing.setLngLat([controller.longitudeDeg!, controller.latitudeDeg!])
+          existing.getElement().setAttribute('aria-label', label)
+          if (hoveredControllerKeyRef.current === key) updateControllerHoverPosition(key)
+          continue
+        }
+
+        const element = controllerMarkerElement(label)
+        const marker = new Marker({ element, anchor: 'center' })
+          .setLngLat([controller.longitudeDeg!, controller.latitudeDeg!])
+          .addTo(current)
+        element.setAttribute('aria-label', label)
+        controllerMarkersRef.current.set(key, marker)
+
+        element.addEventListener('mouseenter', () => {
+          setHoveredControllerKey(key)
+          updateControllerHoverPosition(key)
+        })
+        element.addEventListener('mouseleave', () => {
+          setHoveredControllerKey((k) => (k === key ? null : k))
+        })
       }
 
       // Airport dots - static, deduplicated by ICAO.
@@ -352,12 +446,29 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
           paint: { 'line-color': readMapColors().accent, 'line-width': 1.5, 'line-opacity': 0.55 },
         })
       }
+      if (!map.getSource(ATC_SECTOR_SOURCE_ID)) {
+        const colors = readMapColors()
+        map.addSource(ATC_SECTOR_SOURCE_ID, { type: 'geojson', data: EMPTY_ATC_SECTOR_GEOJSON })
+        map.addLayer({
+          id: ATC_SECTOR_FILL_LAYER_ID,
+          type: 'fill',
+          source: ATC_SECTOR_SOURCE_ID,
+          paint: { 'fill-color': colors.atcFill },
+        })
+        map.addLayer({
+          id: ATC_SECTOR_LINE_LAYER_ID,
+          type: 'line',
+          source: ATC_SECTOR_SOURCE_ID,
+          paint: { 'line-color': colors.atc, 'line-width': 1, 'line-opacity': 0.6 },
+        })
+      }
       styleReadyRef.current = true
       sync(true)
     })
 
     map.on('move', () => {
       if (hoveredKeyRef.current) updateHoverPosition(hoveredKeyRef.current)
+      if (hoveredControllerKeyRef.current) updateControllerHoverPosition(hoveredControllerKeyRef.current)
     })
 
     const observer = new MutationObserver(() => {
@@ -384,6 +495,8 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
       markersRef.current.clear()
       for (const marker of airportMarkersRef.current.values()) marker.remove()
       airportMarkersRef.current.clear()
+      for (const marker of controllerMarkersRef.current.values()) marker.remove()
+      controllerMarkersRef.current.clear()
       map.remove()
       mapRef.current = null
       firedInitialFitRef.current = false
@@ -396,7 +509,7 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
     if (!map || !styleReadyRef.current) return
     const resync = (map as unknown as { __fsopsResync?: () => void }).__fsopsResync
     resync?.()
-  }, [aircraft, network])
+  }, [aircraft, network, atcControllers])
 
   const hasNetwork = network.length > 0
   const hasAircraft = aircraft.length > 0
@@ -424,9 +537,18 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
     <div className={cn('relative isolate overflow-hidden rounded-lg border border-border bg-surface', className)}>
       <div ref={containerRef} className="size-full min-h-[320px]" role="application" aria-label="Live operations map" />
 
-      {tilesUnavailable && (
-        <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1 text-xs text-muted-foreground shadow-elevation-2">
-          Map tiles unavailable — showing offline view
+      {(tilesUnavailable || atcUnavailable) && (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex flex-col items-start gap-1.5">
+          {tilesUnavailable && (
+            <div className="rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1 text-xs text-muted-foreground shadow-elevation-2">
+              Map tiles unavailable — showing offline view
+            </div>
+          )}
+          {atcUnavailable && (
+            <div className="rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1 text-xs text-muted-foreground shadow-elevation-2">
+              ATC data unavailable
+            </div>
+          )}
         </div>
       )}
 
@@ -458,21 +580,35 @@ export function LiveOpsMap({ aircraft, network, className }: LiveOpsMapProps) {
         </div>
       )}
 
-      {hasAircraft && (
+      {(hasAircraft || atcControllers.length > 0) && (
         <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex items-center gap-3 rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-elevation-2">
-          <span className="flex items-center gap-1.5">
-            <span className="size-2.5 shrink-0 rounded-full bg-accent" />
-            You
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="size-2.5 shrink-0 rounded-full border-2 border-accent/70 bg-surface-elevated" />
-            Virtual
-          </span>
+          {hasAircraft && (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 shrink-0 rounded-full bg-accent" />
+                You
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 shrink-0 rounded-full border-2 border-accent/70 bg-surface-elevated" />
+                Virtual
+              </span>
+            </>
+          )}
+          {atcControllers.length > 0 && (
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 shrink-0 rounded-full border-2 border-warning bg-surface-elevated" />
+              ATC
+            </span>
+          )}
         </div>
       )}
 
       {hoveredAircraft && hoverPos && (
         <LiveFlightCard aircraft={hoveredAircraft} x={hoverPos.x} y={hoverPos.y} />
+      )}
+
+      {hoveredController && hoveredControllerPos && (
+        <AtcControllerCard controller={hoveredController} x={hoveredControllerPos.x} y={hoveredControllerPos.y} />
       )}
     </div>
   )

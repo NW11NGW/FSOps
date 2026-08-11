@@ -1,6 +1,7 @@
 import { AirlineSection } from '@/components/settings/AirlineSection'
 import { DataSection } from '@/components/settings/DataSection'
 import { DisplaySection } from '@/components/settings/DisplaySection'
+import { SimBriefSection } from '@/components/settings/SimBriefSection'
 import { SimulatorSection } from '@/components/settings/SimulatorSection'
 import { PageHeader } from '@/components/shared/PageHeader'
 
@@ -12,6 +13,7 @@ export function Settings() {
         <DisplaySection />
         <AirlineSection />
         <SimulatorSection />
+        <SimBriefSection />
         <DataSection />
       </div>
     </div>

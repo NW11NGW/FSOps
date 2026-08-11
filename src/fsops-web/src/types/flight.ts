@@ -202,3 +202,29 @@ export interface StartFlightRequest {
   routeId: string
   fleetAircraftId?: string
 }
+
+/** POST /flights/start response (FlightEndpoints.ToFlightStartDto) - the flight itself plus which
+ *  provider's plan was actually used for its planned block time/fuel, and why on a fallback. */
+export interface StartFlightResponse {
+  flight: Flight
+  planSource: string
+  planMessage: string | null
+}
+
+/**
+ * GET /flights/plan-import response (FlightEndpoints.PlanImportAsync) - the SimBrief import
+ * hand-off. Read-only preview of the same plan StartAsync would apply for this route/aircraft
+ * pair: `fromSimBrief` true means a real OFP matched and was used; false means the built-in
+ * estimate was used instead, with `message` explaining why (no Pilot ID, unknown Pilot ID, a
+ * network problem, or an OFP for a different city pair) when relevant.
+ */
+export interface FlightPlanImport {
+  available: boolean
+  source: string | null
+  fromSimBrief: boolean
+  message: string | null
+  blockFuelKg: number | null
+  cruiseAltitudeFt: number | null
+  blockTimeMinutes: number | null
+  routeString: string | null
+}

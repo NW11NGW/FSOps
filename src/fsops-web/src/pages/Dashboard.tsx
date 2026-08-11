@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, Route, ShieldCheck, Users } from 'lucide-react'
+import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, RadioTower, Route, ShieldCheck, Users } from 'lucide-react'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
@@ -9,10 +9,12 @@ import { PageHeader } from '@/components/shared/PageHeader'
 import { StatTile } from '@/components/shared/StatTile'
 import { WorldDataStatusBanner } from '@/components/shared/WorldDataStatusBanner'
 import { useLiveOperations } from '@/hooks/useLiveOperations'
+import { useVatsimAtc } from '@/hooks/useVatsimAtc'
 import { useReputationSummary } from '@/hooks/useReputationSummary'
 import { useServerClock } from '@/hooks/useServerClock'
 import { useSettings } from '@/hooks/useSettings'
 import { useWorldDataStatus } from '@/hooks/useWorldDataStatus'
+import { AtcControllerList, AtcCountBadge } from '@/components/map/AtcControllerList'
 import { reputationDemandLabel, reputationDrivers, reputationTrendLabel } from '@/lib/reputation'
 import type { LiveContext } from '@/types/live-context'
 import type { ReputationDirection } from '@/types/airline'
@@ -52,6 +54,7 @@ export function Dashboard() {
   const serverNow = useServerClock(heartbeat)
   const worldData = useWorldDataStatus()
   const liveOps = useLiveOperations()
+  const atc = useVatsimAtc()
   const reputation = useReputationSummary()
   const { fmt } = useSettings()
 
@@ -271,9 +274,28 @@ export function Dashboard() {
           )}
           {liveOps.status === 'ready' && liveOps.data && (
             <Suspense fallback={<Skeleton className="h-[360px] w-full rounded-lg" />}>
-              <LiveOpsMap aircraft={liveOps.data.aircraft} network={liveOps.data.network} className="h-[360px]" />
+              <LiveOpsMap
+                aircraft={liveOps.data.aircraft}
+                network={liveOps.data.network}
+                atcControllers={atc.status === 'ready' && atc.data?.status === 'ok' ? atc.data.controllers : []}
+                atcUnavailable={atc.status === 'error' || atc.data?.status === 'unavailable'}
+                className="h-[360px]"
+              />
             </Suspense>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <RadioTower className="size-4" />
+            ATC coverage
+          </CardTitle>
+          <AtcCountBadge status={atc.status} data={atc.data} />
+        </CardHeader>
+        <CardContent>
+          <AtcControllerList status={atc.status} data={atc.data} />
         </CardContent>
       </Card>
     </div>

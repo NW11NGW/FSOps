@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import { FlightBrief } from '@/components/flight/FlightBrief'
 import { FlightHistoryList } from '@/components/flight/FlightHistoryList'
+import { FlightPlanImportBanner } from '@/components/flight/FlightPlanImportBanner'
 import { LiveFlightView } from '@/components/flight/LiveFlightView'
 import { NeedsResolutionPanel } from '@/components/flight/NeedsResolutionPanel'
 import { ReportCard } from '@/components/flight/ReportCard'
@@ -23,13 +24,14 @@ import { useFlightDetail } from '@/hooks/useFlightDetail'
 import { useFlightHistory } from '@/hooks/useFlightHistory'
 import { useFlightLive } from '@/hooks/useFlightLive'
 import { useFlightOptions } from '@/hooks/useFlightOptions'
+import { useFlightPlanImport } from '@/hooks/useFlightPlanImport'
 import { useFlightPreview } from '@/hooks/useFlightPreview'
 import { useRouteBlockTimes } from '@/hooks/useRouteBlockTimes'
 import { useRoutes } from '@/hooks/useRoutes'
 import { useSimStatus } from '@/hooks/useSimStatus'
 import { ApiError, post } from '@/lib/api'
 import { sampleGreatCirclePath } from '@/lib/geo'
-import type { Flight } from '@/types/flight'
+import type { Flight, StartFlightResponse } from '@/types/flight'
 import type { LiveContext } from '@/types/live-context'
 import type { RouteSummary } from '@/types/route'
 
@@ -168,6 +170,8 @@ export function Fly() {
     selectedRow?.baseFare ?? null,
   )
 
+  const flightPlanImport = useFlightPlanImport(selectedRow?.routeId ?? null, selectedAircraft?.fleetAircraftId ?? null)
+
   const simStatus = useSimStatus(activeFlight.status === 'none')
 
   const activeRoute = activeFlight.data ? (routesById[activeFlight.data.flight.routeId] as RouteSummary | undefined) : undefined
@@ -210,11 +214,17 @@ export function Fly() {
     setStarting(true)
     setStartError(null)
     try {
-      await post<Flight>('/flights/start', {
+      const { planSource, planMessage } = await post<StartFlightResponse>('/flights/start', {
         routeId: selectedRow.routeId,
         ...(selectedAircraft ? { fleetAircraftId: selectedAircraft.fleetAircraftId } : {}),
       })
       toast.success(`Flight ${selectedRow.departureIcao} → ${selectedRow.arrivalIcao} started.`)
+      // Say so plainly (docs/PLAN.md "Flight plan import"): the pre-flight banner already covered
+      // this for the common case, but a fallback that happened right at the moment of starting
+      // (e.g. SimBrief timed out) still deserves its own word, not just a silent substitution.
+      if (planSource !== 'SimBrief' && planMessage) {
+        toast.info(planMessage)
+      }
       activeFlight.refetch()
     } catch (err) {
       setStartError(describeError(err, 'Could not start this flight. Check your connection and try again.'))
@@ -384,22 +394,25 @@ export function Fly() {
           />
 
           {selectedRow ? (
-            <FlightBrief
-              row={selectedRow}
-              aircraftOptions={selectedRow.aircraftOptions}
-              selectedAircraft={selectedAircraft}
-              onSelectAircraft={(aircraft) => setSelectedAircraftId(aircraft.fleetAircraftId)}
-              preview={flightPreview.data}
-              previewStatus={flightPreview.status}
-              airlineIcaoCode={airlineIcaoCode}
-              simStatus={simStatus.status}
-              simStatusLoaded={simStatus.loaded}
-              telemetry={flightLive.telemetry}
-              departureCoords={departureCoords}
-              onStart={handleStartFlight}
-              starting={starting}
-              startError={startError}
-            />
+            <div className="space-y-3">
+              <FlightPlanImportBanner planImport={flightPlanImport.data} status={flightPlanImport.status} />
+              <FlightBrief
+                row={selectedRow}
+                aircraftOptions={selectedRow.aircraftOptions}
+                selectedAircraft={selectedAircraft}
+                onSelectAircraft={(aircraft) => setSelectedAircraftId(aircraft.fleetAircraftId)}
+                preview={flightPreview.data}
+                previewStatus={flightPreview.status}
+                airlineIcaoCode={airlineIcaoCode}
+                simStatus={simStatus.status}
+                simStatusLoaded={simStatus.loaded}
+                telemetry={flightLive.telemetry}
+                departureCoords={departureCoords}
+                onStart={handleStartFlight}
+                starting={starting}
+                startError={startError}
+              />
+            </div>
           ) : (
             <EmptyState icon={PlaneTakeoff} title="Pick a route" description="Choose a route on the left to see its flight brief." />
           )}
