@@ -115,13 +115,12 @@ If FSOps can't reach the simulator, see [troubleshooting](troubleshooting.md#msf
 
 ## What's not available yet
 
-Founding an airline, planning a route network, flying a fully tracked flight with a post-flight report card, running a fleet (buying, leasing, selling, used aircraft, loans, maintenance), the monthly billing cycle that keeps charging you whether or not you fly, hiring virtual pilots to fly a standing weekly schedule on the real-world clock, and a Finances page for inspecting all of it, all work today (see the [User Guide](user-guide.md)). The following are still being built and are **not** available yet:
+Founding an airline, planning a route network, flying a fully tracked flight with a post-flight report card, running a fleet (buying, leasing, selling, used aircraft, loans, maintenance), the monthly billing cycle that keeps charging you whether or not you fly, hiring virtual pilots to fly a standing weekly schedule on the real-world clock, a Finances page and a Statistics page for inspecting all of it, importing your SimBrief flight plan, seeing online VATSIM controllers on your live map, and an in-game MSFS panel, all work today (see the [User Guide](user-guide.md)). One thing is still missing:
 
-- The Statistics dashboards page — currently a placeholder in the app; the Fleet, Pilots, Finances and Dashboard pages already surface most of what it will eventually bring together
-- The in-game MSFS panel
+- **The in-game panel's MSFS toolbar button doesn't appear yet.** The panel itself installs correctly into your Community folder, but the small file that registers it with MSFS's toolbar hasn't been compiled — see [In-game panel](user-guide.md#in-game-panel) in the User Guide for exactly what that means and what still works in the meantime.
 - A packaged installer — for now, FSOps is built and run from source (this guide)
 
-See the [User Guide](user-guide.md) for a fuller description of each of these and how they're intended to work once built.
+See the [User Guide](user-guide.md) for a fuller description of everything above and how it behaves.
 
 ## Next steps
 

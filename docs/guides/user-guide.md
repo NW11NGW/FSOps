@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, and hiring virtual pilots to keep your airline flying while you're away, all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
+This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Statistics page, importing your SimBrief flight plan, seeing online VATSIM controllers on your live map, and an in-game panel for MSFS, all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
 
 ## Table of contents
 
@@ -23,6 +23,7 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
   - [Starting the flight and the live view](#starting-the-flight-and-the-live-view)
   - [Ending a flight, and what happens if it gets interrupted](#ending-a-flight-and-what-happens-if-it-gets-interrupted)
 - [Plan in SimBrief](#plan-in-simbrief)
+  - [Importing your OFP back](#importing-your-ofp-back)
 - [Reading the post-flight report card](#reading-the-post-flight-report-card)
   - [Flight integrity](#flight-integrity)
 - [The economy simulation](#the-economy-simulation)
@@ -40,13 +41,14 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 - [The "while you were away" summary](#the-while-you-were-away-summary)
 - [The Finances page](#the-finances-page)
 - [The live operations map](#the-live-operations-map)
+  - [Online VATSIM controllers](#online-vatsim-controllers)
 - [Statistics dashboards](#statistics-dashboards)
 - [In-game panel](#in-game-panel)
 - [A worked example, start to finish](#a-worked-example-start-to-finish)
 
 ## Current build
 
-Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page to see exactly where the money went. The Statistics page and the in-game panel are still being built; each is marked below.
+Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page and a Statistics page to see exactly where the money went. You can also import your latest SimBrief flight plan, see online VATSIM controllers on your live map, and use a compact panel inside MSFS itself — see [Statistics dashboards](#statistics-dashboards), [Plan in SimBrief](#plan-in-simbrief) and [In-game panel](#in-game-panel) below for each, including the one thing about the in-game panel that doesn't work yet.
 
 ## Creating your airline
 
@@ -105,9 +107,15 @@ FSOps stores every amount — cash balance, fares, purchase prices, loan payment
 
 Switch between light and dark theme at any time.
 
+### SimBrief
+
+Your SimBrief Pilot ID — find it on SimBrief under Account → Pilot ID. Set it and the Fly screen's flight brief pulls your latest OFP's fuel, cruise altitude, block time and filed route instead of FSOps' own estimate, but only when that plan matches the exact route you're about to fly — see [Plan in SimBrief](#plan-in-simbrief) below. Leave it blank (the default) and FSOps always uses its own built-in plan; nothing about your flight is sent anywhere without it, and it's entirely optional.
+
 ### Community folder
 
-An optional path to your MSFS Community folder, stored for future features that read installed aircraft/liveries from it. Setting it doesn't change anything else about the app yet.
+The path to your MSFS 2024 Community folder — where FSOps installs the [in-game panel](#in-game-panel)'s package, and where future add-on-aware features will look. You're offered this during the setup wizard already; this is where you set it if you skipped that step, or point FSOps at a different install later.
+
+**One thing worth knowing:** changing this path here updates where FSOps *thinks* your Community folder is, but it doesn't, by itself, move or reinstall the panel package there — installing the panel currently only happens once, during the setup wizard. If you change your Community folder path after already installing the panel (for example, because you moved MSFS to a different drive), see [Troubleshooting](troubleshooting.md#i-changed-my-community-folder-in-settings-but-the-panel-didnt-move) for what that means and what to do about it today.
 
 ### Danger zone: start over
 
@@ -230,6 +238,15 @@ If FSOps or MSFS is closed mid-flight and reopened, FSOps rebuilds the flight's 
 If you use SimBrief for flight planning, the **Plan in SimBrief** button (found in the flight brief's readiness area) opens SimBrief's dispatch page in a new browser tab with your flight already filled in — origin, destination, aircraft type, your airline's code, flight number, and aircraft registration, wherever FSOps has each of those. Anything FSOps doesn't have falls back to your own SimBrief defaults. This is a plain link to SimBrief's own site — nothing about your flight is sent anywhere else, and FSOps performs no authentication of its own; you just need to already be signed in to SimBrief in whichever browser tab it opens for the plan to actually generate.
 
 A second button, **Copy summary**, copies a short plain-text summary of the flight (route, distance, cruise altitude, block time, block fuel, aircraft) to your clipboard — handy for pasting into an aircraft's FMS or a paper plan if you're not using SimBrief.
+
+### Importing your OFP back
+
+This is the other direction: once you've generated an OFP in SimBrief (whether through the button above or SimBrief's own site), FSOps can pull it back in and use its figures for the sector you're about to fly. Set your **Pilot ID** in [Settings → SimBrief](#simbrief) and, on the flight brief, a banner tells you which plan is actually in use:
+
+- **A matching plan found** — "Plan imported from SimBrief," followed by its cruise altitude, block time, block fuel and filed route. These figures replace FSOps' own estimate as **what the flight is planned against** — the report card's "actual vs. planned" comparison uses them instead of the built-in estimate, and the pre-flight brief shows them directly.
+- **No usable plan** — "Using the built-in plan," with a plain reason: no Pilot ID set, SimBrief unreachable or timed out, no OFP on file, or (the one case FSOps is careful never to get wrong) your latest OFP is filed for a different city pair than the route you're about to fly. Any of these falls back to FSOps' own built-in planner exactly as if you'd never set a Pilot ID at all — a flight always has a workable plan either way.
+
+Two things worth being precise about. **Routes stay the source of truth** — importing a plan never creates, changes, or overrides a route you've built; it only supplies figures for the sector you're already flying. And **this never changes what fuel is actually charged**: what you're billed for still comes from measured burn or the built-in estimate (see [The economy simulation](#the-economy-simulation)), exactly the same as if SimBrief weren't involved — importing an OFP changes what the plan *says*, never what the sector actually costs. The fetch itself happens on FSOps' own server, never your browser, so nothing about your flight reaches SimBrief without your Pilot ID already being set.
 
 ## Reading the post-flight report card
 
@@ -465,21 +482,45 @@ The **Dashboard**'s "Live operations" card shows your whole route network plus e
 
 Hover any aircraft for a flight card: flight number, route, pilot name, aircraft registration and type, scheduled departure and estimated arrival times (in UTC), elapsed versus remaining time, percentage complete, and current phase (taxi out, climb, cruise, descent, taxi in). Your own aircraft is badged **You**; every other aircraft is badged **Virtual**, so it's always clear which one you're actually flying. When nothing is airborne, the map simply shows your network with no aircraft on it — no error, no placeholder text needed.
 
+### Online VATSIM controllers
+
+The same map can also show who's actually controlling the airspace you fly in. If any VATSIM controller is currently online at an airport in your own route network, they show up alongside your aircraft — no setting to turn on, no account or Pilot ID required, since this only reads VATSIM's public status feed. Hover or check the accompanying list for each controller's callsign, position (Tower, Approach, Center, and so on), frequency, and how long they've been logged on.
+
+Two things are deliberate here: **only controllers covering your own network are shown**, not a global VATSIM controller list, and **other pilots' traffic is deliberately left off entirely** — this is about airspace coverage where you fly, not a full multiplayer traffic display. If VATSIM's feed is temporarily unreachable, the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected") and everything else on the map keeps working exactly as normal — nothing about your flight or the economy depends on this in any way.
+
 ## Statistics dashboards
 
-**Coming in a later update.**
+The **Stats** page (main navigation) is where your airline's history turns into trends rather than a single current snapshot. A period selector at the top switches the whole page between the trailing **7, 30 or 90 days** — every figure below is measured fresh from your completed flights and ledger over exactly that window, never a running total that ignores the period.
 
-What this is: airline-wide dashboards summarising how your virtual airline is performing — routes flown, on-time and landing-quality trends, fleet utilisation, and financial performance over time.
+- **Performance** — a chart of on-time performance and load factor, one point per day that had at least one completed sector (a quiet day is simply absent, never a fabricated 0%). On-time performance here uses the identical rule your [reputation card](#your-airlines-reputation) does, so the two can never disagree about whether a given day counted as punctual.
+- **Finance** — the same revenue/cost split and per-route profit-and-loss figures shown on the [Finances page](#the-finances-page), charted rather than tabulated. These aren't recalculated separately — they're the exact same numbers, so the two pages can never show you conflicting totals.
+- **Fleet** — every aircraft's sectors flown, hours flown and idle in the period, a utilisation percentage, hours to its next A- or C-check, and current condition — the same "how close to its next check" figures the Fleet page itself shows, so they can't drift apart either.
+- **Pilots** — a logbook covering every pilot who's flown in the window, you included: sectors, hours, on-time percentage, and average landing rate. A figure that genuinely couldn't be measured (for example, a pilot whose every sector in the window was a manual completion) reads "Not measured," never a misleading zero.
 
-How to do it: a statistics section will be reachable from the main navigation, with your airline's key numbers laid out at a glance and the ability to drill into a specific route, aircraft, or pilot.
+Every one of the four tabs has its own **Export CSV** button, exporting exactly the rows currently on screen for the period selected — handy for keeping your own record outside FSOps, or just looking at the raw numbers in a spreadsheet.
 
 ## In-game panel
 
-**Coming in a later update.**
+A compact, read-only panel that shows your live flight and airline status inside MSFS itself, so you don't need to alt-tab out to a browser mid-flight. It's the same `/panel` page whether you reach it inside MSFS or by browsing to `http://localhost:5977/panel` yourself — large type, high contrast, built to stay readable at a small panel size.
 
-What this is: a lightweight panel visible inside MSFS itself, showing key airline stats — cash balance, active routes, current flight status — without alt-tabbing out to the browser.
+**In the air**, it shows your flight number, phase, progress, ETA and block time remaining, fuel and passengers on board, and your airline's cash balance. **On the ground after landing**, it switches automatically to a short debrief — landing rate, block time variance against the plan, and what the sector earned — for a little while after touchdown. It survives FSOps restarting mid-flight: if the connection drops, it says so and keeps retrying on its own, then catches up automatically the moment it reconnects, exactly the way the main Fly screen does.
 
-How to do it: no action needed once built; the panel will be available from MSFS's own add-on menu while FSOps is running and connected.
+### Getting the panel into MSFS
+
+FSOps' setup wizard has a **"Connect your MSFS panel"** step: it looks for your Community folder automatically, lets you confirm or type a different path, and installs the panel package there when you finish the wizard. It's genuinely optional and skippable.
+
+**Right now, this wizard step is the only place the panel actually gets installed.** Settings → Community folder (see [Settings](#settings) above) lets you record or change the folder path FSOps uses for other purposes, but it doesn't install, reinstall or repair the panel package there — that action currently only runs once, during the wizard. If you skipped the step, see [The toolbar button isn't there](troubleshooting.md#the-toolbar-button-isnt-there) below. If you later move your MSFS install to a different Community folder, see [I changed my Community folder in Settings, but the panel didn't move](troubleshooting.md#i-changed-my-community-folder-in-settings-but-the-panel-didnt-move) instead.
+
+**Read this part carefully — it's the one gap in this feature, stated plainly rather than glossed over.** The button that would make an FSOps icon appear on MSFS's own toolbar needs one small file that hasn't been built yet — compiling it requires the Microsoft Flight Simulator SDK, a separate, free download from the MSFS SDK, and someone to run a one-time command with it. That file isn't included with FSOps today. **What this means in practice:**
+
+- The panel package installs into your Community folder correctly, and FSOps tells you so honestly.
+- **No FSOps button currently appears on MSFS's own toolbar.** This isn't a bug for you to troubleshoot — the piece that registers the button with MSFS genuinely isn't there yet.
+- Nothing else about FSOps is affected. Everything above — the flight brief, live tracking, the report card, the full web UI at `http://localhost:5977` — works exactly the same with or without the in-game toolbar button.
+- **This has not yet been verified working inside MSFS itself**, since the toolbar button that would let you open it in-sim doesn't exist yet either. Treat it as installed-but-unconfirmed until a future update adds the missing file and someone can actually click the button in the sim.
+
+If and when that file is added in a future update, the rest of the package is already correct and waiting for it — no changes to what's described above are expected, only a future update that adds the missing piece and a way to apply it without starting over.
+
+See [Troubleshooting](troubleshooting.md#the-toolbar-button-isnt-there) if you were expecting the toolbar button and it isn't there.
 
 ## A worked example, start to finish
 

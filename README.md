@@ -6,7 +6,7 @@ FSOps is a Windows companion app for MSFS 2024. Found an airline, pick a home ba
 
 ## Status: in development
 
-FSOps is being built in the open, in public view, one feature at a time. Founding an airline, planning a route network, flying a route with full live tracking through MSFS, running a fleet (buying, leasing, selling, used aircraft, loans, maintenance), a monthly billing cycle that keeps charging you whether or not you're flying, hiring virtual pilots to fly a standing weekly schedule on the real-world clock, and a Finances page for inspecting all of it, all work today. Statistics dashboards and the in-game panel are not available yet — see the [user guide](docs/guides/user-guide.md) for what's built and what's coming.
+FSOps is being built in the open, in public view, one feature at a time. Founding an airline, planning a route network, flying a route with full live tracking through MSFS, running a fleet (buying, leasing, selling, used aircraft, loans, maintenance), a monthly billing cycle that keeps charging you whether or not you're flying, hiring virtual pilots to fly a standing weekly schedule on the real-world clock, a Finances page and a Statistics page for inspecting all of it, importing your SimBrief flight plan, seeing online VATSIM controllers on your live map, and an in-game panel for MSFS all work today. One honest gap: the panel's MSFS toolbar button needs a small compiled file nobody has built yet, so the panel installs but doesn't show a button in the sim until that lands — see [In-game panel](#headline-features) below and the [user guide](docs/guides/user-guide.md) for the full picture of what's built and what's coming.
 
 ## Headline features
 
@@ -22,6 +22,7 @@ FSOps is being built in the open, in public view, one feature at a time. Foundin
 - **Fly a tracked flight** — pick a route on the Fly screen, review the flight brief (distance, cruise altitude, block time, block fuel breakdown), then start flying. FSOps connects to MSFS 2024 via SimConnect, auto-reconnecting whenever the sim isn't running, and tracks your flight live: phase detection (preflight through shutdown), a moving map, and live readouts of altitude, speed and fuel.
 - **Landing quality scoring and report cards** — every landing is graded on touchdown rate, peak G-force, bounce count, and deviation from the runway centreline. A post-flight report card compares your actual block time and fuel burn against the plan and shows the full phase timeline with captured OOOI times.
 - **Plan in SimBrief** — one click opens SimBrief with your flight prefilled (origin, destination, aircraft type, airline, flight number, registration); nothing is sent anywhere except to SimBrief's own site in your browser.
+- **Import your OFP back from SimBrief** — set your Pilot ID once in Settings and the Fly screen pulls your latest OFP's fuel, cruise altitude, block time and filed route into the flight brief instead of FSOps' own estimate, but only when that plan is for the exact route you're about to fly. A plan for a different city pair, or SimBrief being unreachable, falls back to the built-in planner and says so plainly rather than silently substituting the wrong numbers. Routes stay the source of truth either way — importing a plan never creates or changes one, and the fetch happens on FSOps' own server, never your browser.
 - **Aircraft-type awareness** — FSOps checks the aircraft you're actually flying against the route's expected aircraft at family level (a 737-800 matches a 737-700 route); a mismatch is flagged for information only and never affects payment.
 - **Settings that stay out of your way** — currency, distance/altitude/weight units, time display, theme and accent colour are all adjustable; changing currency only changes how numbers are displayed, never your actual balance.
 - **A real airport database** — world airport and runway data imports automatically on first launch, backing route search, runway-length checks, and range validation against your fleet.
@@ -32,8 +33,9 @@ FSOps is being built in the open, in public view, one feature at a time. Foundin
 - **A wall-clock economy that runs while you're away — and explains itself when you get back** — virtual pilots' flights complete against the real-world clock, not the time you spend with FSOps open. Close the app for a few hours, a few days, or longer, and reopen it: every flight that was due, and every monthly bill, has already been resolved and posted, all the way up to the moment you closed it, capped so a very long gap catches up over a few passes rather than in one enormous burst. It can't be tricked by winding your system clock forward or back either. If enough happened while you were gone, a "while you were away" summary greets you on startup — what was charged, what your pilots flew and earned, maintenance that fell due, and anything skipped, cancelled or suspended, with its reason.
 - **A Finances page** — cash balance and trend, income against expenditure for the current period, every lease with its real next-payment date (a rolling 30 days from your airline's own clock, not the calendar) and an end-lease action, every loan with full or partial early repayment, per-pilot revenue versus cost, a fixed-versus-variable cost split, a filterable itemised ledger, and profit and loss per route. Figures that are estimates (a pilot's salary prorated to the window shown) are labelled as such; everything else comes straight from the ledger.
 - **A live operations map on the Dashboard** — see your whole route network plus every aircraft currently airborne, virtual pilots included (their position is calculated from the schedule and elapsed time, not stored), with your own tracked flight shown distinctly from theirs. Hover any aircraft for a flight card: flight number, route, pilot, aircraft, departure/arrival times, and percentage complete.
-- **In-game panel** *(coming in a later update)* — see live airline stats without leaving MSFS.
-- **Statistics dashboards** *(coming in a later update)* — routes flown, on-time and landing-quality trends, fleet utilisation and financial performance over time, in one place.
+- **Online VATSIM controllers on the same map** — controllers currently covering an airport in your own route network, with callsign, frequency and how long they've been logged on, shown alongside your own aircraft. Other pilots' traffic is deliberately left off — this is about your network, not the whole network. FSOps' server fetches and caches VATSIM's public feed once and shares that copy with the browser and the in-game panel alike; neither ever talks to VATSIM directly, and if the feed's unreachable the rest of the map is unaffected.
+- **A Statistics page** — on-time performance and load factor over time, revenue against cost, profit per route, fleet utilisation including hours to each aircraft's next check, and a pilot logbook covering you and every virtual pilot, over a selectable trailing period (7, 30 or 90 days) with a CSV export on every table. Every figure is read back from the ledger and flight records rather than recomputed, and on-time performance uses the identical rule the reputation score does, so the two can never disagree.
+- **An in-game panel for MSFS** — a compact, read-only `/panel` view: flight number, progress, ETA, fuel, passengers and cash while you're airborne; landing rate, block variance and what the sector earned once you're down. It survives FSOps restarting mid-flight. FSOps can detect, validate and install the panel package into your Community folder from the setup wizard. **One real gap, stated plainly:** the toolbar button that opens it in MSFS needs a small compiled file that hasn't been built yet — compiling it needs the separately-installed MSFS SDK, a manual step nobody has performed. The package installs cleanly, but no FSOps icon appears in MSFS's toolbar until that one file is added, and FSOps' own install result says so rather than claiming success. See [In-game panel](docs/guides/user-guide.md#in-game-panel) in the user guide.
 
 ## Quick start
 
@@ -51,6 +53,7 @@ Interested in how it's built? See [Architecture](docs/architecture.md).
 - **API & real-time:** ASP.NET Core REST API plus SignalR for live push updates (telemetry, hub connection status, flight-completion notifications)
 - **Frontend:** React + TypeScript, built with Vite and styled with Tailwind CSS and shadcn/ui, served locally by the backend and opened in your browser; MapLibre GL for the route and live-flight maps
 - **Storage:** SQLite, accessed through Entity Framework Core
+- **External data:** SimBrief's OFP fetch and the VATSIM ATC feed are both called and cached on the server; the browser (and the in-sim panel) never call out to either directly
 - **Tests:** xUnit for the backend (`dotnet test`); [Vitest](https://vitest.dev/) for the frontend (`npm test` or `npm run test:run` in `src/fsops-web`), covering pure logic, API request bodies, and dialog state — deliberately no component-rendering or snapshot tests
 
 The UI runs locally in your browser at `http://localhost:5977` — there's no separate installer step for it; the backend serves it directly.
@@ -73,15 +76,17 @@ FSOps/
 │   │   └── Scheduling/   #   Weekly schedule validation (aircraft-per-duty-day), occurrence timing, pilot performance
 │   ├── FSOps.Data/       # EF Core + SQLite persistence, world data import
 │   ├── FSOps.Sim/        # Sim abstraction: the SimConnect adapter and a replay-based fake source
-│   ├── FSOps.Server/     # API endpoints (fleet, disposal, maintenance, finance, pilots, flights, ...), SignalR hubs, flight lifecycle/virtual-flight-resolver/economy-clock/reservation-reconciler services, and serves the built web UI
-│   └── fsops-web/        # React + TypeScript + Vite + Tailwind + shadcn/ui frontend
-│       └── src/components/
-│           ├── flight/   #   Fly screen pieces: route selector, brief, live view, report card
-│           ├── schedule/ #   A virtual pilot's weekly schedule builder (aircraft-per-duty-day, by-pilot/by-aircraft/overview views)
-│           ├── finance/  #   Finances page sections: leases, loans, per-pilot P&L, cost split, routes P&L, ledger
-│           ├── fleet/    #   Fleet page: buy/lease, reservation, sell/end-lease dialogs
-│           ├── maintenance/ # Perform-maintenance-now and "while you were away" dialogs
-│           └── map/      #   Route network, live-flight and live-operations maps (MapLibre GL)
+│   ├── FSOps.Server/     # API endpoints (fleet, disposal, maintenance, finance, stats, pilots, flights, panel, VATSIM ...), SignalR hubs, flight lifecycle/virtual-flight-resolver/economy-clock/reservation-reconciler services, the SimBrief and VATSIM network clients, the panel package installer, and serves the built web UI
+│   ├── fsops-web/        # React + TypeScript + Vite + Tailwind + shadcn/ui frontend
+│   │   └── src/components/
+│   │       ├── flight/   #   Fly screen pieces: route selector, brief (with the SimBrief import banner), live view, report card
+│   │       ├── schedule/ #   A virtual pilot's weekly schedule builder (aircraft-per-duty-day, by-pilot/by-aircraft/overview views)
+│   │       ├── finance/  #   Finances page sections: leases, loans, per-pilot P&L, cost split, routes P&L, ledger
+│   │       ├── fleet/    #   Fleet page: buy/lease, reservation, sell/end-lease dialogs
+│   │       ├── maintenance/ # Perform-maintenance-now and "while you were away" dialogs
+│   │       ├── stats/    #   Statistics page: performance/finance charts, fleet utilisation and pilot logbook tables, CSV export, period selector
+│   │       └── map/      #   Route network, live-flight and live-operations maps (MapLibre GL), plus the VATSIM controller list/markers
+│   └── fsops-ingame-panel/ # The MSFS Community package for the toolbar panel — see [In-game panel](docs/guides/user-guide.md#in-game-panel)
 ├── tests/
 │   ├── FSOps.Core.Tests/   # xUnit tests for domain, planning, and flight-tracking logic
 │   └── FSOps.Server.Tests/ # xUnit tests for route pairing and airline-summary endpoints

@@ -24,6 +24,10 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [A virtual pilot's aircraft isn't where I expected it](#a-virtual-pilots-aircraft-isnt-where-i-expected-it)
 - [Why is my pilot worse than they were](#why-is-my-pilot-worse-than-they-were)
 - [I can't release a pilot](#i-cant-release-a-pilot)
+- [SimBrief import did nothing](#simbrief-import-did-nothing)
+- [No controllers are showing](#no-controllers-are-showing)
+- [The toolbar button isn't there](#the-toolbar-button-isnt-there)
+- [I changed my Community folder in Settings, but the panel didn't move](#i-changed-my-community-folder-in-settings-but-the-panel-didnt-move)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
@@ -210,6 +214,38 @@ The most common cause is a pilot who was hired but never given a schedule, or on
 **Cause:** A pilot can't be released while they're actually mid-flight (status **Flying**) — releasing them out from under an in-progress flight would leave that flight with no pilot to resolve against.
 
 **Solution:** Wait for their current flight to resolve (virtual pilots resolve automatically on the wall clock — see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away)), then release them.
+
+## SimBrief import did nothing
+
+**Symptom:** The flight brief's SimBrief banner reads "Using the built-in plan" instead of pulling in your OFP, even though you've set a Pilot ID and generated a plan.
+
+**Cause:** One of several ordinary reasons, all handled by falling back to FSOps' own plan rather than failing the flight: no Pilot ID set yet in [Settings → SimBrief](user-guide.md#simbrief), an incorrect Pilot ID, SimBrief has no plan on file for that Pilot ID (SimBrief itself can't distinguish "wrong ID" from "no plan filed" — FSOps can't tell them apart either), SimBrief was unreachable or timed out, or — the single most common cause in practice — **your latest OFP is filed for a different city pair than the route you're about to fly.** FSOps refuses to substitute a mismatched plan rather than silently applying the wrong fuel and altitude figures; see [Importing your OFP back](user-guide.md#importing-your-ofp-back).
+
+**Solution:** Read the banner's own message — it names the specific reason. Most often, this means filing a fresh OFP in SimBrief for the exact route (same origin and destination) you're about to fly before opening the Fly screen. If you only just added your Pilot ID, double-check it in Settings. Either way, this never blocks flying — the built-in plan is used automatically and the flight brief still shows complete, usable figures.
+
+## No controllers are showing
+
+**Symptom:** The Dashboard's live operations map (or the controller list alongside it) reads "No controllers online near your network right now," even though you know someone is controlling on VATSIM.
+
+**Cause:** This is very likely correct, not a bug — FSOps only ever shows controllers currently covering an airport that's actually in **your own route network** (see [Online VATSIM controllers](user-guide.md#online-vatsim-controllers)), not a global VATSIM controller list, and it never shows other pilots' traffic at all. A controller online somewhere else entirely — even a busy real-world hub — simply won't appear if it isn't one of your own network's airports. En-route and oceanic controllers (Center, FSS) and TRACON-style callsigns (like `NY_APP`) don't map to a single airport at all and are deliberately left out rather than guessed at.
+
+**Solution:** Confirm the airport you expected to see is genuinely the departure or arrival airport of one of your active routes. If it is, and nothing's showing, check whether the list instead reads "ATC data unavailable right now" — that means VATSIM's own feed couldn't be reached at all, not that nobody's online; try again shortly, since FSOps only refreshes its cached copy of the feed periodically rather than on every request.
+
+## The toolbar button isn't there
+
+**Symptom:** You've installed the in-game panel (through the setup wizard's "Connect your MSFS panel" step), but no FSOps icon appears on MSFS 2024's own toolbar.
+
+**Cause:** The panel package installs correctly, but the one file that actually registers a button with MSFS's toolbar hasn't been built into this copy of FSOps yet — see [In-game panel](user-guide.md#in-game-panel) for the full explanation. This isn't something wrong with your install; FSOps' own install result already told you as much at the time, with a message along the lines of "Panel files installed, but this build of FSOps doesn't yet include the compiled panel component the toolbar needs."
+
+**Solution:** Nothing to fix on your end — this needs a future FSOps update that ships the missing compiled file. Everything else about FSOps works exactly the same without it, including the same compact view the panel would show, reachable in an ordinary browser tab at `http://localhost:5977/panel`.
+
+## I changed my Community folder in Settings, but the panel didn't move
+
+**Symptom:** You moved your MSFS install (a different drive, a switch between Steam and Microsoft Store, or similar), updated the Community folder path in Settings, but the panel package is still sitting in the old location — or you're simply unsure whether it followed the change.
+
+**Cause:** Settings → Community folder currently only updates the path FSOps records for its own reference — it doesn't reinstall, move or repair the panel package to match. The panel is only ever installed once today, during the setup wizard, into whichever folder was configured at that exact moment; changing the path afterwards in Settings doesn't reach back and redo that install. This is a real, known gap in the current build, not intended behaviour — the underlying install/repair/uninstall logic already supports being re-run, there just isn't a button wired up to it outside the wizard yet.
+
+**Solution:** There's no reinstall action to trigger today. The old install left behind in your previous Community folder's `fsops-panel` subfolder is harmless to leave in place (MSFS simply won't see it if that folder is no longer where the sim reads from) or can be deleted by hand if you'd like to tidy up. If you need the panel present at your new Community folder location, the only way to get it there right now is to delete your airline from Settings and go back through the setup wizard, which will offer the "Connect your MSFS panel" step again against the new path — a genuinely heavy-handed workaround for what should be a one-click fix, and worth knowing is on the list to be wired up properly.
 
 ## Where the database lives
 
