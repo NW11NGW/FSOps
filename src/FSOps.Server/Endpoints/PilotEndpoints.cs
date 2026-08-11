@@ -59,12 +59,38 @@ public static class PilotEndpoints
             .ThenBy(p => p.CreatedUtc)
             .ToList();
 
+        var now = DateTimeOffset.UtcNow;
         var summaries = new List<object>();
         foreach (var pilot in pilots)
         {
             var weekly = pilot.IsPlayer
                 ? WeeklySummary.None
                 : await ComputeWeeklySummaryAsync(db, airline, economyConfig, pilot.Id, ct);
+
+            // SkillRating is only refreshed on disk each time VirtualFlightResolverService's
+            // periodic pass runs (see its ApplyIdlePilotSkillDecay) - a pilot left idle between
+            // passes could otherwise show a figure that's already stale by the time the player
+            // looks at it. PilotSkillCalculator.Compute is pure and safe to call for display at any
+            // time (see its own doc), so this always shows the true-right-now number rather than
+            // whatever the last resolver tick happened to write. EarnedSkillRating is the same
+            // pilot's hours-only figure with no idle decay applied, so the UI can show "earned X,
+            // currently Y" rather than a smaller number with no explanation - docs/PLAN.md
+            // "Idle decay must be visible and understandable before it bites".
+            var liveSkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, pilot.LastFlewUtc, now, economyConfig.PilotSkill);
+            var earnedSkillRating = PilotSkillCalculator.ComputeEarnedSkill(pilot.HoursFlown, economyConfig.PilotSkill);
+
+            double? idleDays = null;
+            bool isDecaying = false;
+            double? decayGraceDaysRemaining = null;
+            if (!pilot.IsPlayer && pilot.LastFlewUtc is { } lastFlew)
+            {
+                var idleHours = Math.Max(0, (now - lastFlew).TotalHours);
+                idleDays = Math.Round(idleHours / 24.0, 1);
+                isDecaying = idleHours > economyConfig.PilotSkill.IdleGracePeriodHours;
+                decayGraceDaysRemaining = isDecaying
+                    ? 0
+                    : Math.Round((economyConfig.PilotSkill.IdleGracePeriodHours - idleHours) / 24.0, 1);
+            }
 
             summaries.Add(new
             {
@@ -73,7 +99,12 @@ public static class PilotEndpoints
                 pilot.IsPlayer,
                 pilot.MonthlySalary,
                 pilot.HoursFlown,
-                pilot.SkillRating,
+                SkillRating = Math.Round(liveSkillRating, 1),
+                EarnedSkillRating = Math.Round(earnedSkillRating, 1),
+                pilot.LastFlewUtc,
+                IdleDays = idleDays,
+                IsDecaying = isDecaying,
+                DecayGraceDaysRemaining = decayGraceDaysRemaining,
                 Status = pilot.Status.ToString(),
                 pilot.CreatedUtc,
                 sectorsPerWeek = weekly.SectorsPerWeek,

@@ -37,6 +37,7 @@ public static class AirlineEndpoints
         group.MapGet("/airline", GetAsync);
         group.MapPut("/airline", UpdateAsync);
         group.MapGet("/airline/summary", GetSummaryAsync);
+        group.MapGet("/airline/reputation", GetReputationAsync);
         group.MapGet("/airline/strategy-profiles", GetStrategyProfiles);
         group.MapGet("/airline/playstyles", GetPlaystyles);
         group.MapGet("/airline/ledger", GetLedgerAsync);
@@ -558,6 +559,135 @@ public static class AirlineEndpoints
     }
 
     /// <summary>
+    /// The window of most recent Completed/Cancelled/Skipped sectors this endpoint bases the
+    /// reputation summary on - "noticeable but slow" (docs/PLAN.md point 2: 40-60 sectors moves the
+    /// score meaningfully) means a single sector should never swing "direction", so this looks at a
+    /// recent handful rather than either one flight or the airline's entire history.
+    /// </summary>
+    private const int ReputationWindowSectors = 15;
+
+    /// <summary>A recent-average target has to clear this many points above/below the current score
+    /// before the UI calls it "improving"/"declining" rather than "steady" - keeps the label from
+    /// flipping on a single borderline sector.</summary>
+    private const double ReputationDirectionThreshold = 2.0;
+
+    /// <summary>
+    /// The dashboard's reputation card - see docs/PLAN.md "Progression - reputation and pilot
+    /// skill", point 5: "a number that silently governs demand and never appears in the UI is
+    /// indistinguishable from a bug". <see cref="Airline.ReputationScore"/> is already a plain field
+    /// on <see cref="GetAsync"/>/<see cref="GetSummaryAsync"/>; this endpoint answers the two things
+    /// a bare number can't show - which way it is moving, and what is moving it. Both are derived
+    /// fresh from the append-only <see cref="Flight"/> rows on every call (point 4: "the safest
+    /// shape is to recompute... from those rows rather than incrementing a counter on the side") -
+    /// nothing here is stored, so it can never drift from what actually happened.
+    /// </summary>
+    internal static async Task<IResult> GetReputationAsync(
+        FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.NoContent();
+        }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+        var demandMultiplier = DemandCalculator.ReputationDemandMultiplier(economyConfig.Demand, airline.ReputationScore);
+
+        // SQLite can't translate OrderBy over DateTimeOffset (same trap as GetLedgerAsync above) -
+        // materialise every candidate sector first, then order and window in memory. Suspended and
+        // every not-yet-resolved status are deliberately excluded: a maintenance suspension is never
+        // reputation's business (see ReputationCalculator's own doc) and Planned/InProgress/
+        // Interrupted/Abandoned never posted a reputation outcome at all.
+        var candidates = await db.Flights
+            .Where(f => f.AirlineId == airline.Id && f.DeletedUtc == null &&
+                (f.Status == FlightStatus.Completed || f.Status == FlightStatus.Cancelled || f.Status == FlightStatus.Skipped))
+            .ToListAsync(ct);
+
+        var recent = candidates
+            .OrderByDescending(f => f.InUtc ?? f.PlannedDepartureUtc)
+            .Take(ReputationWindowSectors)
+            .ToList();
+
+        // A brand-new airline (or one with nothing recent) has no honest trend to report - see
+        // docs/PLAN.md "a brand-new airline sits at exactly 50 with no history... must look
+        // deliberate". "new" is a distinct value from "steady" so the UI can say so plainly rather
+        // than implying a flat trend it has no evidence for.
+        if (recent.Count == 0)
+        {
+            return Results.Ok(new ReputationSummary(
+                airline.ReputationScore, "new", 0, null, 0, 0, null, Math.Round(demandMultiplier, 3)));
+        }
+
+        var cancelledCount = recent.Count(f => f.Status == FlightStatus.Cancelled);
+        var skippedCount = recent.Count(f => f.Status == FlightStatus.Skipped);
+
+        // On-time is only measurable for a completed sector with a real arrival time and no
+        // elevated-sim-rate flag - the exact exclusion FlightLifecycleService itself applies before
+        // ever calling ReputationPoster, see Flight.SimRateElevated's own doc.
+        var measurableDelays = recent
+            .Where(f => f.Status == FlightStatus.Completed && f.InUtc is not null && !f.SimRateElevated)
+            .Select(f => (f.InUtc!.Value - f.PlannedDepartureUtc.AddMinutes(f.PlannedBlockMinutes)).TotalMinutes)
+            .ToList();
+        var onTimePercent = measurableDelays.Count == 0
+            ? (double?)null
+            : Math.Round(100.0 * measurableDelays.Count(d => d <= economyConfig.Reputation.OnTimeToleranceMinutes) / measurableDelays.Count, 1);
+
+        var landingFpms = recent
+            .Where(f => f.Status == FlightStatus.Completed && f.LandingFpmFirst is not null)
+            .Select(f => f.LandingFpmFirst!.Value)
+            .ToList();
+        string? landingQuality = null;
+        if (landingFpms.Count > 0)
+        {
+            var avgFpm = landingFpms.Average();
+            var band = (economyConfig.Reputation.LandingWorstFpm - economyConfig.Reputation.LandingBestFpm) / 3.0;
+            landingQuality = avgFpm <= economyConfig.Reputation.LandingBestFpm + band
+                ? "smooth"
+                : avgFpm >= economyConfig.Reputation.LandingWorstFpm - band
+                    ? "hard"
+                    : "firm";
+        }
+
+        // Direction of travel: the same per-sector "target" Advance actually steps the score toward
+        // (see ReputationCalculator.TargetForCompletedFlight), averaged across the window. Advance
+        // always moves currentScore toward target, so a recent average ABOVE the current score means
+        // the score has been (and will keep) trending up toward it; below means trending down.
+        // ReputationDirectionThreshold keeps a single near-borderline sector from flipping the label.
+        var targets = recent
+            .Select(f => f.Status == FlightStatus.Completed
+                ? ReputationCalculator.TargetForCompletedFlight(
+                    economyConfig.Reputation,
+                    f.SimRateElevated || f.InUtc is null ? null : (f.InUtc.Value - f.PlannedDepartureUtc.AddMinutes(f.PlannedBlockMinutes)).TotalMinutes,
+                    f.LandingFpmFirst)
+                : economyConfig.Reputation.CancelledTargetScore)
+            .Where(t => t is not null)
+            .Select(t => t!.Value)
+            .ToList();
+
+        string direction;
+        if (targets.Count == 0)
+        {
+            // Every candidate in the window had no measurable signal at all (e.g. only manually
+            // completed flights with no telemetry) - nothing honest to call a trend, so this reads
+            // as "steady" rather than guessing a direction from no evidence.
+            direction = "steady";
+        }
+        else
+        {
+            var avgTarget = targets.Average();
+            direction = avgTarget - airline.ReputationScore > ReputationDirectionThreshold
+                ? "improving"
+                : airline.ReputationScore - avgTarget > ReputationDirectionThreshold
+                    ? "declining"
+                    : "steady";
+        }
+
+        return Results.Ok(new ReputationSummary(
+            airline.ReputationScore, direction, recent.Count, onTimePercent, cancelledCount, skippedCount,
+            landingQuality, Math.Round(demandMultiplier, 3)));
+    }
+
+    /// <summary>
     /// The itemised ledger, newest first - so the player can see exactly what they were charged and
     /// why, including the monthly lease/salary/insurance lines <see cref="FSOps.Server.Services.EconomyClockService"/>
     /// posts. Backend visibility only (see docs/PLAN.md Chunk E1) - no Finances page consumes this
@@ -667,6 +797,24 @@ public record CreateAirlineRequest(
 /// caller to supply or for the endpoint to trust.
 /// </summary>
 public record StartingLoanRequest(decimal Amount, int TermMonths);
+
+/// <summary>
+/// GET /airline/reputation - see AirlineEndpoints.GetReputationAsync for how each field is derived.
+/// <see cref="Direction"/> is "improving" | "declining" | "steady" | "new" (no recent sectors at
+/// all - a brand-new airline). <see cref="OnTimePercent"/> and <see cref="LandingQuality"/>
+/// ("smooth" | "firm" | "hard") are null when nothing in the window could measure that signal
+/// honestly, never zero. <see cref="DemandMultiplier"/> is the same figure DemandCalculator applies
+/// to every route right now (1.0 = baseline at reputation 50).
+/// </summary>
+public record ReputationSummary(
+    double Score,
+    string Direction,
+    int SectorsConsidered,
+    double? OnTimePercent,
+    int CancelledCount,
+    int SkippedCount,
+    string? LandingQuality,
+    double DemandMultiplier);
 
 public record UpdateAirlineRequest(
     string? Name,

@@ -53,12 +53,17 @@ export function SellAircraftDialog({ aircraft, onOpenChange, onSuccess }: SellAi
   const awaitingRevalidation = useRef(false)
   const submittedValue = useRef<number | null>(null)
 
+  // Depend on the primitive id, NOT `aircraft` itself - callers (Fleet.tsx) construct `aircraft`
+  // as a fresh object literal on every render they make (e.g. from a live cash-balance heartbeat
+  // elsewhere in the tree), so a reference-identity dependency here would reset confirmText on
+  // every unrelated re-render - wiping out whatever the player had just typed into the "type to
+  // confirm" field mid-keystroke. Same fix as EndLeaseDialog's `target?.id` dependency.
   useEffect(() => {
     setConfirmText('')
     setError(null)
     setPriceChangedFrom(null)
     awaitingRevalidation.current = false
-  }, [aircraft])
+  }, [aircraft?.id])
 
   // Once a re-fetch triggered by a refused sell resolves, decide whether the figures actually
   // moved (show a re-quote banner) or the sale is simply blocked now for another reason (the

@@ -31,9 +31,10 @@ public class StartingLoanCapConfigTests
     {
         // 250,000 over 60 months at Casual's 5.0% cap rate (always the rate a starting loan prices
         // at - see LoanRateCalculator's own doc on zero trailing cash flow) -> 4,717.81/month.
-        // (The proposal quoted 4,718.31 - a hand-estimated figure, off by 0.50 from the real
-        // LoanCalculator output computed here; the approved number was the cap PRINCIPAL, 250,000,
-        // which is unaffected. Flagged to the coordinator rather than silently corrected.)
+        // This figure is computed here rather than copied from anywhere: an earlier hand-estimate
+        // put it at 4,718.31, half a penny out. The number that was actually chosen is the cap
+        // PRINCIPAL of 250,000; the monthly payment is whatever LoanCalculator makes of it, so it
+        // is pinned from the calculator itself and not from a quoted figure.
         var payment = LoanCalculator.MonthlyPayment(Casual.MaxStartingLoanPrincipal, Casual.CapAnnualRatePct, termMonths: 60);
         Assert.Equal(4_717.81m, payment);
     }

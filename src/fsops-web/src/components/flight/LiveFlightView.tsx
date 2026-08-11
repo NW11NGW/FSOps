@@ -1,18 +1,24 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Compass, Fuel, Gauge, MoveVertical, Navigation, WifiOff, X } from 'lucide-react'
 
 import { AbandonDialog } from '@/components/flight/AbandonDialog'
-import { LiveFlightMap } from '@/components/flight/LiveFlightMap'
 import { PhaseTimeline } from '@/components/flight/PhaseTimeline'
 import { StatTile } from '@/components/shared/StatTile'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useSettings } from '@/hooks/useSettings'
 import { formatCallsign } from '@/lib/callsign'
 import { cn } from '@/lib/utils'
 import type { Flight, LiveFlightSnapshot, TelemetryPayload } from '@/types/flight'
 import type { LonLat } from '@/types/route'
+
+// See Dashboard.tsx / Routes.tsx for why the map goes through React.lazy: maplibre-gl is the
+// heaviest single dependency in the bundle and Fly's live view is otherwise cheap to render.
+const LiveFlightMap = lazy(() =>
+  import('@/components/flight/LiveFlightMap').then((m) => ({ default: m.LiveFlightMap })),
+)
 
 interface LiveAirportPoint {
   icao: string
@@ -88,13 +94,15 @@ export function LiveFlightView({ flight, live, telemetry, hubConnected, departur
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <LiveFlightMap
-          departure={departure}
-          arrival={arrival}
-          path={path}
-          aircraft={aircraftPoint}
-          className="h-[320px] sm:h-[420px] lg:h-[480px]"
-        />
+        <Suspense fallback={<Skeleton className="h-[320px] w-full rounded-lg sm:h-[420px] lg:h-[480px]" />}>
+          <LiveFlightMap
+            departure={departure}
+            arrival={arrival}
+            path={path}
+            aircraft={aircraftPoint}
+            className="h-[320px] sm:h-[420px] lg:h-[480px]"
+          />
+        </Suspense>
 
         <div className="space-y-4">
           <Card>

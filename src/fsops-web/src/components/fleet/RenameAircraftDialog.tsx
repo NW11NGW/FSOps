@@ -33,10 +33,15 @@ export function RenameAircraftDialog({ aircraft, onOpenChange, onSuccess }: Rena
   const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Depend on the primitive id, NOT `aircraft` itself - Fleet.tsx constructs `aircraft` as a
+  // fresh object literal on every render it makes (e.g. from a live cash-balance heartbeat
+  // elsewhere in the tree), so a reference-identity dependency here would reset the registration
+  // field on every unrelated re-render - wiping out whatever the player had just typed. Same fix
+  // as EndLeaseDialog's `target?.id` / SellAircraftDialog's `aircraft?.id` dependency.
   useEffect(() => {
     setRegistration(aircraft?.registration ?? '')
     setError(null)
-  }, [aircraft])
+  }, [aircraft?.id])
 
   async function handleRandomise() {
     setSuggesting(true)

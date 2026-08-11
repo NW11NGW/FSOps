@@ -43,6 +43,21 @@ public sealed class EconomyConfig
 
     public DemandConfig Demand { get; init; } = new();
 
+    /// <summary>
+    /// Tuning for how <see cref="Entities.Airline.ReputationScore"/> moves - see docs/PLAN.md
+    /// "Progression - reputation and pilot skill". Shared across playstyles: how forgiving
+    /// reputation is to earn or lose is a simulation-fairness question, not a figure the user
+    /// asked to differ between Casual and True-life.
+    /// </summary>
+    public ReputationConfig Reputation { get; init; } = new();
+
+    /// <summary>
+    /// Tuning for how <see cref="Entities.Pilot.SkillRating"/> grows with hours and decays with
+    /// idle time - see docs/PLAN.md "Progression - reputation and pilot skill". Shared across
+    /// playstyles, same reasoning as <see cref="Reputation"/> above.
+    /// </summary>
+    public PilotSkillConfig PilotSkill { get; init; } = new();
+
     public FuelConfig Fuel { get; init; } = new();
 
     public CostConfig Costs { get; init; } = new();
@@ -418,6 +433,92 @@ public sealed class EconomyConfig
             throw new InvalidOperationException("Demand.DayOfWeekMultiplier must have exactly 7 entries (Sunday=0..Saturday=6).");
         }
 
+        if (Reputation.BaselineScore is < 0 or > 100)
+        {
+            throw new InvalidOperationException($"Reputation.BaselineScore must be in [0,100], was {Reputation.BaselineScore}.");
+        }
+
+        if (Reputation.Alpha is <= 0 or >= 1)
+        {
+            throw new InvalidOperationException($"Reputation.Alpha must be in (0,1), was {Reputation.Alpha}.");
+        }
+
+        if (Reputation.OnTimeWeight < 0 || Reputation.LandingWeight < 0)
+        {
+            throw new InvalidOperationException("Reputation.OnTimeWeight and Reputation.LandingWeight cannot be negative.");
+        }
+
+        if (Math.Abs(Reputation.OnTimeWeight + Reputation.LandingWeight - 1.0) > 0.0001)
+        {
+            throw new InvalidOperationException(
+                $"Reputation.OnTimeWeight + Reputation.LandingWeight must sum to 1.0, was {Reputation.OnTimeWeight + Reputation.LandingWeight}.");
+        }
+
+        if (Reputation.OnTimeToleranceMinutes < 0 || Reputation.OnTimeZeroScoreDelayMinutes <= Reputation.OnTimeToleranceMinutes)
+        {
+            throw new InvalidOperationException(
+                "Reputation.OnTimeZeroScoreDelayMinutes must be positive and greater than Reputation.OnTimeToleranceMinutes.");
+        }
+
+        if (Reputation.LandingBestFpm <= 0 || Reputation.LandingWorstFpm <= Reputation.LandingBestFpm)
+        {
+            throw new InvalidOperationException("Reputation.LandingWorstFpm must be greater than Reputation.LandingBestFpm, both positive.");
+        }
+
+        if (Reputation.CancelledAlphaMultiplier < 1.0)
+        {
+            throw new InvalidOperationException(
+                $"Reputation.CancelledAlphaMultiplier must be at least 1.0 - a cancellation must never move reputation more " +
+                $"slowly than an ordinary sector, was {Reputation.CancelledAlphaMultiplier}.");
+        }
+
+        if (Reputation.Alpha * Reputation.CancelledAlphaMultiplier >= 1.0)
+        {
+            throw new InvalidOperationException(
+                "Reputation.Alpha x Reputation.CancelledAlphaMultiplier must stay below 1.0 - beyond that a single " +
+                "cancellation would overshoot its own target instead of merely moving toward it.");
+        }
+
+        if (Reputation.ManualCompletionTargetScore is < 0 or > 100)
+        {
+            throw new InvalidOperationException(
+                $"Reputation.ManualCompletionTargetScore must be in [0,100], was {Reputation.ManualCompletionTargetScore}.");
+        }
+
+        if (Reputation.ManualCompletionAlphaMultiplier is <= 0 or >= 1)
+        {
+            throw new InvalidOperationException(
+                $"Reputation.ManualCompletionAlphaMultiplier must be in (0,1) - a manual completion must move reputation " +
+                $"LESS than an ordinary tracked sector's own step (it is a flat, timing-independent penalty, never a worst-case " +
+                $"one), was {Reputation.ManualCompletionAlphaMultiplier}.");
+        }
+
+        if (PilotSkill.StartingSkill is < 0 or > 100)
+        {
+            throw new InvalidOperationException($"PilotSkill.StartingSkill must be in [0,100], was {PilotSkill.StartingSkill}.");
+        }
+
+        if (PilotSkill.SkillCap <= PilotSkill.StartingSkill || PilotSkill.SkillCap > 100)
+        {
+            throw new InvalidOperationException(
+                $"PilotSkill.SkillCap must be greater than PilotSkill.StartingSkill and at most 100, was {PilotSkill.SkillCap}.");
+        }
+
+        if (PilotSkill.GrowthHalfLifeHours <= 0)
+        {
+            throw new InvalidOperationException($"PilotSkill.GrowthHalfLifeHours must be positive, was {PilotSkill.GrowthHalfLifeHours}.");
+        }
+
+        if (PilotSkill.IdleGracePeriodHours < 0)
+        {
+            throw new InvalidOperationException($"PilotSkill.IdleGracePeriodHours cannot be negative, was {PilotSkill.IdleGracePeriodHours}.");
+        }
+
+        if (PilotSkill.IdleDecayHalfLifeHours <= 0)
+        {
+            throw new InvalidOperationException($"PilotSkill.IdleDecayHalfLifeHours must be positive, was {PilotSkill.IdleDecayHalfLifeHours}.");
+        }
+
         if (Scheduling.MinRestHoursBetweenDutyDays <= 0)
         {
             throw new InvalidOperationException($"Scheduling.MinRestHoursBetweenDutyDays must be positive, was {Scheduling.MinRestHoursBetweenDutyDays}.");
@@ -523,10 +624,39 @@ public sealed class EconomyConfig
                 MinDistanceFactor = 0.12,
                 BaseDemandPerCatchmentPoint = 45.0,
                 ReputationBaselineScore = 50.0,
-                ReputationSensitivity = 0.5,
+                // 0.25, not the 0.5 this shipped with before reputation ever actually moved: solves
+                // 1 + (100-50)/50 x S = 1.25 (docs/PLAN.md point 2's "reputation 100 carries about
+                // 1.25x the passengers of reputation 50") for S. At reputation 0 this gives exactly
+                // 0.75x, also matching the plan's stated figure, comfortably above ReputationFloor.
+                ReputationSensitivity = 0.25,
                 ReputationFloor = 0.3,
                 MonthlySeasonality = new[] { 0.90, 0.88, 0.95, 1.00, 1.05, 1.15, 1.22, 1.20, 1.02, 0.95, 0.88, 1.05 },
                 DayOfWeekMultiplier = new[] { 0.95, 1.05, 0.95, 0.90, 1.00, 1.15, 1.10 },
+            },
+            // See ReputationConfig's own doc for every figure's derivation.
+            Reputation = new ReputationConfig
+            {
+                BaselineScore = 50.0,
+                Alpha = 0.0137672955,
+                OnTimeWeight = 0.8,
+                LandingWeight = 0.2,
+                OnTimeToleranceMinutes = 5.0,
+                OnTimeZeroScoreDelayMinutes = 45.0,
+                LandingBestFpm = 150.0,
+                LandingWorstFpm = 600.0,
+                CancelledTargetScore = 0.0,
+                CancelledAlphaMultiplier = 2.5,
+                ManualCompletionTargetScore = 0.0,
+                ManualCompletionAlphaMultiplier = 1.0 / 3.0,
+            },
+            // See PilotSkillConfig's own doc for every figure's derivation.
+            PilotSkill = new PilotSkillConfig
+            {
+                StartingSkill = 50.0,
+                SkillCap = 87.0,
+                GrowthHalfLifeHours = 300.0,
+                IdleGracePeriodHours = 336.0,
+                IdleDecayHalfLifeHours = 720.0,
             },
             Fuel = new FuelConfig
             {
@@ -1130,4 +1260,144 @@ public sealed class UnflyableScheduleConfig
     /// whether an ADDITIONAL cost is charged on top of that.
     /// </summary>
     public decimal CancellationFee { get; init; } = 0m;
+}
+
+/// <summary>
+/// Tuning for how <see cref="Entities.Airline.ReputationScore"/> moves on one flight's outcome -
+/// see <see cref="EconomyConfig.Reputation"/>'s own doc, <see cref="ReputationCalculator"/>, and
+/// docs/PLAN.md "Progression - reputation and pilot skill", point 1 (what moves it) and point 2
+/// (magnitude). Shared across playstyles.
+/// </summary>
+public sealed class ReputationConfig
+{
+    /// <summary>Where a brand-new airline starts - matches <see cref="Entities.Airline.ReputationScore"/>'s
+    /// own default.</summary>
+    public double BaselineScore { get; init; } = 50.0;
+
+    /// <summary>
+    /// The exponential-smoothing step size for one ordinary completed sector - see
+    /// <see cref="ReputationCalculator.AdvanceForCompletedFlight"/>. Derived so a run of sectors
+    /// each scoring the maximum (100) target crosses 75 at exactly the 50th sector - the midpoint
+    /// of docs/PLAN.md point 2's stated 40-60 sector band. Solving
+    /// <c>75 = 100 - 50 x (1-alpha)^50</c> for alpha gives <c>1 - 2^(-1/50) ~= 0.013767</c>.
+    /// </summary>
+    public double Alpha { get; init; } = 0.013767;
+
+    /// <summary>How much of a completed sector's target score comes from on-time performance vs
+    /// landing quality - docs/PLAN.md point 1: on-time is the primary signal, landing is the
+    /// smallest weight of the three inputs (the third, cancellation, is not a weight in this blend
+    /// at all - see <see cref="CancelledAlphaMultiplier"/>). Should sum to 1.0 with
+    /// <see cref="LandingWeight"/> - see EconomyConfig.Validate.</summary>
+    public double OnTimeWeight { get; init; } = 0.8;
+
+    public double LandingWeight { get; init; } = 0.2;
+
+    /// <summary>Delay (actual block minutes beyond planned) within which a sector still scores a
+    /// full 100 on-time - a grace band, not a cliff-edge, matching every other "informational, not
+    /// punishing" threshold in this app.</summary>
+    public double OnTimeToleranceMinutes { get; init; } = 5.0;
+
+    /// <summary>
+    /// Delay at or beyond which the on-time score floors at 0. Comfortably above a zero-skill
+    /// virtual pilot's worst-case delay variance (18 minutes - see
+    /// <see cref="Scheduling.VirtualPilotPerformanceCalculator"/>'s MaxDelayVarianceMinutes), so
+    /// even the weakest hire still earns a meaningfully positive on-time score rather than an
+    /// automatic zero.
+    /// </summary>
+    public double OnTimeZeroScoreDelayMinutes { get; init; } = 45.0;
+
+    /// <summary>
+    /// Landing-rate bounds a sector's landing score is measured against - DELIBERATELY the same
+    /// best/worst-case fpm <see cref="Scheduling.VirtualPilotPerformanceCalculator"/> uses for a
+    /// virtual pilot's simulated touchdown, so a player's real touchdown and a virtual pilot's
+    /// simulated one are scored on literally the same scale - docs/PLAN.md point 1's explicit
+    /// "scored on the same scale" requirement.
+    /// </summary>
+    public double LandingBestFpm { get; init; } = 150.0;
+
+    public double LandingWorstFpm { get; init; } = 600.0;
+
+    /// <summary>
+    /// The target a cancelled or skipped sector pulls reputation toward - the worst possible
+    /// outcome, matching what a completed sector could only ever reach at its own absolute worst
+    /// (0 on-time and 0 landing). See <see cref="CancelledAlphaMultiplier"/> for what makes a
+    /// cancellation strictly costlier than that tie.
+    /// </summary>
+    public double CancelledTargetScore { get; init; } = 0.0;
+
+    /// <summary>
+    /// Multiplies <see cref="Alpha"/> for a cancelled or skipped sector, so it moves reputation
+    /// toward its target faster than an ordinary completed sector ever can - the mechanism behind
+    /// docs/PLAN.md point 1's "a bigger hit than a delay" requirement. Never applied to
+    /// <see cref="Entities.FlightStatus.Suspended"/> - see <see cref="ReputationCalculator"/>'s own doc.
+    /// </summary>
+    public double CancelledAlphaMultiplier { get; init; } = 2.5;
+
+    /// <summary>
+    /// The target a manually-completed sector pulls reputation toward - see
+    /// <see cref="ManualCompletionAlphaMultiplier"/>'s own doc for why this is NOT the same code
+    /// path as <see cref="CancelledTargetScore"/> even though both default to the same value (0):
+    /// a manual completion is not "the sector never happened" (money was still earned for it), it
+    /// is "the sector's outcome cannot be verified", which is a distinct fact and deserves its own
+    /// dial rather than silently inheriting whatever the cancellation figure happens to be tuned to.
+    /// </summary>
+    public double ManualCompletionTargetScore { get; init; } = 0.0;
+
+    /// <summary>
+    /// Multiplies <see cref="Alpha"/> for a manually-completed sector - a SMALL fraction, not a
+    /// multiple, unlike <see cref="CancelledAlphaMultiplier"/>. A manual completion carries no
+    /// telemetry at all (see <see cref="Entities.Flight.RevenuePosted"/>'s sibling comments in
+    /// FlightEndpoints.CompleteManualAsync for why even the wall clock cannot be trusted here - it
+    /// measures how long someone took to click a button, not how long the sector took), so this is
+    /// a flat, timing-independent penalty for the sector being UNVERIFIED, never a derived on-time
+    /// or landing score. Sized at roughly a third of an ordinary sector's own step (so the resulting
+    /// single-sector cost from a reputation of 50 is about -0.23, against an ordinary sector's own
+    /// worst possible -0.69), giving the two invariants that matter: completing manually is always
+    /// worse than a clean tracked sector (which pulls UP toward 100, this only ever pulls toward
+    /// <see cref="ManualCompletionTargetScore"/>) and always better than a genuinely terrible one
+    /// (same target, smaller step) - so escaping a bad flight into a manual completion is never the
+    /// smart play, while a genuine sim crash or disconnect barely registers. A previous version of
+    /// this feature derived an on-time score from <c>now - (PlannedDepartureUtc + PlannedBlockMinutes)</c>;
+    /// that was wrong; completing within seconds of starting reads as an enormous EARLY arrival
+    /// under that formula, which scored as a perfect sector and paired with full ticket revenue to
+    /// make "start, immediately complete, repeat" a reputation-and-revenue farm. This flat penalty
+    /// has nothing for that exploit to derive from.
+    /// </summary>
+    public double ManualCompletionAlphaMultiplier { get; init; } = 1.0 / 3.0;
+}
+
+/// <summary>
+/// Tuning for how <see cref="Entities.Pilot.SkillRating"/> grows with hours flown (diminishing
+/// returns, capped below perfect) and decays with idle time - see
+/// <see cref="EconomyConfig.PilotSkill"/>'s own doc, <see cref="Scheduling.PilotSkillCalculator"/>,
+/// and docs/PLAN.md "Progression - reputation and pilot skill", point 3. Shared across playstyles.
+/// </summary>
+public sealed class PilotSkillConfig
+{
+    /// <summary>Skill a brand-new pilot starts at - matches <see cref="Entities.Pilot.SkillRating"/>'s
+    /// own default, and is also the floor idle decay converges toward from above: decay erodes
+    /// what was earned, it never sends a pilot below where they started.</summary>
+    public double StartingSkill { get; init; } = 50.0;
+
+    /// <summary>The ceiling growth asymptotically approaches but never reaches - kept below
+    /// perfect (100) so landing/delay variance never fully disappears even for the most
+    /// experienced hire, per docs/PLAN.md point 3.</summary>
+    public double SkillCap { get; init; } = 87.0;
+
+    /// <summary>Hours flown to close half the remaining gap between <see cref="StartingSkill"/>
+    /// and <see cref="SkillCap"/> - diminishing returns by construction: the next half-life always
+    /// buys half as much improvement as the last one did.</summary>
+    public double GrowthHalfLifeHours { get; init; } = 300.0;
+
+    /// <summary>
+    /// Idle hours (since <see cref="Entities.Pilot.LastFlewUtc"/>) before decay starts at all - a
+    /// normal gap between scheduled flights must never look like neglect. 336h = 14 days.
+    /// </summary>
+    public double IdleGracePeriodHours { get; init; } = 336.0;
+
+    /// <summary>Idle hours BEYOND the grace period to close half the remaining gap back down
+    /// toward <see cref="StartingSkill"/> - 720h = 30 days, so a pilot genuinely forgotten for
+    /// six-plus weeks visibly loses ground, while one who flies at least monthly never decays
+    /// meaningfully.</summary>
+    public double IdleDecayHalfLifeHours { get; init; } = 720.0;
 }

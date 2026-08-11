@@ -192,7 +192,7 @@ public class FlightLedgerPostingTests
         Assert.Equal(LedgerCategory.Fuel, linesAfterStart[0].Category);
         Assert.True(linesAfterStart[0].Amount < 0);
 
-        var abandonResult = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, CancellationToken.None);
+        var abandonResult = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(abandonResult));
 
         // Abandoning never refunds a sunk cost - the fuel line from start is still the only thing

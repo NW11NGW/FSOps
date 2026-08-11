@@ -293,7 +293,7 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
         </Card>
       )}
 
-      {flight.typeMismatch && (
+      {flight.typeMismatch === true && (
         <Card className="border-accent/30">
           <CardContent className="flex items-start gap-3 p-4">
             <Info className="mt-0.5 size-4 shrink-0 text-accent" />

@@ -165,7 +165,7 @@ public class VirtualFlightResolverServiceTests
             Assert.True(f.RevenuePosted);
             Assert.True(f.PaxBooked > 0);
             Assert.True(f.Revenue > 0);
-            Assert.False(f.TypeMismatch); // no aircraft-type mismatch check applies to a virtual pilot
+            Assert.Null(f.TypeMismatch); // no aircraft-type mismatch check applies to a virtual pilot - unknown, not "matched"
             Assert.Null(f.UnflyableReason);
             Assert.Equal(pilot.Id, f.PilotId);
         });

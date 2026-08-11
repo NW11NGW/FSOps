@@ -116,7 +116,7 @@ export function FlightHistoryList({ flights, status, routesById, airlineIcaoCode
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         <Badge variant={STATUS_BADGE[flight.status]}>{flight.status}</Badge>
-                        {flight.typeMismatch && <Badge variant="outline">Type noted</Badge>}
+                        {flight.typeMismatch === true && <Badge variant="outline">Type noted</Badge>}
                       </div>
                     </TableCell>
                   </TableRow>

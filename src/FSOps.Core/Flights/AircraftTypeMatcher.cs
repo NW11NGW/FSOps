@@ -11,6 +11,16 @@ namespace FSOps.Core.Flights;
 /// </summary>
 public static class AircraftTypeMatcher
 {
+    /// <summary>
+    /// True if the sim has told us anything at all about the loaded aircraft - a non-blank TITLE or
+    /// ATC MODEL. False means there is nothing to check against (sim not connected, or no aircraft
+    /// loaded yet), which callers must report as unknown rather than passing it to
+    /// <see cref="IsMatch"/> and treating a "no" answer as a mismatch - see
+    /// <c>Flight.TypeMismatch</c>.
+    /// </summary>
+    public static bool HasAircraftData(string? aircraftTitle, string? atcModel) =>
+        !string.IsNullOrWhiteSpace(aircraftTitle) || !string.IsNullOrWhiteSpace(atcModel);
+
     /// <param name="matchPatternsJson"><c>AircraftType.MatchPatterns</c> - a JSON array of regex strings.</param>
     /// <param name="aircraftTitle">The sim's TITLE for the loaded aircraft.</param>
     /// <param name="atcModel">The sim's ATC MODEL for the loaded aircraft.</param>

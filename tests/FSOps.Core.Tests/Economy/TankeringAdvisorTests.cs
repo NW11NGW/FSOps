@@ -60,8 +60,8 @@ public class TankeringAdvisorTests
     /// <summary>
     /// The advantage is bounded, not unlimited: as the sector gets long enough, cost-of-carry
     /// eventually consumes the whole gross saving and tankering stops paying off, however large
-    /// the up-front price gap looked. This is the property the coordinator asked to be verified
-    /// rather than assumed.
+    /// the up-front price gap looked. Asserted rather than assumed, because "cheap fuel is always
+    /// worth carrying" is the intuition this model deliberately contradicts.
     /// </summary>
     [Fact]
     public void SufficientlyLongSector_CostOfCarryEventuallyEliminatesTheAdvantage()

@@ -143,6 +143,16 @@ public sealed class VirtualFlightResolverService : BackgroundService
             }
 
             var context = await LoadContextAsync(db, _economyConfigCatalog, ct);
+
+            // Pilot skill idle decay - docs/PLAN.md point 3. Runs every tick regardless of whether
+            // anything is due for resolution this pass, so a pilot left with no schedule keeps
+            // decaying purely from the passage of real time since they last flew - see
+            // ApplyIdlePilotSkillDecay's own doc for why "now" (not any occurrence's timestamp) is
+            // the correct clock for this. Saved immediately rather than waiting for the occurrence
+            // loop below, since that loop does nothing at all on a tick with no pending occurrences.
+            ApplyIdlePilotSkillDecay(context, now);
+            await db.SaveChangesAsync(ct);
+
             var pending = BuildPendingOccurrences(context, lastResolved, cutoff);
 
             var toProcess = pending.Take(MaxOccurrencesPerPass).ToList();
@@ -228,6 +238,38 @@ public sealed class VirtualFlightResolverService : BackgroundService
             aircraftTypes.ToDictionary(t => t.Id),
             airports.ToDictionary(a => a.Icao),
             worldSeed);
+    }
+
+    /// <summary>
+    /// Recomputes every non-player pilot's SkillRating fresh from (HoursFlown, LastFlewUtc, now) -
+    /// see <see cref="PilotSkillCalculator"/>'s own doc. A full recompute, not an increment, so
+    /// calling it every tick (even when nothing else in this pass has anything to do) can never
+    /// move a pilot's skill "twice" - the same value in, the same value out, no matter how many
+    /// times or how often this runs. <paramref name="now"/> is always the REAL current clock
+    /// reading (this pass's own <c>_clock.UtcNow</c>), deliberately never an occurrence's own
+    /// (possibly historical, mid-catch-up) timestamp - decay reflects how idle a pilot genuinely is
+    /// right now, not how idle they were at some earlier point being caught up. Never touches a
+    /// <see cref="Pilot.IsPlayer"/> pilot - docs/PLAN.md's "the player's own pilot record never
+    /// decays" requirement; a player's SkillRating is only ever touched by their own flights, via
+    /// <see cref="MaintenancePoster.PostFlightHours"/>.
+    /// </summary>
+    private static void ApplyIdlePilotSkillDecay(ResolutionContext context, DateTimeOffset now)
+    {
+        foreach (var pilot in context.Pilots.Values)
+        {
+            if (pilot.IsPlayer)
+            {
+                continue;
+            }
+
+            if (!context.Airlines.TryGetValue(pilot.AirlineId, out var airline))
+            {
+                continue;
+            }
+
+            var config = context.EconomyConfig(airline.Playstyle).PilotSkill;
+            pilot.SkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, pilot.LastFlewUtc, now, config);
+        }
     }
 
     /// <summary>
@@ -398,6 +440,12 @@ public sealed class VirtualFlightResolverService : BackgroundService
         var fee = economyConfig.UnflyableSchedule.CancellationFee;
         var status = fee > 0 ? FlightStatus.Cancelled : FlightStatus.Skipped;
 
+        // Reputation - docs/PLAN.md point 1 names "cancelled AND skipped sectors" together, so
+        // both playstyles' outcomes hit reputation identically here; only the ledger line (below)
+        // differs by playstyle. Never reached for a maintenance suspension - see ResolveSuspendedAsync,
+        // which is a structurally separate method that never calls this one.
+        ReputationPoster.PostCancelledOrSkipped(occurrence.Airline, economyConfig);
+
         var flight = new Flight
         {
             Id = Guid.NewGuid(),
@@ -456,6 +504,11 @@ public sealed class VirtualFlightResolverService : BackgroundService
         var flightHours = (occurrence.BlockMinutes + performance.DelayMinutes) / 60.0;
         var actualArrival = occurrence.Departure.AddMinutes(occurrence.BlockMinutes + performance.DelayMinutes);
 
+        // Reputation - docs/PLAN.md point 1. A virtual flight always has both signals (unlike a
+        // player's manual completion), so this always blends on-time + landing, never falls back to
+        // one alone - see ReputationCalculator.AdvanceForCompletedFlight.
+        ReputationPoster.PostCompletedFlight(airline, economyConfig, performance.DelayMinutes, performance.LandingFpm);
+
         var flight = new Flight
         {
             Id = Guid.NewGuid(),
@@ -476,9 +529,10 @@ public sealed class VirtualFlightResolverService : BackgroundService
             LandingFpmHardest = performance.LandingFpm,
             LandingGForce = performance.GForce,
             // No aircraft-type mismatch check applies to a virtual pilot - docs/PLAN.md "Virtual
-            // pilots on the wall clock".
+            // pilots on the wall clock". Null (unknown), not false: false means "checked and
+            // matched", and nothing was ever checked here - no sim was ever loaded for this flight.
             TitleFlown = occurrence.AircraftType.Name,
-            TypeMismatch = false,
+            TypeMismatch = null,
             Revenue = 0m,
             TotalCost = 0m,
             CreatedUtc = resolvedAtUtc,

@@ -1,5 +1,6 @@
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
+using FSOps.Core.Scheduling;
 using FSOps.Data;
 
 namespace FSOps.Server.Services;
@@ -34,6 +35,18 @@ public static class MaintenancePoster
         if (pilot is not null)
         {
             pilot.HoursFlown += flightHours;
+
+            // Skill growth belongs here too, for the same "one shared place, not three call sites
+            // that can drift apart" reason HoursFlown accrual does - see this method's own class
+            // doc. LastFlewUtc is stamped to completionUtc (i.e. "now" for PilotSkillCalculator),
+            // so this always resolves to pure growth with zero idle decay - a pilot who just flew
+            // cannot be decaying at the same instant. Applies to every pilot, player included: see
+            // PilotSkillCalculator's own doc for why growing this number is harmless for a player
+            // (their real flights are always judged by real telemetry, never by SkillRating) and
+            // why it can never DECREASE the player's number - the one requirement docs/PLAN.md
+            // actually makes non-negotiable.
+            pilot.SkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, completionUtc, completionUtc, economyConfig.PilotSkill);
+            pilot.LastFlewUtc = completionUtc;
         }
 
         aircraft.AirframeHours += flightHours;

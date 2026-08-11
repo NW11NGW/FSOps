@@ -48,7 +48,7 @@ From the repository root, restore and build the .NET solution:
 dotnet build
 ```
 
-This builds all four backend projects — `FSOps.Core`, `FSOps.Data`, `FSOps.Sim`, and `FSOps.Server` — plus the test project. The first run will take longer while NuGet packages are restored.
+This builds all four backend projects — `FSOps.Core`, `FSOps.Data`, `FSOps.Sim`, and `FSOps.Server` — plus the test project. The first run will take longer while NuGet packages are restored. If you're contributing rather than just running FSOps, `dotnet test` from the repository root runs the full backend xUnit suite.
 
 ## 4. Build the frontend
 
@@ -61,6 +61,8 @@ npm run build
 ```
 
 `npm install` pulls down the frontend's dependencies (only needed once, or again after they change). `npm run build` compiles the React app into static files that `FSOps.Server` serves. If you skip this step, the server will still start, but the browser will show a message that the UI hasn't been built yet — see [troubleshooting](troubleshooting.md#the-ui-shows-fsops-ui-not-built-yet) if you hit that.
+
+If you're contributing to the frontend, `npm test` (watch mode) or `npm run test:run` (single pass) runs its [Vitest](https://vitest.dev/) suite from the same `src/fsops-web` folder — see [Architecture](../architecture.md#testing) for what it covers. Neither is required just to build and run FSOps.
 
 Return to the repository root once the build finishes:
 

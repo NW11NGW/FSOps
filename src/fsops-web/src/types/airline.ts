@@ -95,3 +95,26 @@ export interface AirlineSummary {
   /** The player's own pilot name - lets Settings prefill "your name" without a separate /pilots fetch. */
   playerPilotName: string
 }
+
+export type ReputationDirection = 'improving' | 'declining' | 'steady' | 'new'
+export type LandingQuality = 'smooth' | 'firm' | 'hard'
+
+/**
+ * GET /airline/reputation - the dashboard's reputation card. `direction` is 'new' only when there
+ * are no recent Completed/Cancelled/Skipped sectors to judge a trend from (a brand-new airline).
+ * `onTimePercent`/`landingQuality` are null when nothing in the recent window could measure that
+ * signal honestly (e.g. only manually-completed flights with no telemetry) - never zero, since zero
+ * would claim a bad outcome the data never actually showed.
+ */
+export interface ReputationSummary {
+  score: number
+  direction: ReputationDirection
+  sectorsConsidered: number
+  onTimePercent: number | null
+  cancelledCount: number
+  skippedCount: number
+  landingQuality: LandingQuality | null
+  /** Relative to 1.0 = baseline demand at reputation 50 - the same multiplier DemandCalculator
+   *  actually applies to every route right now. */
+  demandMultiplier: number
+}

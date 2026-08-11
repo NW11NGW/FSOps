@@ -182,6 +182,11 @@ public sealed class EconomyConfigCatalog
         PostCaptiveElasticity = baseConfig.PostCaptiveElasticity,
         ReferenceFare = baseConfig.ReferenceFare,
         Demand = baseConfig.Demand,
+        // Shared across playstyles - see ReputationConfig/PilotSkillConfig's own docs (how
+        // forgiving reputation/skill movement is is a simulation-fairness question, not a
+        // game-balance figure the user asked to differ by playstyle).
+        Reputation = baseConfig.Reputation,
+        PilotSkill = baseConfig.PilotSkill,
         Fuel = baseConfig.Fuel,
         Costs = baseConfig.Costs,
         StrategyProfiles = baseConfig.StrategyProfiles,

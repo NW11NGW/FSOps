@@ -54,8 +54,15 @@ public class Flight
 
     public string TitleFlown { get; set; } = string.Empty;
 
-    /// <summary>Informational only - a wrong-family aircraft is flagged, never penalised.</summary>
-    public bool TypeMismatch { get; set; }
+    /// <summary>
+    /// Informational only - a wrong-family aircraft is flagged, never penalised. Three-valued: true
+    /// is a genuine family mismatch, false is a confirmed match, and null means unknown - the sim
+    /// reported no TITLE or ATC MODEL at all to check (not connected, or no aircraft loaded yet) -
+    /// see <see cref="FSOps.Core.Flights.AircraftTypeMatcher.HasAircraftData"/>. Never collapse null
+    /// into false or true: "we don't know" is a different fact from "we checked and it matched" or
+    /// "we checked and it didn't".
+    /// </summary>
+    public bool? TypeMismatch { get; set; }
 
     /// <summary>
     /// True if the sim ran faster than real time (simulation rate above 1.0) at any point while

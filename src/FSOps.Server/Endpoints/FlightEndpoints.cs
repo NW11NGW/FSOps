@@ -131,9 +131,12 @@ public static class FlightEndpoints
         var currentAircraft = telemetry.CurrentAircraft;
         var titleFlown = currentAircraft?.Title ?? string.Empty;
         var atcModel = currentAircraft?.AtcModel;
-        // An unrecognised (sim not connected / no aircraft loaded yet) aircraft is flagged the
-        // same as a genuine mismatch - informational only, see AircraftTypeMatcher.
-        var typeMismatch = !AircraftTypeMatcher.IsMatch(aircraftType.MatchPatterns, titleFlown, atcModel);
+        // Null (unknown) when the sim hasn't told us anything to check - not connected, or no
+        // aircraft loaded yet - rather than treating "nothing to compare" as a failed comparison.
+        // Only when there IS a title/model do we ask whether it matches the route's expected family.
+        bool? typeMismatch = AircraftTypeMatcher.HasAircraftData(titleFlown, atcModel)
+            ? !AircraftTypeMatcher.IsMatch(aircraftType.MatchPatterns, titleFlown, atcModel)
+            : null;
 
         var now = DateTimeOffset.UtcNow;
         var flight = new Flight
@@ -207,7 +210,7 @@ public static class FlightEndpoints
 
         flight.TotalCost = fuelUpliftCost;
 
-        if (typeMismatch)
+        if (typeMismatch == true)
         {
             db.FlightEvents.Add(new FlightEvent
             {
@@ -232,7 +235,8 @@ public static class FlightEndpoints
         return Results.Created($"/api/v1/flights/{flight.Id}", ToFlightDto(flight));
     }
 
-    internal static async Task<IResult> AbandonAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
+    internal static async Task<IResult> AbandonAsync(
+        Guid id, FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var flight = await LoadOwnedFlightAsync(db, currentUser, id, ct);
         if (flight is null)
@@ -253,6 +257,23 @@ public static class FlightEndpoints
         lifecycle.StopTracking(flight.Id);
         flight.Status = FlightStatus.Abandoned;
         await RevertFleetAircraftAsync(db, flight, lastSnapshot, ct);
+
+        // Reputation - docs/PLAN.md "Progression - reputation and pilot skill". From a passenger's
+        // point of view an abandoned sector never happened, exactly like a virtual pilot's
+        // occurrence that could never fly, so this reuses ReputationPoster.PostCancelledOrSkipped
+        // unchanged rather than inventing a fourth shape. The revenue/fuel loss already inherent to
+        // abandoning (no economics are ever posted for this status - see the structural absence of
+        // any FlightEconomicsPoster call anywhere in this method) is a separate financial
+        // consequence and is never treated as a substitute for a real reputation cost - without
+        // this, a flight running badly (late, heading for a hard landing) could always be abandoned
+        // instead of finished or even manually completed, taking zero reputation damage on top of
+        // whatever money was already lost.
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
+        if (airline is not null)
+        {
+            ReputationPoster.PostCancelledOrSkipped(airline, economyConfigCatalog.Get(airline.Playstyle));
+        }
+
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(ToFlightDto(flight));
@@ -334,7 +355,22 @@ public static class FlightEndpoints
 
             if (airline is not null)
             {
-                MaintenancePoster.PostFlightHours(db, fleetAircraft, pilot, airline, economyConfigCatalog.Get(airline.Playstyle), flightHours, now);
+                var economyConfigForCompletion = economyConfigCatalog.Get(airline.Playstyle);
+                MaintenancePoster.PostFlightHours(db, fleetAircraft, pilot, airline, economyConfigForCompletion, flightHours, now);
+
+                // Reputation - a flat, timing-independent penalty, never derived from the wall
+                // clock or any telemetry - see ReputationConfig.ManualCompletionAlphaMultiplier's
+                // own doc. An EARLIER version of this comment derived an on-time score from
+                // `now - (PlannedDepartureUtc + PlannedBlockMinutes)`; that was wrong and has been
+                // removed - a flight completed within seconds of starting reads as an enormous
+                // EARLY arrival under that formula (now is roughly the planned DEPARTURE, not
+                // arrival), which scored as a perfect sector and, paired with the full ticket
+                // revenue this path already posts, made "start, immediately complete, repeat" a
+                // reputation-and-revenue farm. The wall clock on this path measures how long the
+                // player took to click a button, not how the sector went, so nothing derived from
+                // it belongs in this call - the sector is simply UNVERIFIED, which is the one fact
+                // actually known, and that is worth a small fixed cost regardless of timing.
+                ReputationPoster.PostUnverifiedManualCompletion(airline, economyConfigForCompletion);
             }
             else
             {

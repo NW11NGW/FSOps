@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Building2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import type { NetworkAirport, SavedRouteArc } from '@/components/map/RouteMap'
-import { RouteMap } from '@/components/map/RouteMap'
 import { AirportPickerCard } from '@/components/routes/AirportPickerCard'
 import { PlanPanel } from '@/components/routes/PlanPanel'
 import { RoutesTable } from '@/components/routes/RoutesTable'
@@ -26,6 +25,11 @@ import type { CreateRoutePairResponse, DeleteRoutePairResponse, RouteSummary } f
 function toDisplayAmount(baseAmount: number, currency: Pick<CurrencyInfo, 'rate' | 'decimalPlaces'>): string {
   return (baseAmount * currency.rate).toFixed(currency.decimalPlaces)
 }
+
+// Pulls maplibre-gl (the app's heaviest dependency) into its own chunk, loaded only once this
+// page actually mounts. Combined with route-level splitting in App.tsx this keeps every page that
+// never shows a map - Fleet, Pilots, Finances, Stats, Settings - from paying for it at all.
+const RouteMap = lazy(() => import('@/components/map/RouteMap').then((m) => ({ default: m.RouteMap })))
 
 export function RoutesPage() {
   const { airlineSummary } = useOutletContext<LiveContext>()
@@ -297,21 +301,23 @@ export function RoutesPage() {
           />
         </div>
 
-        <RouteMap
-          departure={departure}
-          arrival={arrival}
-          path={routePath}
-          savedRoutes={savedRouteArcs}
-          networkAirports={networkAirports}
-          homeAirportIcao={homeAirportIcao}
-          selectedRouteId={selectedRouteId}
-          hoveredRouteId={hoveredRouteId}
-          onSelectRoute={handleSelectRouteId}
-          onHoverRoute={setHoveredRouteId}
-          onAirportClick={handleAirportClick}
-          onEndpointDrop={handleEndpointDrop}
-          className="h-[320px] sm:h-[400px] lg:sticky lg:top-6 lg:h-[480px]"
-        />
+        <Suspense fallback={<Skeleton className="h-[320px] w-full rounded-lg sm:h-[400px] lg:sticky lg:top-6 lg:h-[480px]" />}>
+          <RouteMap
+            departure={departure}
+            arrival={arrival}
+            path={routePath}
+            savedRoutes={savedRouteArcs}
+            networkAirports={networkAirports}
+            homeAirportIcao={homeAirportIcao}
+            selectedRouteId={selectedRouteId}
+            hoveredRouteId={hoveredRouteId}
+            onSelectRoute={handleSelectRouteId}
+            onHoverRoute={setHoveredRouteId}
+            onAirportClick={handleAirportClick}
+            onEndpointDrop={handleEndpointDrop}
+            className="h-[320px] sm:h-[400px] lg:sticky lg:top-6 lg:h-[480px]"
+          />
+        </Suspense>
       </div>
 
       <RoutesTable

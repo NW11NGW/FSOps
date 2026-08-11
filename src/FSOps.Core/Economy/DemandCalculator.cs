@@ -101,4 +101,13 @@ public static class DemandCalculator
         var factor = 1.0 + (reputationScore - config.ReputationBaselineScore) / config.ReputationBaselineScore * config.ReputationSensitivity;
         return Math.Max(config.ReputationFloor, factor);
     }
+
+    /// <summary>
+    /// Public entry point onto <see cref="ReputationFactor"/> for a read-only reporting view (the
+    /// dashboard's "this is affecting your bookings" reputation summary) that needs to quote the
+    /// exact same demand multiplier <see cref="AvailablePassengers"/> actually applies, rather than
+    /// re-deriving the baseline/sensitivity/floor formula a second time somewhere else.
+    /// </summary>
+    public static double ReputationDemandMultiplier(DemandConfig config, double reputationScore) =>
+        ReputationFactor(config, reputationScore);
 }

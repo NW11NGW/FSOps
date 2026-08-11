@@ -369,7 +369,7 @@ namespace FSOps.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("TEXT");
 
-                    b.Property<bool>("TypeMismatch")
+                    b.Property<bool?>("TypeMismatch")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("UnflyableReason")
@@ -587,6 +587,9 @@ namespace FSOps.Data.Migrations
 
                     b.Property<bool>("IsPlayer")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("LastFlewUtc")
+                        .HasColumnType("TEXT");
 
                     b.Property<decimal>("MonthlySalary")
                         .HasPrecision(18, 2)

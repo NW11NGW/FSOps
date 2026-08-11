@@ -37,7 +37,10 @@ export interface Flight {
   landingGForce: number | null
   centrelineDeviationM: number | null
   titleFlown: string
-  typeMismatch: boolean
+  /** Informational only - never affects payment. True is a genuine family mismatch, false is a
+   *  confirmed match, null means the sim reported no aircraft to check (not connected, or no
+   *  aircraft loaded yet) - render null the same as "nothing to show", never as a mismatch. */
+  typeMismatch: boolean | null
   /** True if the sim ran faster than real time at any point during this flight - see FlightIntegrityMonitor. Block-time variance and on-time performance are not measured when true; landing quality is unaffected. */
   simRateElevated: boolean
   /** Highest simulation rate observed. 1.0 (normal speed) if simRateElevated is false. */

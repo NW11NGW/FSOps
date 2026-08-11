@@ -1,18 +1,35 @@
+import { lazy, Suspense } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, Route, Users } from 'lucide-react'
+import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, Route, ShieldCheck, Users } from 'lucide-react'
 
-import { LiveOpsMap } from '@/components/map/LiveOpsMap'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Badge, type BadgeProps } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatTile } from '@/components/shared/StatTile'
 import { WorldDataStatusBanner } from '@/components/shared/WorldDataStatusBanner'
 import { useLiveOperations } from '@/hooks/useLiveOperations'
+import { useReputationSummary } from '@/hooks/useReputationSummary'
 import { useServerClock } from '@/hooks/useServerClock'
 import { useSettings } from '@/hooks/useSettings'
 import { useWorldDataStatus } from '@/hooks/useWorldDataStatus'
+import { reputationDemandLabel, reputationDrivers, reputationTrendLabel } from '@/lib/reputation'
 import type { LiveContext } from '@/types/live-context'
+import type { ReputationDirection } from '@/types/airline'
+
+// maplibre-gl is the single heaviest dependency in the app (~210 kB gzipped) and the Dashboard is
+// the route almost everyone lands on first, so it must not sit on the critical path for the rest
+// of the page. Splitting it out lets the clock, KPIs, and reputation card paint immediately while
+// the map streams in behind them - the fallback below matches the existing loading skeleton this
+// card already used for the liveOps-loading state.
+const LiveOpsMap = lazy(() => import('@/components/map/LiveOpsMap').then((m) => ({ default: m.LiveOpsMap })))
+
+const REPUTATION_BADGE_VARIANT: Record<ReputationDirection, NonNullable<BadgeProps['variant']>> = {
+  improving: 'success',
+  declining: 'danger',
+  steady: 'muted',
+  new: 'muted',
+}
 
 const CLOCK_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour: '2-digit',
@@ -35,11 +52,14 @@ export function Dashboard() {
   const serverNow = useServerClock(heartbeat)
   const worldData = useWorldDataStatus()
   const liveOps = useLiveOperations()
+  const reputation = useReputationSummary()
   const { fmt } = useSettings()
 
   const summary = airlineSummary.data
   const summaryLoading = airlineSummary.status === 'loading'
   const summaryUnavailable = airlineSummary.status === 'error'
+
+  const reputationTrend = reputation.data ? reputationTrendLabel(reputation.data.direction) : undefined
 
   const airportsValue =
     worldData.status === 'ready' && worldData.data
@@ -163,8 +183,72 @@ export function Dashboard() {
             trend={airportsTrend}
             loading={worldData.status === 'loading'}
           />
+          <StatTile
+            label="Reputation"
+            value={
+              reputation.status === 'ready' && reputation.data
+                ? String(Math.round(reputation.data.score))
+                : reputation.status === 'error'
+                  ? '—'
+                  : undefined
+            }
+            icon={ShieldCheck}
+            trend={
+              reputationTrend ?? (reputation.status === 'error' ? { direction: 'flat', label: 'Unavailable' } : undefined)
+            }
+            loading={reputation.status === 'loading'}
+          />
         </div>
       </div>
+
+      <Card className="mt-4">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <ShieldCheck className="size-4" />
+            Reputation
+          </CardTitle>
+          {reputation.status === 'ready' && reputation.data && reputationTrend && (
+            <Badge variant={REPUTATION_BADGE_VARIANT[reputation.data.direction]}>{reputationTrend.label}</Badge>
+          )}
+        </CardHeader>
+        <CardContent>
+          {reputation.status === 'loading' && (
+            <div className="space-y-3">
+              <Skeleton className="h-9 w-16" />
+              <Skeleton className="h-4 w-72" />
+              <Skeleton className="h-4 w-56" />
+            </div>
+          )}
+
+          {reputation.status === 'error' && (
+            <p className="text-sm text-muted-foreground">Could not load your reputation. Check your connection and try again.</p>
+          )}
+
+          {reputation.status === 'none' && (
+            <p className="text-sm text-muted-foreground">Create your airline to start building a reputation.</p>
+          )}
+
+          {reputation.status === 'ready' && reputation.data && (
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                {/* Rounded for display, matching the StatTile above - the underlying score moves in
+                 *  fractions of a point per sector, and showing that precision here would claim an
+                 *  accuracy the model was never meant to imply. */}
+                <p className="text-4xl font-semibold tabular-nums tracking-tight">{Math.round(reputation.data.score)}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{reputationDemandLabel(reputation.data.demandMultiplier)}</p>
+              </div>
+              <ul className="space-y-1.5 text-sm text-muted-foreground sm:max-w-sm">
+                {reputationDrivers(reputation.data).map((driver) => (
+                  <li key={driver} className="flex gap-2">
+                    <span aria-hidden>•</span>
+                    <span>{driver}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="mt-4">
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
@@ -186,7 +270,9 @@ export function Dashboard() {
             </div>
           )}
           {liveOps.status === 'ready' && liveOps.data && (
-            <LiveOpsMap aircraft={liveOps.data.aircraft} network={liveOps.data.network} className="h-[360px]" />
+            <Suspense fallback={<Skeleton className="h-[360px] w-full rounded-lg" />}>
+              <LiveOpsMap aircraft={liveOps.data.aircraft} network={liveOps.data.network} className="h-[360px]" />
+            </Suspense>
           )}
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { CalendarClock, LayoutGrid, Loader2, Plane, Plus, Trash2, Users } from 'lucide-react'
+import { AlertTriangle, CalendarClock, LayoutGrid, Loader2, Plane, Plus, TrendingDown, Trash2, Users } from 'lucide-react'
 
 import { PilotScheduleDialog } from '@/components/schedule/PilotScheduleDialog'
 import { ScheduleOverview } from '@/components/schedule/ScheduleOverview'
@@ -18,7 +18,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePilots } from '@/hooks/usePilots'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError } from '@/lib/api'
+import { pilotSkillStatus, type PilotSkillTone } from '@/lib/pilotSkill'
 import type { PilotStatus, PilotSummary } from '@/types/pilot'
+
+const SKILL_STATUS_CLASS: Record<PilotSkillTone, string> = {
+  'never-decays': 'text-muted-foreground',
+  'never-flown': 'text-muted-foreground',
+  decaying: 'text-danger',
+  'grace-warning': 'text-warning',
+  normal: 'text-muted-foreground',
+}
 
 const STATUS_BADGE: Record<PilotStatus, { label: string; variant: 'success' | 'warning' | 'muted' }> = {
   Available: { label: 'Available', variant: 'success' },
@@ -136,6 +145,7 @@ export function Pilots() {
                   <TableHead>Pilot</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Skill</TableHead>
+                  <TableHead>Last flown</TableHead>
                   <TableHead>Hours flown</TableHead>
                   <TableHead>Monthly salary</TableHead>
                   <TableHead>Weekly schedule</TableHead>
@@ -147,6 +157,7 @@ export function Pilots() {
               <TableBody>
                 {pilotsQuery.pilots.map((pilot) => {
                   const status = STATUS_BADGE[pilot.status]
+                  const skillStatus = pilotSkillStatus(pilot)
                   return (
                     <TableRow key={pilot.id}>
                       <TableCell>
@@ -160,7 +171,22 @@ export function Pilots() {
                       <TableCell>
                         <Badge variant={status.variant}>{status.label}</Badge>
                       </TableCell>
-                      <TableCell className="tabular-nums">{pilot.skillRating}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          <span className="tabular-nums">{Math.round(pilot.skillRating)}</span>
+                          {skillStatus.tone === 'decaying' && <TrendingDown className="size-3.5 shrink-0 text-danger" aria-hidden />}
+                          {skillStatus.tone === 'grace-warning' && <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden />}
+                        </div>
+                        {/* Hours flown alone would give this pilot a higher number than they
+                         *  currently have - show it so growth from experience stays legible even
+                         *  while idle decay is pulling the live figure down. */}
+                        {!pilot.isPlayer && pilot.earnedSkillRating - pilot.skillRating >= 1 && (
+                          <p className="text-xs text-muted-foreground">earned {Math.round(pilot.earnedSkillRating)}</p>
+                        )}
+                      </TableCell>
+                      <TableCell className={`max-w-[16rem] text-sm ${SKILL_STATUS_CLASS[skillStatus.tone]}`}>
+                        {skillStatus.message}
+                      </TableCell>
                       <TableCell className="tabular-nums">{pilot.hoursFlown.toFixed(1)}h</TableCell>
                       <TableCell className="tabular-nums">{fmt.money(pilot.monthlySalary)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">

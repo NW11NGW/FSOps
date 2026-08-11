@@ -26,14 +26,41 @@ public class DemandCalculatorTests
     {
         // catchment = sqrt(0.6*3.0) = 1.3416407865, distanceFactor beyond the 2500nm sweet spot
         // max = 1.0 - 0.00035*(3000-2500) = 0.825, 2026-06-15 is a Monday in June: season 1.15 x
-        // day 1.05, reputation 80 -> factor 1.0 + (80-50)/50*0.5 = 1.3.
-        // raw = 45 * 1.3416407865 * 0.825 * 1.15 * 1.05 * 1.3 = 78.1867... -> 78
+        // day 1.05. ReputationSensitivity is 0.25, not the naive 0.5 the arithmetic might suggest -
+        // it exists specifically to satisfy docs/PLAN.md's user-chosen "reputation 100 carries about
+        // 1.25x the passengers of reputation 50; reputation 0 about 0.75x" band (see
+        // ReputationFactorAtTheExtremes_MatchesThePlansStated125And75PercentBand below for that
+        // figure pinned directly), so reputation 80 -> factor 1.0 + (80-50)/50*0.25 = 1.15.
+        // raw = 45 * 1.3416407865 * 0.825 * 1.15 * 1.05 * 1.15 = 69.165... -> 69
         var date = new DateTimeOffset(2026, 6, 15, 12, 0, 0, TimeSpan.Zero);
 
         var pax = DemandCalculator.AvailablePassengers(
             Config, AirportSizeCategory.Small, AirportSizeCategory.Medium, distanceNm: 3000, flightDateUtc: date, reputationScore: 80);
 
-        Assert.Equal(78, pax);
+        Assert.Equal(69, pax);
+    }
+
+    [Fact]
+    public void ReputationFactorAtTheExtremes_MatchesThePlansStated125And75PercentBand()
+    {
+        // docs/PLAN.md "Progression - reputation and pilot skill", point 2 - these are the literal
+        // figures the user was shown and chose, not a paraphrase: "Reputation 100 carries about
+        // 1.25x the passengers of reputation 50; reputation 0 about 0.75x, still floored." Pinned
+        // here directly (rather than only appearing inside another test's worked comment) so a
+        // future retune of ReputationSensitivity can't silently drift away from what was actually
+        // approved - that is exactly how the previous value (0.5, never chosen by anyone, just sitting
+        // in config since before reputation could move) went unnoticed for so long.
+        var date = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero); // any fixed date - only the ratio between runs matters
+
+        var atBaseline = DemandCalculator.AvailablePassengers(
+            Config, AirportSizeCategory.Large, AirportSizeCategory.Large, distanceNm: 1000, flightDateUtc: date, reputationScore: 50);
+        var atHundred = DemandCalculator.AvailablePassengers(
+            Config, AirportSizeCategory.Large, AirportSizeCategory.Large, distanceNm: 1000, flightDateUtc: date, reputationScore: 100);
+        var atZero = DemandCalculator.AvailablePassengers(
+            Config, AirportSizeCategory.Large, AirportSizeCategory.Large, distanceNm: 1000, flightDateUtc: date, reputationScore: 0);
+
+        Assert.Equal(1.25, Math.Round((double)atHundred / atBaseline, 2));
+        Assert.Equal(0.75, Math.Round((double)atZero / atBaseline, 2));
     }
 
     [Fact]

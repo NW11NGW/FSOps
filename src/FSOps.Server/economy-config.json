@@ -20,10 +20,42 @@
     "minDistanceFactor": 0.12,
     "baseDemandPerCatchmentPoint": 45.0,
     "reputationBaselineScore": 50.0,
-    "reputationSensitivity": 0.5,
+    // 0.25, not 0.5: solves 1 + (100-50)/50 x S = 1.25 (docs/PLAN.md "reputation 100 carries about
+    // 1.25x the passengers of reputation 50") for S. At reputation 0 this gives exactly 0.75x, also
+    // matching the plan's stated figure, comfortably above reputationFloor.
+    "reputationSensitivity": 0.25,
     "reputationFloor": 0.3,
     "monthlySeasonality": [0.90, 0.88, 0.95, 1.00, 1.05, 1.15, 1.22, 1.20, 1.02, 0.95, 0.88, 1.05],
     "dayOfWeekMultiplier": [0.95, 1.05, 0.95, 0.90, 1.00, 1.15, 1.10]
+  },
+  // See ReputationConfig's own doc for every figure's derivation - docs/PLAN.md "Progression -
+  // reputation and pilot skill", point 1 (what moves it) and point 2 (magnitude).
+  "reputation": {
+    "baselineScore": 50.0,
+    "alpha": 0.0137672955,
+    "onTimeWeight": 0.8,
+    "landingWeight": 0.2,
+    "onTimeToleranceMinutes": 5.0,
+    "onTimeZeroScoreDelayMinutes": 45.0,
+    "landingBestFpm": 150.0,
+    "landingWorstFpm": 600.0,
+    "cancelledTargetScore": 0.0,
+    "cancelledAlphaMultiplier": 2.5,
+    // Flat, timing-independent penalty for an UNVERIFIED (manually-completed) sector - never a
+    // derived on-time or landing score, see ManualCompletionAlphaMultiplier's own doc in
+    // EconomyConfig.cs for why. 1/3 of alpha lands the single-sector cost from reputation 50 at
+    // about -0.23, against an ordinary sector's own worst possible -0.69.
+    "manualCompletionTargetScore": 0.0,
+    "manualCompletionAlphaMultiplier": 0.3333333333
+  },
+  // See PilotSkillConfig's own doc for every figure's derivation - docs/PLAN.md "Progression -
+  // reputation and pilot skill", point 3.
+  "pilotSkill": {
+    "startingSkill": 50.0,
+    "skillCap": 87.0,
+    "growthHalfLifeHours": 300.0,
+    "idleGracePeriodHours": 336.0,
+    "idleDecayHalfLifeHours": 720.0
   },
   "fuel": {
     "basePricePerKg": 0.85,

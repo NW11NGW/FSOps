@@ -536,8 +536,21 @@ public sealed class FlightLifecycleService : IHostedService
 
             if (airline is not null)
             {
-                MaintenancePoster.PostFlightHours(
-                    db, fleetAircraft, pilot, airline, _economyConfigCatalog.Get(airline.Playstyle), flightHours, completionUtc);
+                var economyConfigForCompletion = _economyConfigCatalog.Get(airline.Playstyle);
+                MaintenancePoster.PostFlightHours(db, fleetAircraft, pilot, airline, economyConfigForCompletion, flightHours, completionUtc);
+
+                // Reputation - see docs/PLAN.md "Progression - reputation and pilot skill", point 1.
+                // Excluded entirely (no event at all) for a slew/position-jump-detected flight, same
+                // "structurally invalid sector" gate FlightEconomicsPoster applies to revenue - see
+                // Flight.SlewDetected/PositionJumpDetected's own docs. On-time is additionally
+                // excluded (landing still counts) when SimRateElevated, since block-time measured
+                // under an accelerated clock means nothing - see Flight.SimRateElevated's own doc,
+                // which explicitly anticipates exactly this reputation feature not existing yet.
+                if (!flight.SlewDetected && !flight.PositionJumpDetected)
+                {
+                    double? delayMinutes = flight.SimRateElevated ? null : flightHours * 60.0 - flight.PlannedBlockMinutes;
+                    ReputationPoster.PostCompletedFlight(airline, economyConfigForCompletion, delayMinutes, flight.LandingFpmFirst);
+                }
             }
             else
             {

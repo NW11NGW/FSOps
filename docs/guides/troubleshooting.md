@@ -12,6 +12,7 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [My currency looks wrong](#my-currency-looks-wrong)
 - [Strategy profile figures won't load](#strategy-profile-figures-wont-load)
 - [My fare or revenue numbers look different than yesterday](#my-fare-or-revenue-numbers-look-different-than-yesterday)
+- [Why did my passenger numbers drop](#why-did-my-passenger-numbers-drop)
 - [An aircraft is grounded for maintenance](#an-aircraft-is-grounded-for-maintenance)
 - [An aircraft can't be flown because it isn't reserved](#an-aircraft-cant-be-flown-because-it-isnt-reserved)
 - [A restored save had an aircraft's reservation released](#a-restored-save-had-an-aircrafts-reservation-released)
@@ -21,11 +22,13 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [A starting loan was refused at founding](#a-starting-loan-was-refused-at-founding)
 - [A virtual pilot's flight was skipped, cancelled or suspended instead of flown](#a-virtual-pilots-flight-was-skipped-cancelled-or-suspended-instead-of-flown)
 - [A virtual pilot's aircraft isn't where I expected it](#a-virtual-pilots-aircraft-isnt-where-i-expected-it)
+- [Why is my pilot worse than they were](#why-is-my-pilot-worse-than-they-were)
 - [I can't release a pilot](#i-cant-release-a-pilot)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
 - [A flight is stuck needing attention](#a-flight-is-stuck-needing-attention)
+- [Why did completing manually cost me reputation](#why-did-completing-manually-cost-me-reputation)
 - [A route doesn't show as flyable](#a-route-doesnt-show-as-flyable)
 - [Where to find log files](#where-to-find-log-files)
 - [How to report a problem](#how-to-report-a-problem)
@@ -110,6 +113,14 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Solution:** Nothing to fix — if you want to sanity-check a figure, note the date you're comparing against, since demand and fuel price are both date-dependent by design.
 
+## Why did my passenger numbers drop
+
+**Symptom:** The same route, at the same fare, is now selling noticeably fewer seats than it used to — not the small day-to-day drift covered above, but a sustained drop over several flights.
+
+**Cause:** Your airline's **reputation** has genuinely fallen, and reputation scales demand on every route — see [Your airline's reputation](user-guide.md#your-airlines-reputation) in the user guide. It moves mainly from on-time performance and, to a lesser extent, landing quality (yours or a virtual pilot's); a cancelled or skipped sector costs more than any delay; and abandoning a flight or completing one manually both cost a fixed amount too (see [Why did completing manually cost me reputation](#why-did-completing-manually-cost-me-reputation) below). A run of late or cancelled sectors is the most common cause, and it applies equally whether you flew them yourself or a virtual pilot did.
+
+**Solution:** Check the reputation card on the **Dashboard** — it names what's actually been driving the number over your last several sectors (on-time percentage, cancellations, landing quality), not just the score itself. There's no quick fix beyond flying (or scheduling) a consistent run of on-time, completed sectors — the score moves slowly by design, over roughly 40–60 sectors to climb from 50 to 75, so a single good flight won't undo a bad stretch overnight, but it also means a single bad flight won't sink you either.
+
 ## An aircraft is grounded for maintenance
 
 **Symptom:** An aircraft shows **In maintenance** on the Fleet page, or a route shows as not flyable on the Fly screen with a reason like "Your aircraft at EGGD is in maintenance until 2026-08-09 14:00 UTC."
@@ -182,6 +193,16 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Solution:** Check the aircraft's current location on the Fleet page against what the pilot's schedule assumes for each day, and adjust the schedule so a day's chain always starts from wherever the aircraft's previous chain actually left it.
 
+## Why is my pilot worse than they were
+
+**Symptom:** A virtual pilot's skill rating on the Pilots page has gone down since you last checked, rather than up — or a pilot you haven't looked at in a while shows a lower skill rating than a newly-hired one that's since flown a handful of sectors.
+
+**Cause:** This is expected, not a bug — **skill decays when a pilot goes unflown for too long.** A pilot's skill normally climbs with hours flown, but if a virtual pilot has no standing schedule assigning them any legs, they don't earn hours, and after a two-week grace period with nothing flown, their rating starts eroding gradually back down toward where they started (50). The line under their skill rating on the Pilots page explains it directly — a countdown once idle time is closing in on the grace period, or, once decay has actually started, both what their hours alone earned and what they're actually sitting at now. See [Skill, landing quality, and idle decay](user-guide.md#skill-landing-quality-and-idle-decay) in the user guide for the full mechanics.
+
+The most common cause is a pilot who was hired but never given a schedule, or one whose schedule was cleared (for example, because their aircraft was reserved back to you or sold) and never rebuilt. **Your own skill rating never decays**, regardless of how long you go without flying — it's purely a record of your hours, never used to judge your own flights, so there's nothing to protect it from.
+
+**Solution:** Give the pilot a standing weekly schedule (or restore the one they had) — see [Building a weekly schedule](user-guide.md#building-a-weekly-schedule). A pilot flying that schedule keeps flying on the real-world clock even while FSOps is closed, which is what keeps their skill from decaying at all. There's no way to instantly restore lost skill short of flying them again; it recovers the same way it was earned, gradually with hours flown.
+
 ## I can't release a pilot
 
 **Symptom:** Selecting **Release** for a pilot on the Pilots page fails, or the release action isn't offered.
@@ -238,6 +259,14 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 1. **Check again** — if MSFS just needed a moment longer to load and reconnect, this re-checks without doing anything else. Try this first if you're about to keep flying the same flight.
 2. **Complete with estimates** — closes the flight out now, using your planned block time and fuel figures rather than measured ones. Use this if you don't intend to keep flying it. No landing quality (touchdown rate, G-force, bounces, centreline) will be recorded for a flight completed this way, since none of that could actually be measured.
 3. **Abandon** — discards the flight entirely, with no report card, and frees your aircraft up to fly something else. Use this if the flight is a lost cause (for example, MSFS crashed and you don't want to resume that exact flight).
+
+## Why did completing manually cost me reputation
+
+**Symptom:** After choosing **Complete with estimates** on a flight that needed attention (or otherwise manually completing a flight), your reputation score on the Dashboard dropped slightly, even though the flight itself paid out normally.
+
+**Cause:** This is expected, and it's deliberate. A manually-completed flight has no reliable telemetry — that's the entire reason the option exists — so FSOps has no honest way to judge whether it was actually on time or how it landed. Rather than guess (an earlier internal version tried scoring it from the wall-clock gap between starting and completing, which backfired badly — a flight completed moments after starting read as an enormous *early* arrival), FSOps applies a small, fixed penalty for the sector being **unverified**. It's deliberately smaller than the worst a properly-tracked sector could cost you, so flying a sector out for real is never the worse choice — but it's also never zero, so ending tracking early is never a free way to escape a flight that's going badly. See [Your airline's reputation](user-guide.md#your-airlines-reputation) in the user guide for the full picture, including that **abandoning** a flight costs more still (as much as a cancellation), on top of losing the ticket revenue and fuel already spent.
+
+**Solution:** Nothing to fix — this is working as intended. If you'd rather avoid the penalty, let a flight resolve normally (or via SimConnect reconnecting) rather than completing it manually; reserve manual completion for when a flight genuinely can't continue.
 
 ## A route doesn't show as flyable
 

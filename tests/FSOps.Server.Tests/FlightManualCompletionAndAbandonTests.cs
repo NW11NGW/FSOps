@@ -158,6 +158,130 @@ public class FlightManualCompletionAndAbandonTests
             $"Expected a realistic maintenance accrual for a {flight.PlannedBlockMinutes}-minute planned sector, got {maintenanceLine.Amount:C2}.");
     }
 
+    /// <summary>
+    /// Shared setup for the reputation tests below: an InProgress flight with a given planned
+    /// departure, ready for CompleteManualAsync. <paramref name="plannedDepartureUtc"/> lets each
+    /// test control how much (or how little) wall-clock time will have "elapsed" by the time the
+    /// endpoint runs, which is exactly the input the removed on-time formula used to read and the
+    /// fixed penalty now deliberately ignores.
+    /// </summary>
+    private static async Task<(RouteTestContext Ctx, Flight Flight, EconomyConfigCatalog Catalog)> SeedInProgressManualCompletionCandidateAsync(
+        DateTimeOffset plannedDepartureUtc, int plannedBlockMinutes = 120)
+    {
+        var ctx = await RouteTestContext.CreateAsync();
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        fleetAircraft.Status = FleetAircraftStatus.InFlight;
+
+        var route = new Route
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            DepartureIcao = "EGGD",
+            ArrivalIcao = "EGPH",
+            FlightNumber = "101",
+            DistanceNm = 280,
+            BaseFare = 90m,
+            IsActive = true,
+            CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.Routes.Add(route);
+
+        var flight = new Flight
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            RouteId = route.Id,
+            FleetAircraftId = fleetAircraft.Id,
+            PilotId = Guid.NewGuid(),
+            Status = FlightStatus.InProgress,
+            PlannedDepartureUtc = plannedDepartureUtc,
+            PlannedBlockMinutes = plannedBlockMinutes,
+            OutUtc = plannedDepartureUtc,
+            PaxBooked = 150,
+            FuelPlannedKg = 3000,
+            TitleFlown = "Test Aircraft",
+            CreatedUtc = plannedDepartureUtc,
+        };
+        ctx.Db.Flights.Add(flight);
+        await ctx.Db.SaveChangesAsync();
+
+        return (ctx, flight, EconomyConfigCatalog.Default());
+    }
+
+    /// <summary>
+    /// Replaces the removed on-time-derived test - see docs/PLAN.md and
+    /// ReputationConfig.ManualCompletionAlphaMultiplier's own doc for why deriving anything from
+    /// the wall clock on this path was wrong. Runs the SAME scenario (a flight 25 minutes "late" by
+    /// the old formula's reckoning) and a completely different one (a flight completed within
+    /// seconds of starting) and asserts both land on EXACTLY the same reputation figure - proving
+    /// the penalty really is flat and carries no dependence on timing at all.
+    /// </summary>
+    [Fact]
+    public async Task CompleteManualAsync_AppliesTheFixedPenalty_RegardlessOfTiming()
+    {
+        var lateStart = DateTimeOffset.UtcNow.AddMinutes(-(120 + 25)); // "25 minutes late" by the old (now-removed) formula
+        var (lateCtx, lateFlight, lateCatalog) = await SeedInProgressManualCompletionCandidateAsync(lateStart);
+        using (lateCtx)
+        {
+            var lifecycle = new FlightLifecycleService(null!, null!, null!, lateCatalog, null!);
+            var result = await FlightEndpoints.CompleteManualAsync(lateFlight.Id, lateCtx.Db, lateCtx.CurrentUser, lifecycle, lateCatalog, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+            var reputationConfig = lateCatalog.Get(AirlinePlaystyle.Casual).Reputation;
+            var expected = ReputationCalculator.AdvanceForUnverifiedManualCompletion(50.0, reputationConfig);
+
+            var updatedAirline = await lateCtx.Db.Airlines.AsNoTracking().SingleAsync(a => a.Id == lateCtx.Airline.Id);
+            Assert.Equal(expected, updatedAirline.ReputationScore);
+        }
+
+        var immediateStart = DateTimeOffset.UtcNow; // completed essentially the instant it started
+        var (immediateCtx, immediateFlight, immediateCatalog) = await SeedInProgressManualCompletionCandidateAsync(immediateStart);
+        using (immediateCtx)
+        {
+            var lifecycle = new FlightLifecycleService(null!, null!, null!, immediateCatalog, null!);
+            var result = await FlightEndpoints.CompleteManualAsync(immediateFlight.Id, immediateCtx.Db, immediateCtx.CurrentUser, lifecycle, immediateCatalog, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+            var reputationConfig = immediateCatalog.Get(AirlinePlaystyle.Casual).Reputation;
+            var expected = ReputationCalculator.AdvanceForUnverifiedManualCompletion(50.0, reputationConfig);
+
+            var updatedAirline = await immediateCtx.Db.Airlines.AsNoTracking().SingleAsync(a => a.Id == immediateCtx.Airline.Id);
+            // The point of the test: identical to the "25 minutes late" scenario above, even though
+            // the two flights' actual timing could not be more different.
+            Assert.Equal(expected, updatedAirline.ReputationScore);
+        }
+    }
+
+    /// <summary>
+    /// THE EXPLOIT TEST - named so nobody reintroduces the bug this guards. The original on-time
+    /// formula read <c>now - (PlannedDepartureUtc + PlannedBlockMinutes)</c>; completing within
+    /// seconds of starting put "now" at roughly the planned DEPARTURE, which is very nearly one
+    /// full block time EARLY by that arithmetic - scored as a perfect on-time sector, and paired
+    /// with the full ticket revenue this path already posts, made "start a flight, immediately
+    /// complete it, collect the money and a reputation gain, repeat" a real, reachable loop (see
+    /// CompleteManualAsync_CompletedSecondsAfterStarting_StillAccruesARealisticSectorsWorthOfMaintenanceAndCrewCost
+    /// above for proof this exact scenario is reachable). The fixed penalty removes the possibility
+    /// entirely: there is no timing input left for an instant completion to exploit.
+    /// </summary>
+    [Fact]
+    public async Task CompleteManualAsync_ImmediatelyAfterStarting_CannotGainReputation()
+    {
+        var (ctx, flight, catalog) = await SeedInProgressManualCompletionCandidateAsync(DateTimeOffset.UtcNow);
+        using (ctx)
+        {
+            Assert.Equal(50.0, ctx.Airline.ReputationScore); // the starting baseline, before this sector
+
+            var lifecycle = new FlightLifecycleService(null!, null!, null!, catalog, null!);
+            var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, catalog, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+            var updatedAirline = await ctx.Db.Airlines.AsNoTracking().SingleAsync(a => a.Id == ctx.Airline.Id);
+            Assert.True(updatedAirline.ReputationScore <= 50.0,
+                $"An instant manual completion must never gain reputation - expected <= 50.0, was {updatedAirline.ReputationScore}.");
+            Assert.True(updatedAirline.ReputationScore < 50.0, "An instant manual completion must actually cost reputation, not merely leave it unchanged.");
+        }
+    }
+
     [Fact]
     public async Task AbandonAsync_NoTelemetryWasEverReceived_LeavesTheAircraftExactlyWhereItWas()
     {
@@ -185,8 +309,9 @@ public class FlightManualCompletionAndAbandonTests
 
         // A bare service with no active tracking for this flight - GetActiveSnapshot returns null,
         // exactly as if the sim never sent a single sample before the user gave up and abandoned.
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, EconomyConfigCatalog.Default(), null!);
-        var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, CancellationToken.None);
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -197,6 +322,53 @@ public class FlightManualCompletionAndAbandonTests
 
         var updatedFlight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
         Assert.Equal(FlightStatus.Abandoned, updatedFlight.Status);
+    }
+
+    /// <summary>
+    /// Closes the other half of the exploit found in review: abandoning was previously free of any
+    /// reputation consequence (only manual completion was fixed), which meant a flight running
+    /// badly could simply be abandoned instead - a real, if not cost-free, escape (the revenue and
+    /// any fuel already bought is still lost). Treated identically to a virtual pilot's
+    /// Skipped/Cancelled occurrence: from a passenger's point of view the sector never happened.
+    /// </summary>
+    [Fact]
+    public async Task AbandonAsync_CostsReputation_SameAsACancelledOrSkippedSector()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        fleetAircraft.Status = FleetAircraftStatus.InFlight;
+
+        var flight = new Flight
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            RouteId = Guid.NewGuid(),
+            FleetAircraftId = fleetAircraft.Id,
+            PilotId = Guid.NewGuid(),
+            Status = FlightStatus.InProgress,
+            PlannedDepartureUtc = DateTimeOffset.UtcNow,
+            PlannedBlockMinutes = 90,
+            PaxBooked = 150,
+            FuelPlannedKg = 3000,
+            TitleFlown = "Test Aircraft",
+            CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.Flights.Add(flight);
+        await ctx.Db.SaveChangesAsync();
+
+        Assert.Equal(50.0, ctx.Airline.ReputationScore);
+
+        var economyConfigCatalog = EconomyConfigCatalog.Default();
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var reputationConfig = economyConfigCatalog.Get(AirlinePlaystyle.Casual).Reputation;
+        var expected = ReputationCalculator.AdvanceForCancelledOrSkipped(50.0, reputationConfig);
+
+        var updatedAirline = await ctx.Db.Airlines.AsNoTracking().SingleAsync(a => a.Id == ctx.Airline.Id);
+        Assert.Equal(expected, updatedAirline.ReputationScore);
+        Assert.True(updatedAirline.ReputationScore < 50.0, "Abandoning a flight must cost reputation.");
     }
 
     [Fact]
