@@ -80,6 +80,22 @@ jobs:
           "checksum  : $(Get-Content $checksum.FullName -Raw)"
           "INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
 
+      # Keep the built installer so it can be downloaded and tested on a real machine. This is
+      # still NOT a release: a workflow artifact is private to the repository, expires on its own,
+      # and is not visible to anyone downloading FSOps. Publishing remains a deliberate, separate
+      # act gated behind a tag and a manual click.
+      #
+      # The .sha256 travels with it deliberately - an installer without its checksum is exactly
+      # what the update checker refuses to trust, and it would be odd to hand a human less than we
+      # would hand the updater.
+      - name: Keep the installer for testing
+        uses: actions/upload-artifact@v7
+        with:
+          name: fsops-installer
+          path: artifacts/installer/*
+          if-no-files-found: error
+          retention-days: 14
+
       # A sentinel standing in for the user's airline. Uninstalling must never remove this: the
       # data directory holds the database, and someone's whole airline lives in it. Silent uninstall
       # skips the optional removal prompt entirely, so surviving here is the expected behaviour and
