@@ -44,6 +44,13 @@ public sealed class SimConnectSource : ISimSource
     /// <summary>Last connection-failure type+message, so an unchanging failure is only reported once.</summary>
     private string? _lastFailureSignature;
 
+    /// <summary>When the aircraft identity was last asked for, so the retry below cannot fire on every
+    /// telemetry sample. See <see cref="HandleTelemetry"/>.</summary>
+    private DateTimeOffset _lastIdentityRequestUtc = DateTimeOffset.MinValue;
+
+    /// <summary>How often to re-ask for the aircraft identity while it is still unknown.</summary>
+    private static readonly TimeSpan IdentityRetryInterval = TimeSpan.FromSeconds(5);
+
     /// <summary>
     /// Non-zero once <see cref="DisposeAsync"/> has run. Disposal here MUST be idempotent, and so
     /// must a <see cref="StopAsync"/> that arrives after it, because this instance is captured for
@@ -249,6 +256,9 @@ public sealed class SimConnectSource : ISimSource
                 _aircraftTitle = string.Empty;
                 _aircraftAtcModel = string.Empty;
                 _aircraftAtcType = string.Empty;
+                // So the next connection asks again immediately rather than waiting out a retry
+                // interval left over from the one that just died.
+                _lastIdentityRequestUtc = DateTimeOffset.MinValue;
 
                 if (fsConnect is not null)
                 {
@@ -342,7 +352,39 @@ public sealed class SimConnectSource : ISimSource
 
         _channel.Writer.TryWrite(sample);
 
+        RetryAircraftIdentityIfUnknown();
         AdjustSamplingRate(data.AltitudeAgl);
+    }
+
+    /// <summary>
+    /// Re-asks for the aircraft identity while it is still unknown. The identity request is a
+    /// one-shot fired on connect and on AircraftLoaded, and FSOps normally connects while MSFS is
+    /// still in the menu with no user aircraft loaded - so that one shot yields nothing, and if the
+    /// AircraftLoaded event does not arrive there is no second chance for the whole session. The
+    /// title then stays empty forever, which silently disables family-level type matching: the first
+    /// real flight ever flown recorded an empty TitleFlown and a null TypeMismatch, meaning the check
+    /// never ran at all rather than running and passing.
+    /// <para>
+    /// Telemetry arriving is the signal that the sim is genuinely live and worth asking again, so the
+    /// retry is driven from here rather than from a timer. It stops the moment a title arrives, and
+    /// costs one cheap request every few seconds until then.
+    /// </para>
+    /// </summary>
+    private void RetryAircraftIdentityIfUnknown()
+    {
+        if (_aircraftTitle.Length > 0 || _activeConnection is not { } fsConnect)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastIdentityRequestUtc < IdentityRetryInterval)
+        {
+            return;
+        }
+
+        _lastIdentityRequestUtc = now;
+        RequestAircraftIdentity(fsConnect);
     }
 
     /// <summary>

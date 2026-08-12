@@ -119,8 +119,27 @@ describe('ReportCard - landing quality', () => {
   })
 
   it('says plainly that no touchdown was captured, without inventing a zero', async () => {
-    const { container, unmount } = await render({ detail: detail({ flight: flight({ landingFpmFirst: null }) }) })
-    expect(text(container)).toContain('No touchdown was captured for this flight.')
+    // Nothing about a contact was captured at all - no rate and no G-force.
+    const { container, unmount } = await render({
+      detail: detail({ flight: flight({ landingFpmFirst: null, landingGForce: null }), events: [] }),
+    })
+    const body = text(container)
+    expect(body).toContain('No touchdown was captured for this flight.')
+    expect(body).not.toContain('0 fpm')
+    unmount()
+  })
+
+  it('distinguishes a touchdown whose rate was never measured from one that never happened', async () => {
+    // The shape of the first real flight ever flown with FSOps: the touchdown fired and its G-force
+    // was captured, but the sim reported no rate for it. Saying "no touchdown" there would be wrong,
+    // and showing 0 fpm would be worse - it reads as the softest landing physically possible.
+    const { container, unmount } = await render({
+      detail: detail({ flight: flight({ landingFpmFirst: null, landingGForce: 1.03 }) }),
+    })
+    const body = text(container)
+    expect(body).toContain('landing rate not measured')
+    expect(body).not.toContain('No touchdown was captured for this flight.')
+    expect(body).not.toContain('0 fpm')
     unmount()
   })
 

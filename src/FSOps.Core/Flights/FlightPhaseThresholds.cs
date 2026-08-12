@@ -52,6 +52,10 @@ public sealed record FlightPhaseThresholds
     /// <summary>Ground-contact events within this long of the first one are treated as bounces of the same landing.</summary>
     public TimeSpan BounceWindowDuration { get; init; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>How long after each touchdown to keep watching for a higher G-force peak from the same impact.</summary>
+    /// <summary>
+    /// How long after each touchdown to keep watching the samples for late-arriving detail about
+    /// that same impact: a higher G-force peak, and the sim's own touchdown rate, which is often
+    /// still zero on the frame the aircraft is first reported on the ground.
+    /// </summary>
     public TimeSpan TouchdownPeakGForceWindow { get; init; } = TimeSpan.FromSeconds(3);
 }

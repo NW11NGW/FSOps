@@ -86,7 +86,7 @@ public class FlightPhaseStateMachineTests
         Assert.Equal(0, machine.BounceCount);
         // The script's exact touchdown spike is 2.3 fps (138 fpm); 1-second sampling can land a
         // touch either side of that, but it must stay in a plausible smooth-landing range.
-        Assert.InRange(machine.FirstTouchdown!.Fpm, 10, 400);
+        Assert.InRange(machine.FirstTouchdown!.Fpm!.Value, 10, 400);
     }
 
     [Fact]
@@ -149,8 +149,8 @@ public class FlightPhaseStateMachineTests
         Assert.Equal(1, machine.BounceCount);
 
         // First contact stays first even though the second was harder.
-        Assert.Equal(60.0, machine.FirstTouchdown!.Fpm, precision: 3);
-        Assert.Equal(240.0, machine.HardestTouchdown!.Fpm, precision: 3);
+        Assert.Equal(60.0, machine.FirstTouchdown!.Fpm!.Value, precision: 3);
+        Assert.Equal(240.0, machine.HardestTouchdown!.Fpm!.Value, precision: 3);
         Assert.NotEqual(machine.FirstTouchdown, machine.HardestTouchdown);
     }
 
@@ -187,7 +187,7 @@ public class FlightPhaseStateMachineTests
         Assert.Equal(FlightPhase.Landed, machine.CurrentPhase);
         Assert.Single(machine.Touchdowns);
         Assert.Equal(0, machine.BounceCount);
-        Assert.Equal(150.0, machine.FirstTouchdown!.Fpm, precision: 3);
+        Assert.Equal(150.0, machine.FirstTouchdown!.Fpm!.Value, precision: 3);
         Assert.NotNull(machine.OnUtc);
     }
 

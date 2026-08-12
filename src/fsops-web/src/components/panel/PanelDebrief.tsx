@@ -38,6 +38,9 @@ export function PanelDebrief({ flight, route, airlineIcaoCode, maintenanceWarnin
   const variance = actualBlockMinutes !== null ? blockVarianceMinutes(actualBlockMinutes, flight.plannedBlockMinutes) : null
 
   const landing = flight.landingFpmFirst !== null ? assessLanding(flight.landingFpmFirst) : null
+  // "The sim never reported a rate" and "there was no touchdown" are different facts and must read
+  // differently - see ReportCard for the full reasoning. A captured G-force is proof of contact.
+  const touchdownWithoutRate = landing === null && flight.landingGForce !== null
   const net = netEarned(flight)
 
   return (
@@ -66,7 +69,9 @@ export function PanelDebrief({ flight, route, airlineIcaoCode, maintenanceWarnin
             <p className={cn('text-sm font-semibold', VERDICT_COLOR[landing.verdict])}>{landing.label}</p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No touchdown was captured.</p>
+          <p className="text-sm text-muted-foreground">
+            {touchdownWithoutRate ? 'Not measured — the sim reported no rate for this touchdown.' : 'No touchdown was captured.'}
+          </p>
         )}
       </div>
 

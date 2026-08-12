@@ -306,7 +306,9 @@ public static class FlightEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes);
+        lifecycle.BeginTracking(
+            flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes,
+            (departure.Latitude, departure.Longitude));
 
         // planSource/planMessage are informational only, alongside the flight's own fields - never
         // persisted (no schema change needed), just what the player has to be told plainly about
