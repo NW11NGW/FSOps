@@ -134,7 +134,16 @@ public sealed class FlightLifecycleService : IHostedService
     /// <see cref="ActiveFlightTracker.EngineStartFuelKg"/>), not from flight start - nothing needs
     /// seeding here any more, since billing no longer depends on a ground-uplift baseline.
     /// </summary>
-    public void BeginTracking(Guid flightId, Guid airlineId, Guid fleetAircraftId, string arrivalIcao, int plannedBlockMinutes)
+    /// <param name="departurePosition">
+    /// Where the aircraft is expected to be sitting as tracking starts - the route's departure
+    /// airport. Optional (and defaulted, so existing call sites are unaffected) purely because not
+    /// every caller can resolve it; when it IS supplied, the integrity monitor can tell a garbage
+    /// opening fix from a real teleport instead of having to fail open on both. See
+    /// <see cref="FlightIntegrityMonitor"/>.
+    /// </param>
+    public void BeginTracking(
+        Guid flightId, Guid airlineId, Guid fleetAircraftId, string arrivalIcao, int plannedBlockMinutes,
+        (double Lat, double Lon)? departurePosition = null)
     {
         var tracker = new ActiveFlightTracker
         {
@@ -144,6 +153,7 @@ public sealed class FlightLifecycleService : IHostedService
             ArrivalIcao = arrivalIcao,
             PlannedBlockMinutes = plannedBlockMinutes,
             Machine = new FlightPhaseStateMachine(),
+            IntegrityMonitor = new FlightIntegrityMonitor(departurePosition),
         };
 
         lock (_lock)
@@ -319,6 +329,15 @@ public sealed class FlightLifecycleService : IHostedService
 
         tracker.LastFuelKg = sample.TotalFuelKg;
 
+        // Remember the aircraft the sim says is being flown, so a flight that started before
+        // SimConnect had delivered an identity can still be matched at finalisation - see
+        // ActiveFlightTracker.LastAircraftTitle.
+        if (sample.AircraftTitle is { Length: > 0 })
+        {
+            tracker.LastAircraftTitle = sample.AircraftTitle;
+            tracker.LastAtcModel = sample.AtcModel;
+        }
+
         var flightSample = MapSample(sample);
         var result = tracker.Machine.Advance(flightSample);
         tracker.IntegrityMonitor.Observe(flightSample);
@@ -333,7 +352,9 @@ public sealed class FlightLifecycleService : IHostedService
         if (result.NewTouchdown is { } touchdown)
         {
             var bounceIndex = tracker.Machine.Touchdowns.Count - 1;
-            var payload = new TouchdownPayload(touchdown.LatitudeDeg, touchdown.LongitudeDeg, touchdown.TrueHeadingDeg, touchdown.Fpm, touchdown.GForce, bounceIndex);
+            var payload = new TouchdownPayload(
+                touchdown.LatitudeDeg, touchdown.LongitudeDeg, touchdown.TrueHeadingDeg,
+                touchdown.Fpm, touchdown.GForce, bounceIndex, touchdown.FpmSource);
             Enqueue(tracker.FlightId, now, FlightEventType.Touchdown, JsonSerializer.Serialize(payload));
         }
 
@@ -527,6 +548,10 @@ public sealed class FlightLifecycleService : IHostedService
             Machine = machine,
             PendingReconnect = true,
             LastKnownPosition = lastKnown,
+            // Where this flight was last actually seen is a better "expected start" than the
+            // departure airport for a rehydrated flight - it may already be halfway to its
+            // destination - and it is exactly what the reconnect check below compares against too.
+            IntegrityMonitor = new FlightIntegrityMonitor(lastKnown),
             DepartureIcao = route?.DepartureIcao,
             VatsimCid = int.TryParse(settings?.VatsimCid, out var rehydratedCid) && rehydratedCid > 0 ? rehydratedCid : null,
             VatsimContextResolved = true,
@@ -721,6 +746,20 @@ public sealed class FlightLifecycleService : IHostedService
             var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId);
             var arrivalAirport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == landing.Icao);
             var aircraftType = await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId]);
+
+            // Aircraft identity is captured once, when the flight starts - and SimConnect very often
+            // has not delivered it by then, because FSOps normally connects while MSFS is still in
+            // the menu. That left TitleFlown empty and TypeMismatch null, which does not mean "the
+            // types matched", it means the comparison never ran. Backfill from what the samples
+            // actually reported. Informational only, exactly as at flight start: a mismatch is
+            // flagged for the player's information and is never penalised financially.
+            if (flight.TitleFlown.Length == 0 && tracker.LastAircraftTitle is { Length: > 0 } observedTitle && aircraftType is not null)
+            {
+                flight.TitleFlown = observedTitle;
+                flight.TypeMismatch = AircraftTypeMatcher.HasAircraftData(observedTitle, tracker.LastAtcModel)
+                    ? !AircraftTypeMatcher.IsMatch(aircraftType.MatchPatterns, observedTitle, tracker.LastAtcModel)
+                    : null;
+            }
 
             if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
             {
@@ -919,7 +958,11 @@ public sealed class FlightLifecycleService : IHostedService
 
         public required FlightPhaseStateMachine Machine { get; init; }
 
-        public FlightIntegrityMonitor IntegrityMonitor { get; } = new();
+        /// <summary>Settable at construction so <see cref="BeginTracking"/> (and the rehydrate path)
+        /// can seed it with where the aircraft is expected to be - see
+        /// <see cref="FlightIntegrityMonitor"/>'s constructor. Defaults to a monitor with no expected
+        /// start, which is what every hand-built test tracker gets.</summary>
+        public FlightIntegrityMonitor IntegrityMonitor { get; init; } = new();
 
         /// <summary>The very first fuel reading this tracker received, regardless of engine state -
         /// the tier-2 fallback baseline (see <see cref="FSOps.Core.Flights.FuelBurnResolver.Measure"/>)
@@ -953,6 +996,15 @@ public sealed class FlightLifecycleService : IHostedService
         /// term in <see cref="AccumulatedBurnKg"/>'s running sum and as the tier-2 fallback's "end"
         /// reading.</summary>
         public double LastFuelKg { get; set; }
+
+        /// <summary>The most recent non-empty aircraft title reported by the sim, and the ATC model
+        /// alongside it. Null until the sim has told us anything - which is normal for a while at the
+        /// start of a flight, since FSOps usually connects before MSFS has loaded an aircraft. Used
+        /// by <see cref="FinalizeFlightAsync"/> to backfill a flight whose identity was still unknown
+        /// when it started.</summary>
+        public string? LastAircraftTitle { get; set; }
+
+        public string? LastAtcModel { get; set; }
 
         public DateTimeOffset LastSnapshotUtc { get; set; } = DateTimeOffset.MinValue;
 

@@ -21,6 +21,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Real recorded telemetry used as regression fixtures. Copied beside the test assembly so a
+         test can read it from AppContext.BaseDirectory, the same convention FSOps.Sim uses for its
+         replay scripts. -->
+    <Content Include="Flights\Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\FSOps.Core\FSOps.Core.csproj" />
     <ProjectReference Include="..\..\src\FSOps.Sim\FSOps.Sim.csproj" />
   </ItemGroup>

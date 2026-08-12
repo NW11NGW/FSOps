@@ -109,11 +109,25 @@ describe('PanelDebrief - the landing', () => {
   })
 
   it('says plainly that no touchdown was captured instead of showing a zero', async () => {
-    const { container, unmount } = await render({ flight: flight({ landingFpmFirst: null }) })
+    // Nothing about a contact captured at all - no rate and no G-force.
+    const { container, unmount } = await render({ flight: flight({ landingFpmFirst: null, landingGForce: null }) })
 
     expect(text(container)).toContain('No touchdown was captured.')
     // "0 fpm" would read as a perfect greaser rather than as missing data.
     expect(text(container)).not.toContain('0 fpm')
+
+    unmount()
+  })
+
+  it('says the rate was not measured when the touchdown itself was captured', async () => {
+    // A contact the sim reported a G-force for but no rate. "No touchdown" would be untrue, and a
+    // zero would be a confident lie - see ReportCard's equivalent test.
+    const { container, unmount } = await render({ flight: flight({ landingFpmFirst: null, landingGForce: 1.03 }) })
+
+    const body = text(container)
+    expect(body).toContain('Not measured')
+    expect(body).not.toContain('No touchdown was captured.')
+    expect(body).not.toContain('0 fpm')
 
     unmount()
   })

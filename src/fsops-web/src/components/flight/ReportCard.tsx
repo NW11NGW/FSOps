@@ -103,7 +103,12 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
   }
 
   const actualBlockMinutes = minutesBetween(flight.outUtc, flight.inUtc)
-  const hasLanding = flight.landingFpmFirst !== null
+  // Three distinct outcomes, not two. A landing whose rate the sim never reported is NOT the same
+  // as a flight that never touched down, and neither is the same as a real figure - conflating the
+  // first two is what let a 59 fpm greaser be shown as a confident 0 fpm. A touchdown is known to
+  // have happened if anything about it was captured at all: its G-force, or a Touchdown event.
+  const hasLandingRate = flight.landingFpmFirst !== null
+  const hasTouchdown = hasLandingRate || flight.landingGForce !== null || events.some((e) => e.type === 'Touchdown')
 
   const title = route ? `${route.departureIcao} → ${route.arrivalIcao}` : 'Flight report'
   const subtitle = route ? [route.departureName, route.arrivalName].filter(Boolean).join(' → ') : null
@@ -133,12 +138,14 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
           <Badge variant={flight.status === 'Completed' ? 'success' : 'muted'}>{flight.status}</Badge>
         </CardHeader>
         <CardContent className="space-y-6">
-          {hasLanding ? (
+          {hasLandingRate ? (
             <LandingGauge fpm={flight.landingFpmFirst!} />
           ) : (
             <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
               <Info className="size-4 shrink-0" />
-              No touchdown was captured for this flight.
+              {hasTouchdown
+                ? 'Touchdown was recorded, but the sim never reported a rate for it — landing rate not measured.'
+                : 'No touchdown was captured for this flight.'}
             </div>
           )}
 

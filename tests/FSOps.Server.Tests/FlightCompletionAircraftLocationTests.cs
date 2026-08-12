@@ -111,7 +111,77 @@ public class FlightCompletionAircraftLocationTests
         Assert.Equal("EGPH", updatedAircraft.LocationIcao);
     }
 
-    private static async Task<Flight> SeedInProgressFlightAsync(RouteTestContext ctx, Guid fleetAircraftId)
+    /// <summary>
+    /// Aircraft identity is captured once, at flight start, from whatever SimConnect has delivered by
+    /// then - and it very often has delivered nothing, because FSOps normally connects while MSFS is
+    /// still in the menu with no aircraft loaded. The first real flight ever flown recorded an empty
+    /// TitleFlown and a null TypeMismatch, which does not mean the types matched; it means the
+    /// family-level comparison never ran at all for the whole sector.
+    /// </summary>
+    [Fact]
+    public async Task FinalizeFlightAsync_IdentityUnknownAtFlightStart_BackfillsItFromWhatTheSamplesReported()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        var flight = await SeedInProgressFlightAsync(ctx, fleetAircraft.Id, titleFlown: string.Empty);
+
+        var lifecycle = await CreateLifecycleAsync(ctx);
+        var tracker = new FlightLifecycleService.ActiveFlightTracker
+        {
+            FlightId = flight.Id,
+            AirlineId = ctx.Airline.Id,
+            FleetAircraftId = fleetAircraft.Id,
+            ArrivalIcao = "EGPH",
+            PlannedBlockMinutes = 60,
+            Machine = CompletedMachine(flight.Id),
+            LatestSnapshot = Snapshot(flight.Id, latitudeDeg: 55.9500, longitudeDeg: -3.3725),
+            // What the sim eventually told us, once it got round to it.
+            LastAircraftTitle = "Airbus A320neo Asobo",
+            LastAtcModel = "A20N",
+        };
+
+        await lifecycle.FinalizeFlightAsync(tracker);
+
+        var updatedFlight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
+        Assert.Equal("Airbus A320neo Asobo", updatedFlight.TitleFlown);
+        // RouteTestContext's AircraftType.MatchPatterns is "[]" (matches nothing), so the comparison
+        // having actually RUN is what this asserts - the difference between a considered "no" and the
+        // null that means nobody ever looked.
+        Assert.False(updatedFlight.TypeMismatch is null);
+        Assert.True(updatedFlight.TypeMismatch);
+    }
+
+    [Fact]
+    public async Task FinalizeFlightAsync_IdentityAlreadyKnownAtFlightStart_IsLeftAlone()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        var flight = await SeedInProgressFlightAsync(ctx, fleetAircraftId: fleetAircraft.Id);
+
+        var lifecycle = await CreateLifecycleAsync(ctx);
+        var tracker = new FlightLifecycleService.ActiveFlightTracker
+        {
+            FlightId = flight.Id,
+            AirlineId = ctx.Airline.Id,
+            FleetAircraftId = fleetAircraft.Id,
+            ArrivalIcao = "EGPH",
+            PlannedBlockMinutes = 60,
+            Machine = CompletedMachine(flight.Id),
+            LatestSnapshot = Snapshot(flight.Id, latitudeDeg: 55.9500, longitudeDeg: -3.3725),
+            // The sim swapping its reported title mid-sector must never overwrite what was captured
+            // at the moment the flight was actually started.
+            LastAircraftTitle = "Something Else Entirely",
+            LastAtcModel = "XXXX",
+        };
+
+        await lifecycle.FinalizeFlightAsync(tracker);
+
+        var updatedFlight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
+        Assert.Equal("Test Aircraft", updatedFlight.TitleFlown);
+    }
+
+    private static async Task<Flight> SeedInProgressFlightAsync(
+        RouteTestContext ctx, Guid fleetAircraftId, string titleFlown = "Test Aircraft")
     {
         var flight = new Flight
         {
@@ -125,7 +195,7 @@ public class FlightCompletionAircraftLocationTests
             PlannedBlockMinutes = 90,
             PaxBooked = 150,
             FuelPlannedKg = 3000,
-            TitleFlown = "Test Aircraft",
+            TitleFlown = titleFlown,
             CreatedUtc = Base,
         };
         ctx.Db.Flights.Add(flight);

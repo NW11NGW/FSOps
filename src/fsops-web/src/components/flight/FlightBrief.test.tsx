@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
 import { FlightBrief } from './FlightBrief'
@@ -283,6 +283,49 @@ describe('FlightBrief - starting the flight', () => {
   it('shows the aircraft-unknown badge when assignment could not be determined', async () => {
     const { container, unmount } = await render({ row: row({ aircraftUnknown: true }) })
     expect(text(container)).toContain('Aircraft availability unknown')
+    unmount()
+  })
+})
+
+describe('FlightBrief - SimBrief hand-off passenger count', () => {
+  // Pinned deliberately: the hand-off used to send the aircraft's raw seat count (paxCapacity),
+  // which is what tripped SimBrief's "payload/cargo limited by MZFW" warning on a full A320 -
+  // FSOps' own screen already says fewer passengers two lines above the "Plan in SimBrief" button,
+  // so telling SimBrief the airframe's full capacity was simply the wrong number, independent of
+  // whether SimBrief complains about it. Do not "simplify" the `??` in FlightBrief.tsx back to
+  // paxCapacity alone - that reintroduces this bug.
+  beforeEach(() => {
+    vi.spyOn(window, 'open').mockImplementation(() => null)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('sends the real expected booking, not the airframe\'s full seat capacity', async () => {
+    const { container, unmount } = await render({
+      selectedAircraft: aircraft({ paxCapacity: 180 }),
+      preview: preview({ economics: { fare: 65, referenceFare: 65, expectedPassengers: 150, loadFactorPercent: 83, expectedRevenuePerSector: 9750 } }),
+    })
+
+    click(getByRole(container, 'button', { name: /Plan in SimBrief/ }))
+
+    const body = text(container)
+    expect(body).toContain('pax=150')
+    expect(body).not.toContain('pax=180')
+    unmount()
+  })
+
+  it('falls back to the airframe capacity only while the economics preview has not resolved yet', async () => {
+    const { container, unmount } = await render({
+      selectedAircraft: aircraft({ paxCapacity: 180 }),
+      preview: null,
+      previewStatus: 'loading',
+    })
+
+    click(getByRole(container, 'button', { name: /Plan in SimBrief/ }))
+
+    expect(text(container)).toContain('pax=180')
     unmount()
   })
 })

@@ -140,16 +140,20 @@ public class FakeSimSourceTests
     }
 
     /// <summary>
-    /// K29's other half. The fix above must not come at the cost of the protection it exists for:
-    /// at normal (unaccelerated) speed, a genuine position jump - a slew-to-position, a scenery
-    /// load, an actual teleport - has to be caught exactly as before. This runs a deliberately
-    /// corrupted replay (two keyframes ~600 nm apart one second of sim-time apart, the same
-    /// London-to-Barcelona jump <c>FlightIntegrityMonitorTests</c> uses) through the real
-    /// <see cref="FakeSimSource"/> pipeline at <see cref="FakeSimSourceOptions.TimeCompressionFactor"/>
-    /// of exactly 1.0, so the reported rate normalises to a no-op and cannot hide the jump.
+    /// K29's other half, first part. At normal (unaccelerated) speed the pipeline must not explain a
+    /// genuine position jump away: it must report a simulation rate of exactly 1.0, so the monitor's
+    /// rate normalisation is a no-op, and the samples it emits must genuinely carry the impossible
+    /// position transition rather than smoothing it out somewhere in the interpolator.
+    /// <para>
+    /// This asserts that and only that, because it is all a 1x run can prove in a couple of seconds
+    /// of wall clock. Whether the monitor then CONDEMNS the sector is a separate question with a
+    /// separate answer: a jump is only believed once there is real flight either side of it to
+    /// corroborate both ends, which at 1x would take minutes of test runtime to supply. That half is
+    /// asserted end to end by the test below.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task Replay_AtNormalRate_GenuinePositionJumpIsStillDetected()
+    public async Task Replay_AtNormalRate_ReportsRateOneAndEmitsTheImpossiblePositionTransition()
     {
         var scriptPath = WriteCorruptedTeleportScript();
         try
@@ -172,6 +176,70 @@ public class FakeSimSourceTests
             await source.StopAsync(CancellationToken.None);
 
             Assert.NotEmpty(samples);
+            Assert.All(samples, s => Assert.Equal(1.0, s.SimulationRate));
+            Assert.All(samples, s => Assert.False(s.IsSlewActive));
+
+            var fastestImpliedKt = 0.0;
+            for (var i = 1; i < samples.Count; i++)
+            {
+                var elapsedHours = (samples[i].TimestampUtc - samples[i - 1].TimestampUtc).TotalHours;
+                if (elapsedHours <= 0)
+                {
+                    continue;
+                }
+
+                var distanceNm = FSOps.Core.Planning.GreatCircle.DistanceNm(
+                    samples[i - 1].LatitudeDeg, samples[i - 1].LongitudeDeg,
+                    samples[i].LatitudeDeg, samples[i].LongitudeDeg);
+                fastestImpliedKt = Math.Max(fastestImpliedKt, distanceNm / elapsedHours);
+            }
+
+            Assert.True(fastestImpliedKt > FlightIntegrityMonitor.ImpossibleGroundSpeedKt,
+                $"expected the corrupted replay to emit an impossible transition; fastest was {fastestImpliedKt:N0} kt");
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    /// <summary>
+    /// K29's other half, second part, and the anti-cheat guarantee proven end to end: a genuine
+    /// reposition surrounded by ordinary flight, played through the real <see cref="FakeSimSource"/>
+    /// pipeline with real wall-clock timestamps exactly as <c>FlightLifecycleService</c> receives
+    /// them, must still be detected and must still make the sector unpayable.
+    /// <para>
+    /// The script carries a hundred seconds of ordinary cruise either side of the jump, because that
+    /// is what a real reposition always has around it and what the monitor now requires before it
+    /// will condemn a sector - a single unsupported observation used to be enough, and that is what
+    /// voided a clean two-hour flight. Compression keeps the whole thing to a few seconds of wall
+    /// clock; the monitor normalises it out, and detection has to survive that normalisation, which
+    /// is a strictly stronger statement than the same jump at 1x.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Replay_TeleportSurroundedByNormalFlight_IsDetectedAndMakesTheSectorUnpayable()
+    {
+        var scriptPath = WriteCorroboratedTeleportScript();
+        try
+        {
+            var options = new FakeSimSourceOptions
+            {
+                ReplayFilePath = scriptPath,
+                TimeCompressionFactor = 60.0,
+                SampleInterval = TimeSpan.FromMilliseconds(20),
+                Loop = false,
+            };
+
+            await using var source = new FakeSimSource(options);
+            await source.StartAsync(CancellationToken.None);
+
+            // 201 seconds of sim-time at 60x is a little over three seconds of wall clock.
+            var samples = await CollectAsync(source, TimeSpan.FromSeconds(6));
+
+            await source.StopAsync(CancellationToken.None);
+
+            Assert.NotEmpty(samples);
 
             var monitor = new FlightIntegrityMonitor();
             foreach (var sample in samples)
@@ -179,9 +247,11 @@ public class FakeSimSourceTests
                 monitor.Observe(ToFlightSample(sample));
             }
 
-            Assert.False(monitor.ElevatedSimRateDetected);
             Assert.True(monitor.PositionJumpDetected);
             Assert.True(monitor.SectorInvalidForPayment);
+            // Caught on position data alone - slew was never reported, and the elevated rate is the
+            // test harness compressing the run, not something the "player" did to gain anything.
+            Assert.False(monitor.SlewDetected);
         }
         finally
         {
@@ -225,6 +295,46 @@ public class FakeSimSourceTests
         };
 
         var path = Path.Combine(Path.GetTempPath(), $"fsops-teleport-script-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(script, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        return path;
+    }
+
+    /// <summary>
+    /// The same London-to-Barcelona teleport, but with a hundred seconds of ordinary 460 kt cruise
+    /// on each side of it - what a real reposition mid-sector actually looks like, and what the
+    /// integrity monitor needs in order to tell one from a burst of bad telemetry.
+    /// </summary>
+    private static string WriteCorroboratedTeleportScript()
+    {
+        // 460 kt for 100 seconds is ~12.8 nm, a little over a fifth of a degree of latitude.
+        const double cruiseDegreesPer100Seconds = 460.0 / 3600.0 * 100.0 / 60.0;
+
+        static FakeKeyframe Cruise(double tSeconds, double latitudeDeg, double longitudeDeg) => new()
+        {
+            TSeconds = tSeconds, Phase = "Cruise", LatitudeDeg = latitudeDeg, LongitudeDeg = longitudeDeg,
+            AltitudeMslFt = 35000, AltitudeAglFt = 34800, IndicatedAirspeedKt = 290,
+            GroundSpeedKt = 460, TrueHeadingDeg = 360, MagneticHeadingDeg = 358,
+            OnGround = false, EngineRunning = true, GForce = 1.0, TotalFuelKg = 7000,
+            SimulationRate = 1.0,
+        };
+
+        var script = new FakeFlightScript
+        {
+            Aircraft = new FakeAircraft { Title = "Test Aircraft", AtcModel = "TEST", AtcType = "Test" },
+            Keyframes = new List<FakeKeyframe>
+            {
+                Cruise(0, 51.1, -0.2),
+                Cruise(100, 51.1 + cruiseDegreesPer100Seconds, -0.2),
+
+                // ~600 nm in a single sim-second, with no slew reported and nothing else out of the
+                // ordinary - position data alone has to carry this.
+                Cruise(101, 41.3, 2.1),
+
+                Cruise(201, 41.3 + cruiseDegreesPer100Seconds, 2.1),
+            },
+        };
+
+        var path = Path.Combine(Path.GetTempPath(), $"fsops-corroborated-teleport-script-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, JsonSerializer.Serialize(script, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         return path;
     }
