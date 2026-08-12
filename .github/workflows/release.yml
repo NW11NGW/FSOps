@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ---------------------------------------------------------------------------------------
       # The version gate. Hoisted above every setup step on purpose: it needs nothing but the
@@ -121,7 +121,7 @@ jobs:
           "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
@@ -129,7 +129,7 @@ jobs:
       # arbitrary: jsdom's bundled undici calls webidl.util.markAsUncloneable, which does not exist
       # on Node 20. publish.ps1 builds the SPA, so this job needs that same runtime.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
@@ -302,7 +302,7 @@ jobs:
       # forty minutes and may not reproduce.
       - name: Upload the installer and its checksum as artifacts
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: FSOps-Setup-${{ env.APP_VERSION }}
           path: |
