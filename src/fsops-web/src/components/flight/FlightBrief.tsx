@@ -259,7 +259,14 @@ export function FlightBrief({
             airlineIcaoCode,
             flightNumber: row.flightNumber,
             registration: selectedAircraft?.registration ?? null,
-            passengers: paxCapacity,
+            // The real expected booking, not the airframe's raw seat count - SimBrief plans
+            // payload/cargo against whatever number lands in this field, and 100%-of-capacity is
+            // both dishonest (FSOps' own screen says fewer, two lines above this) and the specific
+            // pattern that trips SimBrief's default-airframe MZFW warning on a full A320. Falls
+            // back to paxCapacity only while the economics preview hasn't resolved yet (e.g. the
+            // instant a route/aircraft is picked) - the hand-off still needs a number then, and
+            // capacity is the least-wrong stand-in that's already on hand.
+            passengers: expectedPassengers ?? paxCapacity,
           }}
           summaryLines={summaryLines}
         />

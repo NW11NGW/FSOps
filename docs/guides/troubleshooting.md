@@ -243,11 +243,11 @@ The most common cause is a pilot who was hired but never given a schedule, or on
 
 ## SimBrief import did nothing
 
-**Symptom:** The flight brief's SimBrief banner reads "Using the built-in plan" instead of pulling in your OFP, even though you've set a Pilot ID and generated a plan.
+**Symptom:** The flight brief's SimBrief OFP panel reads "Using the built-in plan" instead of pulling in your OFP, even though you've set a Pilot ID and generated a plan.
 
 **Cause:** One of several ordinary reasons, all handled by falling back to FSOps' own plan rather than failing the flight: no Pilot ID set yet in [Settings → SimBrief](user-guide.md#simbrief), an incorrect Pilot ID, SimBrief has no plan on file for that Pilot ID (SimBrief itself can't distinguish "wrong ID" from "no plan filed" — FSOps can't tell them apart either), SimBrief was unreachable or timed out, or — the single most common cause in practice — **your latest OFP is filed for a different city pair than the route you're about to fly.** FSOps refuses to substitute a mismatched plan rather than silently applying the wrong fuel and altitude figures; see [Importing your OFP back](user-guide.md#importing-your-ofp-back).
 
-**Solution:** Read the banner's own message — it names the specific reason. Most often, this means filing a fresh OFP in SimBrief for the exact route (same origin and destination) you're about to fly before opening the Fly screen. If you only just added your Pilot ID, double-check it in Settings. Either way, this never blocks flying — the built-in plan is used automatically and the flight brief still shows complete, usable figures.
+**Solution:** Read the panel's own message — it names the specific reason. Most often, this means filing a fresh OFP in SimBrief for the exact route (same origin and destination) you're about to fly, then clicking **Check for OFP** on the flight brief's SimBrief OFP panel — you don't need to leave the Fly screen and come back; the button re-checks immediately. If you only just added your Pilot ID, double-check it in Settings, or use the link in the panel if it hasn't picked one up yet. Either way, this never blocks flying — the built-in plan is used automatically and the flight brief still shows complete, usable figures.
 
 ## No controllers are showing
 

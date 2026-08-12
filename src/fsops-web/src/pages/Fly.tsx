@@ -395,7 +395,11 @@ export function Fly() {
 
           {selectedRow ? (
             <div className="space-y-3">
-              <FlightPlanImportBanner planImport={flightPlanImport.data} status={flightPlanImport.status} />
+              <FlightPlanImportBanner
+                planImport={flightPlanImport.data}
+                status={flightPlanImport.status}
+                onRefresh={flightPlanImport.refresh}
+              />
               <FlightBrief
                 row={selectedRow}
                 aircraftOptions={selectedRow.aircraftOptions}
