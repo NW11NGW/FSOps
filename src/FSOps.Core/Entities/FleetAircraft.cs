@@ -21,13 +21,14 @@ public class FleetAircraft
     public double ConditionPercent { get; set; } = 100;
 
     /// <summary>
-    /// Fuel physically on board right now, in kg - a stored asset, not a per-flight expense. That
-    /// is what makes fuel tankering a real decision: uplift cheap fuel at one end and fly the
-    /// return leg on it. Written when a flight finishes or is
-    /// abandoned, and read at the next flight start to reconcile against what the sim reports: a
-    /// rise on the ground is an uplift and is charged at that airport's price, while fuel already
-    /// on board has been paid for and costs nothing further to burn. This is what lets a return
-    /// leg fly free on the outbound leg's fuel. Defaults to 0 for both new and existing rows.
+    /// Fuel physically on board right now, in kg - <b>informational only</b>, never a billable
+    /// asset. A sector is billed for what it actually burns, at the departure airport's price (see
+    /// FSOps.Server.Services.FlightEconomicsPoster.PostFuelBurn), regardless of how much happens to
+    /// be sitting in the tank - so this figure no longer drives any charge or credit. Kept purely so
+    /// the Fleet page and report card can show a real "fuel on board" reading: synced from live
+    /// telemetry when it's available (flight start, and whenever a flight finishes or is
+    /// abandoned), otherwise left as whatever was last known. Defaults to 0 for both new and
+    /// existing rows.
     /// </summary>
     public double FuelOnBoardKg { get; set; }
 

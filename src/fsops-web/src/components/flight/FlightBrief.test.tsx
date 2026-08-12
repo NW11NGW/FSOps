@@ -73,11 +73,8 @@ function preview(overrides: Partial<RoutePreviewResponse> = {}): RoutePreviewRes
       alternateFuelKg: 80,
       finalReserveFuelKg: 20,
       totalFuelKg: 2200,
-      costOfCarryKg: 0,
     },
     fuelPricePerKg: 0.8,
-    destinationFuelPricePerKg: 0.85,
-    tankeringAdvisory: null,
     suggestedFare: 95,
     economics: {
       fare: 95,
@@ -236,68 +233,13 @@ describe('FlightBrief - block time and fuel breakdown tabs', () => {
     unmount()
   })
 
-  it('shows fuel prices at both ends when known', async () => {
-    const { container, unmount } = await render({ preview: preview({ fuelPricePerKg: 0.8, destinationFuelPricePerKg: 0.85 }) })
+  it('shows the departure fuel price - what this sector will actually be billed on burn', async () => {
+    const { container, unmount } = await render({ preview: preview({ fuelPricePerKg: 0.8 }) })
 
     click(getByRole(container, 'tab', { name: 'Fuel' }))
 
     const body = text(container)
     expect(body).toContain('Price here')
-    expect(body).toContain('Price at destination')
-    unmount()
-  })
-})
-
-describe('FlightBrief - destination fuel price hint', () => {
-  it('is silent when the destination price is not materially higher', async () => {
-    const { container, unmount } = await render({ preview: preview({ fuelPricePerKg: 0.8, destinationFuelPricePerKg: 0.82 }) })
-    expect(text(container)).not.toContain('more expensive at')
-    unmount()
-  })
-
-  it('flags the price gap and recommends tankering when it would pay off', async () => {
-    const { container, unmount } = await render({
-      preview: preview({
-        fuelPricePerKg: 0.8,
-        destinationFuelPricePerKg: 1.2,
-        tankeringAdvisory: {
-          departurePricePerKg: 0.8,
-          destinationPricePerKg: 1.2,
-          extraFuelToCarryKg: 500,
-          costOfCarryKg: 20,
-          costOfCarryAmount: 16,
-          grossSavingAmount: 200,
-          netSavingAmount: 184,
-          recommended: true,
-          exceedsMtow: false,
-        },
-      }),
-    })
-    const body = text(container)
-    expect(body).toContain('more expensive at EGPH than here')
-    expect(body).toContain('could save about $184.00')
-    unmount()
-  })
-
-  it('says the extra weight outweighs the saving when tankering is not recommended', async () => {
-    const { container, unmount } = await render({
-      preview: preview({
-        fuelPricePerKg: 0.8,
-        destinationFuelPricePerKg: 1.2,
-        tankeringAdvisory: {
-          departurePricePerKg: 0.8,
-          destinationPricePerKg: 1.2,
-          extraFuelToCarryKg: 500,
-          costOfCarryKg: 400,
-          costOfCarryAmount: 320,
-          grossSavingAmount: 200,
-          netSavingAmount: -120,
-          recommended: false,
-          exceedsMtow: false,
-        },
-      }),
-    })
-    expect(text(container)).toContain('outweighs the saving')
     unmount()
   })
 })

@@ -6,6 +6,7 @@ using FSOps.Data;
 using FSOps.Server.Endpoints;
 using FSOps.Server.Services;
 using FSOps.Server.Tests.Fakes;
+using FSOps.Sim;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -173,8 +174,15 @@ public class FlightLedgerPostingTests
     }
 
     [Fact]
-    public async Task AbandonedFlight_NetsStrictlyNegative_OnceFuelWasAlreadyBought()
+    public async Task AbandonedFlight_NetsStrictlyNegative_OnceRealFuelWasActuallyBurned()
     {
+        // Under the old uplift-billing model this fuel line was posted unconditionally at
+        // StartAsync, so an abandon always had a sunk cost to keep. Under burn-billing, fuel is
+        // only known - and only billed - once there is something to measure; an abandon with no
+        // telemetry at all now correctly costs nothing (see FuelBurnBillingTests for that case).
+        // This test proves the property that's actually still true: once the aircraft has
+        // genuinely burned fuel before the abandon, that burn is billed and the sector nets
+        // strictly negative, exactly as "escaping a bad sector must still cost something" requires.
         using var ctx = await RouteTestContext.CreateAsync();
         var route = await SeedRouteAsync(ctx);
         // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
@@ -186,23 +194,48 @@ public class FlightLedgerPostingTests
         Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(startResult));
 
         var flight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.RouteId == route.Id);
+        // Nothing posted yet - fuel bills once a burn is known, never at start any more.
+        Assert.Empty(await ctx.Db.LedgerTransactions.Where(t => t.FlightId == flight.Id).ToListAsync());
 
-        var linesAfterStart = await ctx.Db.LedgerTransactions.Where(t => t.FlightId == flight.Id).ToListAsync();
-        Assert.Single(linesAfterStart);
-        Assert.Equal(LedgerCategory.Fuel, linesAfterStart[0].Category);
-        Assert.True(linesAfterStart[0].Amount < 0);
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        var departure = await ctx.Db.Airports.SingleAsync(a => a.Icao == route.DepartureIcao);
+        var tracker = new FlightLifecycleService.ActiveFlightTracker
+        {
+            FlightId = flight.Id,
+            AirlineId = ctx.Airline.Id,
+            FleetAircraftId = fleetAircraft.Id,
+            ArrivalIcao = route.ArrivalIcao,
+            PlannedBlockMinutes = flight.PlannedBlockMinutes,
+            Machine = new FlightPhaseStateMachine(),
+        };
+        lifecycle.SetActiveTrackerForTests(tracker);
+
+        // A real taxi-out burn, exactly what an abandon shortly after "Start flight" would show.
+        lifecycle.ProcessSample(tracker, TaxiSample(Base, departure.Latitude, departure.Longitude, totalFuelKg: 2200));
+        lifecycle.ProcessSample(tracker, TaxiSample(Base + TimeSpan.FromMinutes(2), departure.Latitude, departure.Longitude, totalFuelKg: 2150));
 
         var abandonResult = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(abandonResult));
 
-        // Abandoning never refunds a sunk cost - the fuel line from start is still the only thing
-        // on this airline's ledger, so the net is strictly negative.
         var ledgerLines = await ctx.Db.LedgerTransactions.Where(t => t.AirlineId == ctx.Airline.Id).ToListAsync();
+        var fuelLine = Assert.Single(ledgerLines.Where(t => t.Category == LedgerCategory.Fuel));
+        Assert.True(fuelLine.Amount < 0);
+
+        // Abandoning never refunds a sunk cost - the fuel actually burned before the abandon is
+        // still the only thing on this airline's ledger, so the net is strictly negative.
         Assert.True(ledgerLines.Sum(t => t.Amount) < 0);
 
         var updatedFlight = await ctx.Db.Flights.AsNoTracking().SingleAsync(f => f.Id == flight.Id);
         Assert.Equal(FlightStatus.Abandoned, updatedFlight.Status);
+        Assert.Equal(50, updatedFlight.FuelUsedKg, 3);
     }
+
+    private static TelemetrySample TaxiSample(DateTimeOffset utc, double latitudeDeg, double longitudeDeg, double totalFuelKg) => new(
+        utc, latitudeDeg, longitudeDeg, AltitudeMslFt: 0, AltitudeAglFt: 0,
+        IndicatedAirspeedKt: 0, GroundSpeedKt: 5, VerticalSpeedFpm: 0, TrueHeadingDeg: 0, MagneticHeadingDeg: 0,
+        OnGround: true, EngineRunning: true, ParkingBrakeSet: false, GForce: 1.0, TouchdownNormalVelocityFps: 0,
+        TotalFuelKg: totalFuelKg, AircraftTitle: "Test Aircraft", AtcModel: "Test Aircraft", AtcType: "TEST",
+        SimulationRate: 1.0, IsSlewActive: false);
 
     private static int StatusCodeOf(IResult result) => ((IStatusCodeHttpResult)result).StatusCode ?? 0;
 

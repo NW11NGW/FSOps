@@ -3,32 +3,29 @@ using FSOps.Core.Entities;
 namespace FSOps.Core.Economy;
 
 /// <summary>
-/// Every cost line for a single flight, itemised. Fuel is charged on what was uplifted, at the
-/// price where it was uplifted - never on what was burned, and never when nothing was uplifted
-/// (a return leg flown on fuel already in the tanks costs nothing further in fuel). Landing,
-/// handling and parking are weight-based like the real thing, so a bigger aircraft costs more to
-/// operate into an airport than a smaller one.
+/// Every cost line for a single flight, itemised. Fuel is charged on what was actually burned,
+/// at the departure airport's price - that is where the aircraft would realistically have been
+/// fuelled - never on what was merely carried, and never credited for fuel left in the tank at
+/// the end. Landing, handling and parking are weight-based like the real thing, so a bigger
+/// aircraft costs more to operate into an airport than a smaller one.
 /// <para>
 /// That weight is the type's <b>fixed certificated MTOW</b>, never the aircraft's actual weight on
-/// the day, so <b>tankered fuel does not raise these fees at all</b> - a tankered sector pays
-/// exactly what an empty one does. An earlier version of this comment claimed the opposite and
-/// called it tankering's "second counterweight"; it is not. The extra fuel burned carrying the
-/// extra weight (see BlockFuelEstimator's cost-of-carry) is the <b>only</b> counterweight, which
-/// is worth knowing before tuning either number - there is no second lever here to lean on.
+/// the day, so how much fuel happens to be on board never changes these fees.
 /// </para>
 /// </summary>
 public static class FlightCostCalculator
 {
-    /// <summary>Charged only on a positive rise in fuel on board; zero for any leg where no
-    /// fuel was uplifted (fuel already owned has already been paid for).</summary>
-    public static decimal FuelUpliftCost(double upliftKg, decimal pricePerKgAtUpliftAirport)
+    /// <summary>Charged only on a positive burn; zero for a non-positive or missing figure (see
+    /// <see cref="FSOps.Core.Flights.FuelBurnResolver"/> for how a burn is resolved before it
+    /// reaches here - this is purely the price multiplication, with its own defensive floor).</summary>
+    public static decimal FuelBurnCost(double burnedKg, decimal pricePerKgAtDepartureAirport)
     {
-        if (upliftKg <= 0)
+        if (burnedKg <= 0)
         {
             return 0m;
         }
 
-        return Math.Round((decimal)upliftKg * pricePerKgAtUpliftAirport, 2, MidpointRounding.AwayFromZero);
+        return Math.Round((decimal)burnedKg * pricePerKgAtDepartureAirport, 2, MidpointRounding.AwayFromZero);
     }
 
     /// <summary>Real-world-style landing fee: rate per tonne of MTOW, scaled by how significant

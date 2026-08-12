@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ReportCard } from './ReportCard'
 import { SettingsProvider } from '@/hooks/useSettings'
@@ -77,7 +77,7 @@ function detail(overrides: Partial<FlightDetail> = {}): FlightDetail {
     events: overrides.events ?? [touchdownEvent('td-1')],
     ledgerTransactions: overrides.ledgerTransactions ?? [
       ledgerLine({ id: 'l1', category: 'TicketRevenue', amount: 21000, description: 'Ticket revenue (148 passengers)' }),
-      ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel uplift (2,100 kg)' }),
+      ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel: 2,100 kg burned' }),
     ],
     aircraftFuelOnBoardKg: overrides.aircraftFuelOnBoardKg === undefined ? 4200 : overrides.aircraftFuelOnBoardKg,
   }
@@ -183,21 +183,19 @@ describe('ReportCard - actual vs planned', () => {
 })
 
 describe('ReportCard - fuel', () => {
-  it('shows the fuel cost when fuel was actually uplifted for this flight', async () => {
+  it('shows the fuel cost from the posted Fuel ledger line', async () => {
     const { container, unmount } = await render({
-      detail: detail({ ledgerTransactions: [ledgerLine({ category: 'Fuel', amount: -3500, description: 'Fuel uplift' })] }),
+      detail: detail({ ledgerTransactions: [ledgerLine({ category: 'Fuel', amount: -3500, description: 'Fuel: 4,000 kg burned, billed at EGGD @ 0.8750/kg' })] }),
     })
-    expect(text(container)).not.toContain('flew on fuel already on board')
+    expect(text(container)).toContain('$3,500.00')
     unmount()
   })
 
-  it('says the flight used fuel already on board when no Fuel ledger line was posted, without charging anything', async () => {
+  it('shows a zero fuel cost when no Fuel ledger line was posted', async () => {
     const { container, unmount } = await render({
       detail: detail({ ledgerTransactions: [ledgerLine({ category: 'TicketRevenue', amount: 21000, description: 'Ticket revenue' })] }),
     })
-    const body = text(container)
-    expect(body).toContain('No fuel was bought for this flight')
-    expect(body).toContain('flew on fuel already on board from an earlier flight')
+    expect(text(container)).toContain('$0.00')
     unmount()
   })
 })
@@ -276,7 +274,7 @@ describe('ReportCard - flight integrity: slew and position-jump invalidate payme
     const { container, unmount } = await render({
       detail: detail({
         flight: flight({ positionJumpDetected: true }),
-        ledgerTransactions: [ledgerLine({ category: 'Fuel', amount: -3500, description: 'Fuel uplift' })],
+        ledgerTransactions: [ledgerLine({ category: 'Fuel', amount: -3500, description: 'Fuel: 2,100 kg burned' })],
       }),
     })
     const body = text(container)
@@ -349,7 +347,7 @@ describe('ReportCard - financial outcome', () => {
       detail: detail({
         ledgerTransactions: [
           ledgerLine({ id: 'l1', category: 'TicketRevenue', amount: 21000, description: 'Ticket revenue' }),
-          ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel uplift' }),
+          ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel: 2,100 kg burned' }),
         ],
       }),
     })
@@ -363,7 +361,7 @@ describe('ReportCard - financial outcome', () => {
       detail: detail({
         ledgerTransactions: [
           ledgerLine({ id: 'l1', category: 'TicketRevenue', amount: 3000, description: 'Ticket revenue' }),
-          ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel uplift' }),
+          ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel: 2,100 kg burned' }),
         ],
       }),
     })

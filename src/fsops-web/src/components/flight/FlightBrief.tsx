@@ -38,10 +38,6 @@ interface FlightBriefProps {
   startError: string | null
 }
 
-/** How much pricier the destination's fuel must be (as a multiple of the departure price) before
- *  the brief bothers surfacing a hint - avoids noise over a trivial day-to-day price-walk wobble. */
-const DestinationPriceHintThreshold = 1.15
-
 function BreakdownRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-2 text-sm">
@@ -85,16 +81,6 @@ export function FlightBrief({
     preview ? `Block fuel: ${fmt.weight(preview.blockFuelKg)}` : null,
     selectedAircraft ? `Aircraft: ${selectedAircraft.registration} (${selectedAircraft.icaoType})` : null,
   ].filter((line): line is string => Boolean(line))
-
-  // Destination fuel is materially pricier than here - worth flagging before departure, since
-  // tankering is only a real decision if the price gap is visible in advance.
-  // Computed once rather than inline in JSX
-  // so the null-narrowing stays simple and correct.
-  const departureFuelPrice = preview?.fuelPricePerKg ?? null
-  const destinationFuelPrice = preview?.destinationFuelPricePerKg ?? null
-  const showDestinationPriceHint =
-    departureFuelPrice !== null && destinationFuelPrice !== null && destinationFuelPrice > departureFuelPrice * DestinationPriceHintThreshold
-  const tankeringAdvisory = preview?.tankeringAdvisory ?? null
 
   return (
     <Card>
@@ -243,35 +229,11 @@ export function FlightBrief({
                   <dd className="tabular-nums font-semibold">{fmt.weight(preview.fuelBreakdown.totalFuelKg)}</dd>
                 </div>
                 {preview.fuelPricePerKg !== null && (
-                  <BreakdownRow label="Price here" value={`${fmt.money(preview.fuelPricePerKg)}/kg`} />
-                )}
-                {preview.destinationFuelPricePerKg !== null && (
-                  <BreakdownRow label="Price at destination" value={`${fmt.money(preview.destinationFuelPricePerKg)}/kg`} />
+                  <BreakdownRow label="Price here (billed on burn)" value={`${fmt.money(preview.fuelPricePerKg)}/kg`} />
                 )}
               </dl>
             </TabsContent>
           </Tabs>
-        )}
-
-        {showDestinationPriceHint && departureFuelPrice !== null && destinationFuelPrice !== null && (
-          <div className="flex items-start gap-2 rounded-md border border-accent/30 bg-accent/5 p-3 text-xs text-muted-foreground">
-            <Fuel className="mt-0.5 size-3.5 shrink-0 text-accent" />
-            <p className="min-w-0 break-words">
-              Fuel is {(((destinationFuelPrice - departureFuelPrice) / departureFuelPrice) * 100).toFixed(0)}% more expensive at{' '}
-              {row.arrivalIcao} than here.
-              {tankeringAdvisory?.recommended && (
-                <>
-                  {' '}Uplifting an extra ~{fmt.weight(tankeringAdvisory.extraFuelToCarryKg)} here to cover the return leg could
-                  save about {fmt.money(tankeringAdvisory.netSavingAmount)}, after the extra weight you&rsquo;d burn carrying
-                  it{tankeringAdvisory.exceedsMtow ? ' — but check this stays under maximum take-off weight' : ''}.
-                </>
-              )}
-              {tankeringAdvisory && !tankeringAdvisory.recommended && (
-                <> The extra weight you&rsquo;d burn carrying it outweighs the saving, so refuelling at the destination is
-                  still cheaper overall.</>
-              )}
-            </p>
-          </div>
         )}
 
         <Separator />

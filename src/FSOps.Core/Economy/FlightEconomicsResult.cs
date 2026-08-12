@@ -62,7 +62,7 @@ public static class FlightEconomicsCalculator
             config.MaxLoadFactor, strategyConfig, fare, referenceFare, seats, marketDemandPax,
             config.CaptiveFareCeilingMultiple, config.PostCaptiveElasticity);
 
-        var fuelCost = FlightCostCalculator.FuelUpliftCost(upliftKg, pricePerKgAtUpliftAirport);
+        var fuelCost = FlightCostCalculator.FuelBurnCost(upliftKg, pricePerKgAtUpliftAirport);
         var landingFee = FlightCostCalculator.LandingFee(config.Costs, arrivalAirportSize, mtowTonnes);
         var handlingFee = FlightCostCalculator.HandlingFee(config.Costs, arrivalAirportSize, mtowTonnes, strategyConfig.CostMultiplier);
         var parkingFee = FlightCostCalculator.ParkingFee(config.Costs, arrivalAirportSize, mtowTonnes, strategyConfig.CostMultiplier);

@@ -47,8 +47,6 @@ function preview(overrides: Partial<RoutePreviewResponse> = {}): RoutePreviewRes
     blockFuelKg: 2500,
     fuelBreakdown: null,
     fuelPricePerKg: null,
-    destinationFuelPricePerKg: null,
-    tankeringAdvisory: null,
     suggestedFare: 90,
     economics: null,
     greatCirclePath: [],

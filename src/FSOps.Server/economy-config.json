@@ -74,16 +74,7 @@
       "South Africa": 1.10
     },
     "volatilityAmplitude": 0.06,
-    "noiseWindowDays": 5,
-    // "Cost of carry" - real-world rule of thumb for extra burn from hauling extra fuel: ~3% of
-    // the EXTRA mass (carried beyond a sector's own normal requirement) burned per hour it's on
-    // board. This is the ONLY counterweight to fuel tankering and has to do the whole job alone:
-    // landing fees are charged on the airframe's fixed certificated MTOW, not the weight on the
-    // day, so a tankered sector pays the same landing fee as an empty one. Without a cost of carry
-    // the optimal strategy would always be "fill up at the cheapest airport". Applied only to fuel
-    // carried beyond a sector's own requirement, so a normal (non-tankering) flight's figures are
-    // completely unaffected - see BlockFuelEstimatorWeightPenaltyTests.
-    "costOfCarryRatePerHour": 0.03
+    "noiseWindowDays": 5
   },
   "costs": {
     "landingFeeRate": { "large": 9.50, "medium": 5.00, "small": 2.25, "other": 1.00 },

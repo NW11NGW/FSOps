@@ -8,41 +8,31 @@ public class FlightCostCalculatorTests
     private static readonly CostConfig Config = EconomyConfig.Default().Costs;
 
     [Fact]
-    public void FuelUpliftCost_NoUplift_IsZero()
+    public void FuelBurnCost_ZeroBurn_IsZero()
     {
-        Assert.Equal(0m, FlightCostCalculator.FuelUpliftCost(0, 0.85m));
+        Assert.Equal(0m, FlightCostCalculator.FuelBurnCost(0, 0.85m));
     }
 
     [Fact]
-    public void FuelUpliftCost_NegativeUplift_IsZero()
+    public void FuelBurnCost_NegativeBurn_IsZero()
     {
-        // A defuel is treated as a non-event, not a refund - one of the two options was picked and
-        // documented deliberately, so a decrease can never be turned into a credit.
-        Assert.Equal(0m, FlightCostCalculator.FuelUpliftCost(-500, 0.85m));
+        // Defensive floor - FuelBurnResolver already guards against a resolved figure ever going
+        // negative, but this stays a non-event rather than a credit regardless of what reaches it.
+        Assert.Equal(0m, FlightCostCalculator.FuelBurnCost(-500, 0.85m));
     }
 
     [Fact]
-    public void FuelUpliftCost_ReturnLegOnFuelAlreadyInTanks_IsZero()
+    public void FuelBurnCost_PositiveBurn_MatchesExactCalculation()
     {
-        // The defining property of the "fuel charged on uplift, never on burn" rule: a return
-        // leg flown entirely on fuel already owned uplifts nothing, so it costs nothing further
-        // in fuel, regardless of how much is burned getting home.
-        Assert.Equal(0m, FlightCostCalculator.FuelUpliftCost(upliftKg: 0, pricePerKgAtUpliftAirport: 1.50m));
-    }
-
-    [Fact]
-    public void FuelUpliftCost_PositiveUplift_MatchesExactCalculation()
-    {
-        Assert.Equal(850.00m, FlightCostCalculator.FuelUpliftCost(1000, 0.85m));
+        Assert.Equal(850.00m, FlightCostCalculator.FuelBurnCost(1000, 0.85m));
     }
 
     [Fact]
     public void LandingFee_ScalesLinearlyWithMtow()
     {
-        // This is a property of the MTOW input alone, not of tankering: production always passes
-        // the aircraft type's fixed certificated MtowTonnes here, never the weight on the day, so
-        // a tankered sector pays exactly the same landing fee as an empty one. Cost-of-carry burn
-        // is the only counterweight to tankering.
+        // This is a property of the MTOW input alone: production always passes the aircraft
+        // type's fixed certificated MtowTonnes here, never the aircraft's actual weight on the
+        // day, so how much fuel happens to be on board never changes this fee.
         var at50Tonnes = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Large, 50);
         var at100Tonnes = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Large, 100);
 

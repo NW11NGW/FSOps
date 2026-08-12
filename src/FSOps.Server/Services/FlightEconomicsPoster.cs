@@ -13,16 +13,14 @@ namespace FSOps.Server.Services;
 /// code path that would add it is never reached, not because a computed figure gets zeroed out
 /// afterwards.
 /// <para>
-/// <b>Fuel is charged on uplift, not on burn, and never here.</b> <see cref="PostFuelUplift"/> can
-/// be called any number of times over a flight's life - at start (reconciling whatever changed
-/// while FSOps wasn't watching, see <c>FlightEndpoints.StartAsync</c>), and any time a live-tracked
-/// flight shows a real rise in fuel while on the ground (see
-/// <c>FlightLifecycleService.ProcessSample</c>) - once per genuine uplift event, each posting its
-/// own ledger line naming the airport it happened at. <see cref="FleetAircraft.FuelOnBoardKg"/> is
-/// the persisted asset this charges against: burning fuel already owned costs nothing further, so
-/// a return leg flown on fuel already in the tank posts no fuel line at all. A decrease in fuel
-/// while on the ground (defuelling) is deliberately a non-event, not a credit - see
-/// <see cref="FSOps.Core.Flights.GroundFuelChangeKind"/> - so nothing here handles that direction.
+/// <b>Fuel is charged on what was burned, never on what was merely carried.</b> <see cref="PostFuelBurn"/>
+/// posts once per sector, at whatever point the burn becomes known - a normal completion
+/// (<c>FlightLifecycleService.FinalizeFlightAsync</c>), a manual completion or virtual-pilot
+/// occurrence with no telemetry to measure from (both bill the sector's own planned figure), or an
+/// abandoned flight (bills whatever was measurably burned before the abandon, or nothing at all if
+/// that can't be determined - see <c>FlightEndpoints.AbandonAsync</c>). Posted regardless of
+/// whether the sector turns out to be payable: fuel actually burned is a real cost either way, the
+/// same way it always has been in this app.
 /// </para>
 /// </summary>
 public static class FlightEconomicsPoster
@@ -39,31 +37,30 @@ public static class FlightEconomicsPoster
     }
 
     /// <summary>
-    /// Charges for fuel at the airport it's bought at - never on burn. Posted unconditionally:
-    /// fuel bought is fuel bought, whether or not the flight it was bought for ever completes (see
-    /// the abandoned-flight rule - abandoning does not un-buy it). Returns the amount charged (0
-    /// if nothing was uplifted) so the caller can fold it into <see cref="Flight.TotalCost"/>.
-    /// <paramref name="upliftAirport"/> is wherever the aircraft actually was when the rise was
-    /// observed - the departure airport for a normal pre-flight fill-up, but potentially the
-    /// arrival airport (or, for a diversion, wherever it diverted to) for a turnaround uplift
-    /// detected live while still tracked.
+    /// Charges for fuel at the departure airport's price - never anywhere else, since that is
+    /// where the aircraft would realistically have been fuelled for this sector. Posted
+    /// unconditionally with respect to whether the sector is payable: fuel actually burned is a
+    /// real cost whether or not the flight it was burned for ever earned anything (see the
+    /// slew/position-jump rule - an invalid sector still keeps its fuel cost). Returns the amount
+    /// charged (0 if nothing was billable) so the caller can fold it into
+    /// <see cref="Flight.TotalCost"/>.
     /// </summary>
-    public static decimal PostFuelUplift(
+    public static decimal PostFuelBurn(
         FsOpsDbContext db,
         Flight flight,
         EconomyConfig config,
-        Airport upliftAirport,
-        double upliftKg,
+        Airport departureAirport,
+        double burnedKg,
         DateTimeOffset utc,
         int worldSeed)
     {
-        if (upliftKg <= 0)
+        if (burnedKg <= 0)
         {
             return 0m;
         }
 
-        var pricePerKg = FuelPricing.PricePerKg(config.Fuel, upliftAirport.Icao, upliftAirport.Country, utc, worldSeed);
-        var cost = FlightCostCalculator.FuelUpliftCost(upliftKg, pricePerKg);
+        var pricePerKg = FuelPricing.PricePerKg(config.Fuel, departureAirport.Icao, departureAirport.Country, utc, worldSeed);
+        var cost = FlightCostCalculator.FuelBurnCost(burnedKg, pricePerKg);
         if (cost <= 0)
         {
             return 0m;
@@ -77,15 +74,15 @@ public static class FlightEconomicsPoster
             Category = LedgerCategory.Fuel,
             Amount = -cost,
             FlightId = flight.Id,
-            Description = $"Fuel uplift at {upliftAirport.Icao}: {upliftKg:F0} kg @ {pricePerKg:F4}/kg",
+            Description = $"Fuel: {burnedKg:F0} kg burned, billed at {departureAirport.Icao} @ {pricePerKg:F4}/kg",
         });
 
         return cost;
     }
 
     /// <summary>
-    /// Posts every non-fuel line for a completed sector (fuel was already charged at uplift - see
-    /// <see cref="PostFuelUpliftAsync"/>). Idempotent on <see cref="Flight.RevenuePosted"/>: once
+    /// Posts every non-fuel line for a completed sector (fuel is billed separately - see
+    /// <see cref="PostFuelBurn"/>). Idempotent on <see cref="Flight.RevenuePosted"/>: once
     /// true, a second call is a no-op, so a retry, reconnect, or crash rehydration can never post
     /// twice. Returns the computed result (null if nothing new was posted, either because this
     /// flight was already processed or because the sector isn't payable) purely for the caller's
@@ -145,7 +142,7 @@ public static class FlightEconomicsPoster
         flight.PaxBooked = result.PaxBooked;
         flight.PaxFlown = result.PaxBooked;
         flight.Revenue = result.TicketRevenue;
-        flight.TotalCost += result.TotalCost; // TotalCost already carries the fuel line posted at start; result.FuelCost is 0 here (upliftKg: 0 above), so this never double-counts it.
+        flight.TotalCost += result.TotalCost; // Fuel is posted separately via PostFuelBurn; result.FuelCost is 0 here (upliftKg: 0 above), so this never double-counts it.
 
         Post(db, flight, LedgerCategory.TicketRevenue, result.TicketRevenue, utc, $"Ticket revenue: {result.PaxBooked} pax x {route.BaseFare:F2}");
         Post(db, flight, LedgerCategory.LandingFees, -result.LandingFee, utc, $"Landing fee at {arrivalAirport.Icao}");

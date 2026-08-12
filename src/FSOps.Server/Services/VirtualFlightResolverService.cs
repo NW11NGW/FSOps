@@ -592,20 +592,13 @@ public sealed class VirtualFlightResolverService : BackgroundService
 
         db.Flights.Add(flight);
 
-        // Fuel: virtual pilots refuel automatically at the departure airport's price for what they
-        // need, with no tankering logic of their own. Same no-telemetry-fallback
-        // shape as FlightEndpoints.StartAsync uses when nothing was observed: top up to this
-        // sector's own charged requirement if the tank doesn't already hold that much.
+        // Fuel: a virtual pilot has no telemetry, so its burn is the sector's own planned figure -
+        // billed outright at the departure airport's price, same as any other no-telemetry path in
+        // this app (see FuelBreakdown.ChargedFuelKg's own doc).
         var plan = RoutePreviewCalculator.Calculate(economyConfig, occurrence.DepartureAirport, occurrence.ArrivalAirport, occurrence.AircraftType, airline.StrategyProfile);
-        var fuelUpliftCost = 0m;
-        if (aircraft.FuelOnBoardKg < plan.FuelBreakdown.ChargedFuelKg)
-        {
-            var shortfallKg = plan.FuelBreakdown.ChargedFuelKg - aircraft.FuelOnBoardKg;
-            fuelUpliftCost = FlightEconomicsPoster.PostFuelUplift(db, flight, economyConfig, occurrence.DepartureAirport, shortfallKg, occurrence.Departure, worldSeed);
-            aircraft.FuelOnBoardKg += shortfallKg;
-        }
-
-        flight.TotalCost = fuelUpliftCost;
+        flight.FuelUsedKg = plan.FuelBreakdown.ChargedFuelKg;
+        var fuelCost = FlightEconomicsPoster.PostFuelBurn(db, flight, economyConfig, occurrence.DepartureAirport, flight.FuelUsedKg, occurrence.Departure, worldSeed);
+        flight.TotalCost = fuelCost;
 
         await FlightEconomicsPoster.PostCompletionAsync(
             db, flight, airline, route, occurrence.AircraftType, occurrence.ArrivalAirport, economyConfig, flightHours, actualArrival, ct);
@@ -615,10 +608,10 @@ public sealed class VirtualFlightResolverService : BackgroundService
         // grounds the aircraft, which the NEXT occurrence's flyability check picks up naturally.
         MaintenancePoster.PostFlightHours(db, aircraft, occurrence.Pilot, airline, economyConfig, flightHours, actualArrival);
 
-        // No telemetry means no reliable in-flight fuel reading - same conservative "treat as
-        // consumed" convention as FlightEndpoints.CompleteManualAsync uses for its own no-telemetry
-        // path, rather than guessing at a persisted remainder. The plan's tankering refinement for
-        // virtual pilots is explicitly future work.
+        // No telemetry means no reliable in-flight fuel reading - informational only now (see
+        // FleetAircraft.FuelOnBoardKg's own doc), so this stays the same conservative "treat as
+        // consumed" convention FlightEndpoints.CompleteManualAsync uses for its own no-telemetry
+        // path, rather than guessing at a persisted remainder.
         aircraft.FuelOnBoardKg = 0;
         aircraft.LocationIcao = route.ArrivalIcao;
         if (aircraft.Status == FleetAircraftStatus.Active)

@@ -83,14 +83,12 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
 
   const netTotal = ledgerTransactions.reduce((sum, line) => sum + line.amount, 0)
 
-  // Fuel is charged on uplift, never on burn, so this can legitimately be zero - a return leg
-  // flown on fuel already in the
-  // tank posts no Fuel ledger line at all, which is the headline property of that model made
-  // visible right here.
+  // Fuel is charged on what this sector actually burned, at the departure airport's price - see
+  // the Fuel ledger line's own description for the figure and airport. Zero only when the data
+  // needed to bill it couldn't be resolved at all (see FlightEconomicsPoster.PostFuelBurn).
   const fuelCostThisFlight = ledgerTransactions
     .filter((line) => line.category === 'Fuel')
     .reduce((sum, line) => sum + line.amount, 0)
-  const fuelWasUplifted = ledgerTransactions.some((line) => line.category === 'Fuel')
   const sectorNotPayable = flight.slewDetected || flight.positionJumpDetected
 
   const bounceCount = Math.max(0, events.filter((e) => e.type === 'Touchdown').length - 1)
@@ -241,24 +239,13 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
         </CardHeader>
         <CardContent className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
           <StatTile label="Burned this flight" icon={Fuel} value={fmt.weight(flight.fuelUsedKg)} />
-          <StatTile
-            label="Fuel cost this flight"
-            icon={Banknote}
-            value={fuelWasUplifted ? fmt.money(Math.abs(fuelCostThisFlight)) : fmt.money(0)}
-          />
+          <StatTile label="Fuel cost this flight" icon={Banknote} value={fmt.money(Math.abs(fuelCostThisFlight))} />
           <StatTile
             label="Remaining on the aircraft"
             icon={Gauge}
             value={detail.aircraftFuelOnBoardKg !== null ? fmt.weight(detail.aircraftFuelOnBoardKg) : '—'}
           />
         </CardContent>
-        {!fuelWasUplifted && (
-          <CardContent className="pt-0">
-            <p className="text-xs text-muted-foreground">
-              No fuel was bought for this flight — it flew on fuel already on board from an earlier flight.
-            </p>
-          </CardContent>
-        )}
       </Card>
 
       {flight.vatsimOnline === true && (

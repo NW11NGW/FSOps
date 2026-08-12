@@ -21,7 +21,7 @@ This document describes how FSOps is put together: the solution layout, how a re
 - [The append-only flight event log and crash recovery](#the-append-only-flight-event-log-and-crash-recovery)
 - [Playstyles and EconomyConfigCatalog](#playstyles-and-economyconfigcatalog)
 - [The monthly billing cycle: EconomyClockService](#the-monthly-billing-cycle-economyclockservice)
-- [Persistent fuel and tankering](#persistent-fuel-and-tankering)
+- [Fuel billing](#fuel-billing)
 - [Maintenance scheduling](#maintenance-scheduling)
 - [Virtual pilots and wall-clock resolution: VirtualFlightResolverService](#virtual-pilots-and-wall-clock-resolution-virtualflightresolverservice)
 - [Reputation and pilot skill](#reputation-and-pilot-skill)
@@ -228,16 +228,23 @@ Two integrity properties matter here, both deliberate:
 - **Catch-up is bounded.** If FSOps was closed for a long time, one pass posts at most 24 periods (about two years) before yielding back to the next 60-second tick - an unbounded closure doesn't mint an unbounded burst of charges in a single pass, but it does still catch up fully within a handful of passes.
 - **The watermark only ever moves forward, and never past the current clock reading.** A clock reading that comes back *before* the watermark (a wound-back system clock) is treated as a backwards jump: nothing is processed, the watermark doesn't move, and it's logged rather than silently absorbed. Winding the clock *forward* can't mint more than the 24-period cap per pass either. This is what makes the wall-clock model resistant to clock manipulation in either direction.
 
-## Persistent fuel and tankering
+## Fuel billing
 
-`FleetAircraft.FuelOnBoardKg` is a real, persisted quantity - the aircraft's tank state carries forward between flights rather than resetting every sector. `FlightEndpoints.StartAsync` reconciles it against reality at the start of every flight:
+A sector is billed for **what it actually burned**, at the departure airport's price — never a flat planned figure when the sim was watching, and never a credit for fuel left in the tank. `FSOps.Core.Flights.FuelBurnResolver` is the pure core: `Measure` turns a tracker's raw observations into one "what was burned" figure (or `null`), and `Resolve` decides whether that figure is trustworthy enough to bill or should fall back.
 
-- **With a recent telemetry sample** (the sim is connected and has reported within the reconciliation window), that reading is trusted as ground truth. `FuelUpliftDetector` classifies the change since the last tracked figure: a rise is charged as an uplift, at the departure airport's price; a fall is silently absorbed as consumed, never credited. This is what catches fuel that changed while FSOps wasn't watching - a sim restart, a menu fuel set, or the pilot topping off the tank before pressing Start flight.
-- **With no recent sample** (sim not connected, or the flight will only ever be completed manually), FSOps falls back to a conservative assumption: top up to exactly this sector's own `ChargedFuelKg` (trip + taxi + contingency - not the alternate/reserve allowance) if the tank doesn't already hold that much.
+**Measuring a burn** (`Measure`, three tiers):
 
-Either way, a sector flown on fuel already in the tank - most commonly the return leg of a route just flown outbound - posts no `Fuel` ledger line at all. `FlightLifecycleService` keeps `FuelOnBoardKg` in sync with live telemetry for the rest of the flight and writes the final in-tank figure back on landing/abandonment.
+1. **Engines were observed running** at some point (`EngineStartFuelKg` set on `ActiveFlightTracker`) — returns `AccumulatedBurnKg`: a running sum of every fuel **decrease** seen *while the engines were running*, from the first sample where they came alive. **Gated in both directions**, and that symmetry is the whole design: a **rise** at any time (the load MSFS spawns you with, a menu fuel set, a GSX uplift, a mid-sector top-up) contributes nothing, and a **decrease with the engines off** (a defuel or ground-crew activity during a turnaround) contributes nothing either. The reasoning cuts both ways — no engines means no burn, so a reading that moves down with them off is not fuel consumed and must not be charged. `LastFuelKg` updates unconditionally on every sample regardless of engine state, which is what lets a shutdown and restart mid-sector resume seamlessly without a second baseline.
+2. **Engines never observed running** (a sim that connected late, or a telemetry gap) — falls back to a plain `FirstSampleFuelKg` minus `LastFuelKg` subtraction.
+3. **No telemetry at all** — `null`.
 
-`TankeringAdvisor` (`FSOps.Core.Economy`) is a pure, advisory-only calculator surfaced on the Fly screen's flight brief: it compares uplifting extra fuel now (at the departure price, but burning a little more of it per the `Fuel.CostOfCarryRatePerHour` config constant - roughly 3% of the *extra* mass carried, per hour airborne) against buying nothing extra and refuelling at the destination's price, and flags if the extra fuel would exceed the aircraft's MTOW. It never touches the ledger itself. One documented gap: `FlightCostCalculator.LandingFee` is keyed off the aircraft type's fixed `MtowTonnes`, not the aircraft's actual operating weight at landing, so carrying tankered fuel does not raise the landing fee it will pay - cost-of-carry burn is the only counterweight the model can currently apply.
+**Resolving what to bill** (`Resolve(measuredBurnKg, plausibilityCeilingKg, fallbackKg)`): a figure is trusted only when positive and within 3× the ceiling (in practice the sector's own `FuelBreakdown.ChargedFuelKg`); otherwise the fallback is used. Ceiling and fallback are deliberately separate parameters, because they differ by caller: a completed sector (`FinalizeFlightAsync`, `CompleteManualAsync`, `VirtualFlightResolverService`) falls back to its **full planned charge**, while an abandoned flight falls back to **zero** — so abandoning before the engines ever start bills nothing at all.
+
+**Abandoning still costs.** `AbandonAsync` bills the burn accumulated up to that point rather than nothing, because the aircraft really did consume it, and because "escaping a bad sector must cost something" is a design rule the sunk fuel cost previously enforced.
+
+**Where it posts:** `FlightEconomicsPoster.PostFuelBurn` writes the `Fuel` ledger line at the departure airport's price, **unconditionally with respect to payability** — a slewed or position-jumped sector earns nothing but still pays for the fuel it burned. `FleetAircraft.FuelOnBoardKg` survives as purely informational state, synced from telemetry and never billed.
+
+**Removed with this model:** `FuelUpliftDetector`, `GroundFuelChangeKind`, `TankeringAdvisor`, and `BlockFuelEstimator`'s cost-of-carry mechanism, which existed solely to counterweight tankering. Tankering is no longer a mechanic: fuel cannot be bought cheap at one airport and carried to another, because carrying it is never what you pay for. Per-airport and regional price variation is deliberately **kept** — departing an expensive airport still costs more than a cheap one, which continues to shape hub choice; only the arbitrage disappeared.
 
 ## Maintenance scheduling
 
@@ -438,7 +445,7 @@ Two defects found while building it, both of the "looks like success" kind: the 
 
 ## Background work in FlightLifecycleService is gated on the sample, never the wall clock
 
-Every background task the flight tracker starts — ground-fuel detection, broadcasts, finalisation — is gated behind `ProcessSample`'s cadence, and that cadence is keyed off **the sample's own timestamp**, not `DateTimeOffset.Now`. This is not incidental. It is what allows a test that drives samples synchronously to control exactly when background work fires and to know it has finished before the test disposes its database connection.
+Every background task the flight tracker starts — broadcasts, finalisation — is gated behind `ProcessSample`'s cadence, and that cadence is keyed off **the sample's own timestamp**, not `DateTimeOffset.Now`. This is not incidental. It is what allows a test that drives samples synchronously to control exactly when background work fires and to know it has finished before the test disposes its database connection.
 
 Break that discipline and the failure does not look like a design mistake — it looks like flaky tests. A fire-and-forget database lookup started on real wall-clock timing at the moment tracking begins can still be mid-query when a test's `using var ctx` disposes the connection underneath it, producing `SQLite Error 5: unable to delete/modify user-function due to active statements` in whichever unrelated test happens to run alongside it. That is precisely how it was found: an eager fire-and-forget added for VATSIM corroboration made two unrelated ledger and fuel test classes fail intermittently, and the obvious reading was parallel-execution noise.
 

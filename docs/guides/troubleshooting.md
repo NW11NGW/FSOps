@@ -12,6 +12,7 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [My currency looks wrong](#my-currency-looks-wrong)
 - [Strategy profile figures won't load](#strategy-profile-figures-wont-load)
 - [My fare or revenue numbers look different than yesterday](#my-fare-or-revenue-numbers-look-different-than-yesterday)
+- [My fuel charge doesn't match what I expected, or the return leg wasn't free](#my-fuel-charge-doesnt-match-what-i-expected-or-the-return-leg-wasnt-free)
 - [Why did my passenger numbers drop](#why-did-my-passenger-numbers-drop)
 - [An aircraft is grounded for maintenance](#an-aircraft-is-grounded-for-maintenance)
 - [An aircraft can't be flown because it isn't reserved](#an-aircraft-cant-be-flown-because-it-isnt-reserved)
@@ -133,6 +134,14 @@ Range on its own is rarely the blocker, and it's worth knowing the three outcome
 **Cause:** This is expected, not a bug. Passenger demand for a route factors in the month (a seasonality curve — August, for example, is a stronger month than February) and the day of the week, and fuel prices drift day to day by a small, deterministic amount per airport (see [The economy simulation](user-guide.md#the-economy-simulation)). Flying the same route on a different real-world day can genuinely produce different numbers.
 
 **Solution:** Nothing to fix — if you want to sanity-check a figure, note the date you're comparing against, since demand and fuel price are both date-dependent by design.
+
+## My fuel charge doesn't match what I expected, or the return leg wasn't free
+
+**Symptom:** The fuel line on a report card is bigger or smaller than the flight brief's planned block fuel, or a return leg you flew straight back on wasn't free even though the aircraft landed with fuel still in the tank.
+
+**Cause:** Not a bug — this is how fuel billing works now. FSOps charges each sector for what it actually **burned**, at the departure airport's price, not for a fixed planned figure and not for what's physically in the tank. That means: a sector that burns more than the plan expected (a longer taxi, more holding) costs more; one that burns less costs less; and a return leg is billed on its own burn from its own departure airport, independent of whatever fuel happened to be left over from the leg before it — see [Fuel billing](user-guide.md#fuel-billing) for the full explanation.
+
+**Solution:** Nothing to fix. If a figure looks wildly off rather than just different, check the report card's "Actual vs. planned" fuel figure against what the flight brief predicted — a large gap there (rather than a small, explainable one) is worth a second look, but day-to-day variation in what a sector actually burns is expected.
 
 ## Why did my passenger numbers drop
 

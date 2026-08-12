@@ -273,54 +273,18 @@ public static class FlightEndpoints
         db.Flights.Add(flight);
         fleetAircraft.Status = FleetAircraftStatus.InFlight;
 
-        // Fuel is a persisted asset on FleetAircraft.FuelOnBoardKg, charged when it's bought
-        // (uplifted), never on burn. Fuel already in the tanks has been paid for.
-        // Whatever's left in the tank from the last flight carries forward, so a return leg (or
-        // any sector) flown on fuel already on board posts no fuel charge at all here.
-        //
-        // RECONCILIATION (real path): if the sim is connected and has reported a sample recently,
-        // that reading is the one true source of "how much fuel is actually in the tank right
-        // now" - see FuelUpliftDetector. A rise since the tracked figure is charged as an uplift,
-        // at THIS airport's price (reconciliation happens at flight start, so "this airport" is
-        // the departure airport); a fall is silently absorbed as consumed, never credited. This is
-        // what catches fuel that changed while FSOps wasn't watching - the sim restarted, a menu
-        // fuel set, or (most commonly) the pilot topping off the tank before pressing "start
-        // flight" here. Once tracking begins, further live uplifts/defuels on the ground are
-        // caught the same way by FlightLifecycleService.ProcessSample.
-        //
-        // NO-TELEMETRY FALLBACK: with nothing to observe (sim not connected, or manual completion
-        // is this flight's only realistic path), this makes the same conservative assumption the
-        // interim fuel-honesty fix made: top up to exactly this sector's own normal requirement
-        // (FuelBreakdown.ChargedFuelKg - trip, taxi, contingency; deliberately NOT the
-        // alternate/reserve a real pilot would also load) if the tank doesn't already hold that
-        // much. This keeps every pre-existing balance figure unchanged for a fresh/untracked
-        // aircraft - a bigger top-up here would double-count a benefit (carrying genuinely-bought
-        // reserve fuel forward) that only a real, observed uplift is entitled to.
-        var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
-        var fuelUpliftCost = 0m;
+        // Fuel is no longer billed here at all - a sector is billed for what it actually burns, at
+        // the departure airport's price, once the burn is known (see
+        // FlightLifecycleService.FinalizeFlightAsync, FlightEndpoints.CompleteManualAsync, and
+        // AbandonAsync below). FuelOnBoardKg stays informational only (see its own doc): synced
+        // from a recent telemetry reading when one is available, so the Fleet page shows something
+        // real, but never invented and never a source of a charge in its own right.
         var recentSample = telemetry.LastSample;
         var sampleIsRecent = telemetry.LastSampleUtc is { } lastSampleUtc && now - lastSampleUtc <= TelemetryReconciliationWindow;
-
         if (recentSample is not null && sampleIsRecent)
         {
-            var change = FuelUpliftDetector.Classify(fleetAircraft.FuelOnBoardKg, recentSample.TotalFuelKg);
-            if (change == GroundFuelChangeKind.Uplift)
-            {
-                var deltaKg = FuelUpliftDetector.MagnitudeKg(fleetAircraft.FuelOnBoardKg, recentSample.TotalFuelKg);
-                fuelUpliftCost = FlightEconomicsPoster.PostFuelUplift(db, flight, economyConfig, departure, deltaKg, now, worldSeed);
-            }
-
-            // Uplift, defuel, or no change - the tracked figure now matches reality either way.
             fleetAircraft.FuelOnBoardKg = recentSample.TotalFuelKg;
         }
-        else if (fleetAircraft.FuelOnBoardKg < plan.FuelBreakdown.ChargedFuelKg)
-        {
-            var shortfallKg = plan.FuelBreakdown.ChargedFuelKg - fleetAircraft.FuelOnBoardKg;
-            fuelUpliftCost = FlightEconomicsPoster.PostFuelUplift(db, flight, economyConfig, departure, shortfallKg, now, worldSeed);
-            fleetAircraft.FuelOnBoardKg += shortfallKg;
-        }
-
-        flight.TotalCost = fuelUpliftCost;
 
         if (typeMismatch == true)
         {
@@ -342,7 +306,7 @@ public static class FlightEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes, fleetAircraft.FuelOnBoardKg);
+        lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes);
 
         // planSource/planMessage are informational only, alongside the flight's own fields - never
         // persisted (no schema change needed), just what the player has to be told plainly about
@@ -364,29 +328,65 @@ public static class FlightEndpoints
             return Results.BadRequest(new { error = $"Flight is {flight.Status} and cannot be abandoned." });
         }
 
-        // Grab whatever telemetry position is still live before StopTracking drops it - an
-        // abandoned flight never completed, so the aircraft normally stays exactly where it was,
-        // but if the sim clearly shows it moved (it took off and got abandoned mid-air, say) that
-        // move should still be reflected rather than pretending it's still at the gate.
+        // Grab whatever telemetry position - and measured fuel burn - is still live before
+        // StopTracking drops them. An abandoned flight never completed, so the aircraft normally
+        // stays exactly where it was, but if the sim clearly shows it moved (it took off and got
+        // abandoned mid-air, say) that move should still be reflected rather than pretending it's
+        // still at the gate. The measured burn is what lets the fuel-burn billing below charge for
+        // whatever was actually burned before the abandon, rather than nothing at all - an abandon
+        // before the engines ever started correctly measures as "nothing yet" (see
+        // FuelBurnResolver.Measure: no engine-start baseline was ever set).
         var lastSnapshot = lifecycle.GetActiveSnapshot(flight.Id);
+        var measuredBurnKg = lifecycle.GetActiveMeasuredBurnKg(flight.Id);
         lifecycle.StopTracking(flight.Id);
         flight.Status = FlightStatus.Abandoned;
         await RevertFleetAircraftAsync(db, flight, lastSnapshot, ct);
 
-        // Reputation. From a passenger's
-        // point of view an abandoned sector never happened, exactly like a virtual pilot's
-        // occurrence that could never fly, so this reuses ReputationPoster.PostCancelledOrSkipped
-        // unchanged rather than inventing a fourth shape. The revenue/fuel loss already inherent to
-        // abandoning (no economics are ever posted for this status - see the structural absence of
-        // any FlightEconomicsPoster call anywhere in this method) is a separate financial
-        // consequence and is never treated as a substitute for a real reputation cost - without
-        // this, a flight running badly (late, heading for a hard landing) could always be abandoned
-        // instead of finished or even manually completed, taking zero reputation damage on top of
-        // whatever money was already lost.
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
         if (airline is not null)
         {
-            ReputationPoster.PostCancelledOrSkipped(airline, economyConfigCatalog.Get(airline.Playstyle));
+            var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+
+            // Fuel is still charged for what was actually burned before the abandon - "escaping a
+            // bad sector by abandoning it" must still cost something real, and the aircraft really
+            // did consume whatever it consumed. Unlike a normal completion, an unusable or missing
+            // reading here falls back to ZERO rather than the sector's full planned figure: the
+            // sector didn't necessarily go anywhere, so "we don't know how much was burned" must
+            // never be billed as "the whole sector's worth" - an abandon seconds after start bills
+            // approximately nothing, not a guess. Both paths share the exact same plausibility
+            // ceiling (the sector's own planned charge), so a genuinely bad reading - a sim reset,
+            // say - is caught identically either way; see FuelBurnResolver's own doc for why the
+            // ceiling and the fallback amount are separate parameters.
+            var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
+            var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
+            var aircraftType = fleetAircraft is not null ? await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId], ct) : null;
+            var departureAirport = route is not null ? await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct) : null;
+            var arrivalAirport = route is not null ? await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct) : null;
+
+            if (route is not null && aircraftType is not null && departureAirport is not null && arrivalAirport is not null)
+            {
+                var plan = RoutePreviewCalculator.Calculate(economyConfig, departureAirport, arrivalAirport, aircraftType, airline.StrategyProfile);
+                var resolution = FuelBurnResolver.Resolve(measuredBurnKg, plan.FuelBreakdown.ChargedFuelKg, fallbackKg: 0);
+
+                flight.FuelUsedKg = resolution.BilledKg;
+                if (resolution.BilledKg > 0)
+                {
+                    var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
+                    var fuelCost = FlightEconomicsPoster.PostFuelBurn(
+                        db, flight, economyConfig, departureAirport, resolution.BilledKg, DateTimeOffset.UtcNow, worldSeed);
+                    flight.TotalCost += fuelCost;
+                }
+            }
+
+            // Reputation. From a passenger's
+            // point of view an abandoned sector never happened, exactly like a virtual pilot's
+            // occurrence that could never fly, so this reuses ReputationPoster.PostCancelledOrSkipped
+            // unchanged rather than inventing a fourth shape. Whatever fuel was actually burned
+            // before the abandon (above) is a separate financial consequence and is never treated
+            // as a substitute for a real reputation cost - without this, a flight running badly
+            // (late, heading for a hard landing) could always be abandoned instead of finished or
+            // even manually completed, taking zero reputation damage regardless of what it cost.
+            ReputationPoster.PostCancelledOrSkipped(airline, economyConfig);
         }
 
         await db.SaveChangesAsync(ct);
@@ -426,6 +426,10 @@ public static class FlightEndpoints
         flight.OffUtc ??= flight.OutUtc;
         flight.OnUtc ??= now;
         flight.InUtc ??= now;
+        // A courtesy default in case route/aircraft data can't be resolved below - overwritten
+        // with the sector's own planned charge (FuelBreakdown.ChargedFuelKg, not the full
+        // FuelPlannedKg total, which includes alternate/reserve fuel a normal flight never burns)
+        // once the fuel-billing block further down can compute it properly.
         if (flight.FuelUsedKg <= 0)
         {
             flight.FuelUsedKg = flight.FuelPlannedKg;
@@ -497,11 +501,9 @@ public static class FlightEndpoints
             }
 
             // No reliable telemetry means no reliable fuel reading either (that's the whole
-            // reason this path exists) - rather than let the persisted asset drift from
-            // best-effort arithmetic, treat it as consumed and let the next flight's own
-            // StartAsync reconciliation (or its no-telemetry fallback) start the tank fresh. This
-            // stays conservative and honest instead of guessing at how much of the fuel bought at
-            // start actually got burned.
+            // reason this path exists) - informational only now (see FleetAircraft.FuelOnBoardKg's
+            // own doc), so rather than let it drift from best-effort arithmetic, treat it as
+            // consumed and let the next flight sync it fresh from whatever the sim reports then.
             fleetAircraft.FuelOnBoardKg = 0;
         }
 
@@ -511,11 +513,26 @@ public static class FlightEndpoints
         // was ever captured to score one. Skips quietly (no ledger lines) if any of the data an
         // economics calculation needs isn't resolvable - better to post nothing than guess.
         var arrivalAirport = route is not null ? await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct) : null;
+        var departureAirport = route is not null ? await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct) : null;
         var aircraftType = fleetAircraft is not null ? await db.AircraftTypes.FindAsync([fleetAircraft.AircraftTypeId], ct) : null;
 
         if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
         {
             var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+
+            // No telemetry on this path means no measured burn either - bill the sector's own
+            // planned charge outright, the same conservative assumption every other no-telemetry
+            // path in this app makes (see FuelBreakdown.ChargedFuelKg's own doc).
+            if (departureAirport is not null)
+            {
+                var plan = RoutePreviewCalculator.Calculate(economyConfig, departureAirport, arrivalAirport, aircraftType, airline.StrategyProfile);
+                flight.FuelUsedKg = plan.FuelBreakdown.ChargedFuelKg;
+                var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
+                var fuelCost = FlightEconomicsPoster.PostFuelBurn(
+                    db, flight, economyConfig, departureAirport, flight.FuelUsedKg, now, worldSeed);
+                flight.TotalCost += fuelCost;
+            }
+
             await FlightEconomicsPoster.PostCompletionAsync(
                 db, flight, airline, route, aircraftType, arrivalAirport, economyConfig, flightHours, now, ct);
         }
@@ -928,8 +945,9 @@ public static class FlightEndpoints
 
         // The most recent reading actually observed for this attempt - more accurate than
         // whatever was known at flight start, since the aircraft may have burned fuel (or been
-        // topped up again) before it was abandoned. Fuel already bought is never refunded, so
-        // this only ever syncs the tracked figure to reality, never reverses a charge.
+        // topped up again) before it was abandoned. Informational only (see
+        // FleetAircraft.FuelOnBoardKg's own doc) - AbandonAsync bills whatever was actually
+        // burned separately, before this method runs.
         fleetAircraft.FuelOnBoardKg = Math.Max(0, lastSnapshot.FuelRemainingKg);
 
         var candidateAirports = await AirportProximityQueries.NearbyAsync(db, lastSnapshot.LatitudeDeg, lastSnapshot.LongitudeDeg, ct);

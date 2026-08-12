@@ -103,15 +103,14 @@ public static class RouteEndpoints
                 economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile, rangeCandidates, runwayCandidates);
             warnings.AddRange(result.Validation.Warnings);
 
-            // Fuel price must be visible before departure so tankering is an informed decision -
-            // fuel prices vary by region, and a hidden price makes the decision a guess.
-            // Priced "today" (UtcNow) since
-            // this is what the player would pay uplifting right now, not at the scheduled departure
-            // time. World seed falls back the same way FlightEconomicsPoster does - see its doc.
+            // Fuel price must be visible before departure - this is what the sector will actually
+            // be billed per kg of burn, since a sector is charged at the departure airport's price.
+            // Priced "today" (UtcNow) since this is what the player would be charged departing
+            // right now, not at the scheduled departure time. World seed falls back the same way
+            // FlightEconomicsPoster does - see its doc.
             var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
             var priceNowUtc = DateTimeOffset.UtcNow;
             var fuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, departure.Icao, departure.Country, priceNowUtc, worldSeed);
-            var destinationFuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, arrival.Icao, arrival.Country, priceNowUtc, worldSeed);
 
             // The live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
             // sector" readout - the real DemandCalculator/FareDemandModel engine, not the rough
@@ -121,9 +120,6 @@ public static class RouteEndpoints
             // design: the simulation is the guardrail, not an input cap. A player who prices badly
             // watches the load factor collapse in the readout instead of being refused.
             object? economics = null;
-            // Also feeds the tankering advisory's MTOW check below - falls back to full capacity
-            // (the more conservative assumption) when there's no live demand-modelled booking yet.
-            var expectedPassengersForMtowCheck = aircraftType.PaxCapacity;
             if (airline is not null && !result.Validation.SameAirport && result.DistanceNm > 0)
             {
                 var fare = request.Fare is decimal requestedFare && requestedFare > 0 ? requestedFare : result.SuggestedFare;
@@ -143,36 +139,6 @@ public static class RouteEndpoints
                     loadFactorPercent = Math.Round(booking.LoadFactor * 100, 1),
                     expectedRevenuePerSector = booking.Revenue,
                 };
-                expectedPassengersForMtowCheck = booking.PaxBooked;
-            }
-
-            // Advisory only, never automatic or enforced - the player decides.
-            // Modelled as "uplift enough extra here, on top of what this leg needs
-            // anyway, to also cover a same-distance return leg" - routes in this app are always
-            // bidirectional pairs, which is what makes tankering meaningful in the first place, so
-            // the return leg's own normal requirement is the same great-circle distance's own
-            // FuelBreakdown.TotalFuelKg, computed above for this very preview.
-            object? tankeringAdvisory = null;
-            if (!result.Validation.SameAirport && result.DistanceNm > 0 && result.FuelBreakdown.TotalFuelKg > 0)
-            {
-                var airborneHours = (result.BlockTimeBreakdown.ClimbMinutes + result.BlockTimeBreakdown.CruiseMinutes + result.BlockTimeBreakdown.DescentMinutes) / 60.0;
-
-                var advisory = TankeringAdvisor.Evaluate(
-                    economyConfig, fuelPricePerKg, destinationFuelPricePerKg, result.FuelBreakdown.TotalFuelKg,
-                    airborneHours, result.FuelBreakdown.TotalFuelKg, expectedPassengersForMtowCheck, aircraftType.MtowTonnes);
-
-                tankeringAdvisory = new
-                {
-                    departurePricePerKg = advisory.DeparturePricePerKg,
-                    destinationPricePerKg = advisory.DestinationPricePerKg,
-                    extraFuelToCarryKg = Math.Round(advisory.ReturnLegFuelRequirementKg, 0),
-                    costOfCarryKg = Math.Round(advisory.CostOfCarryKg, 0),
-                    costOfCarryAmount = advisory.CostOfCarryAmount,
-                    grossSavingAmount = advisory.GrossSavingAmount,
-                    netSavingAmount = advisory.NetSavingAmount,
-                    recommended = advisory.Recommended,
-                    exceedsMtow = advisory.ExceedsMtow,
-                };
             }
 
             return Results.Ok(new
@@ -185,8 +151,6 @@ public static class RouteEndpoints
                 blockFuelKg = Math.Round(result.FuelBreakdown.TotalFuelKg, 0),
                 fuelBreakdown = result.FuelBreakdown,
                 fuelPricePerKg,
-                destinationFuelPricePerKg,
-                tankeringAdvisory,
                 suggestedFare = result.SuggestedFare,
                 economics,
                 greatCirclePath = result.GreatCirclePath.Select(p => new[] { p.Lon, p.Lat }),
@@ -268,8 +232,6 @@ public static class RouteEndpoints
         blockFuelKg = 0.0,
         fuelBreakdown = (object?)null,
         fuelPricePerKg = (decimal?)null,
-        destinationFuelPricePerKg = (decimal?)null,
-        tankeringAdvisory = (object?)null,
         suggestedFare = 0m,
         economics = (object?)null,
         greatCirclePath = Array.Empty<double[]>(),

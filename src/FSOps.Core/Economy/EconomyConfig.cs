@@ -1020,22 +1020,6 @@ public sealed class FuelConfig
     /// <summary>Trailing window (days) averaged to produce the walk - larger means smoother,
     /// slower-moving prices.</summary>
     public int NoiseWindowDays { get; init; } = 5;
-
-    /// <summary>
-    /// "Cost of carry" - the real-world rule of thumb for how much extra fuel it costs to haul
-    /// extra fuel: roughly this fraction of the EXTRA fuel mass (carried beyond what the sector
-    /// itself would normally need) burned per hour it stays on board. 0.03 = ~3% of the excess
-    /// mass per hour of carriage, e.g. 2,000 kg of tankered fuel carried for two hours burns
-    /// about 120 kg extra. This is the ONLY counterweight to fuel tankering and has to do the whole
-    /// job alone: landing fees are charged against the airframe's fixed certificated MTOW, not the
-    /// weight on the day, so a tankered sector pays exactly the same landing fee as an empty one.
-    /// If tankering ever looks too strong, this rate is the lever - never the landing fee.
-    /// Applied only to fuel carried BEYOND a sector's own normal requirement (see
-    /// BlockFuelEstimator.Estimate's extraCarriedFuelKg parameter) - a normal, non-tankering
-    /// flight's block fuel and cost are completely unaffected by this constant, which is the
-    /// gate BlockFuelEstimatorWeightPenaltyTests asserts.
-    /// </summary>
-    public double CostOfCarryRatePerHour { get; init; } = 0.03;
 }
 
 public sealed class CostConfig

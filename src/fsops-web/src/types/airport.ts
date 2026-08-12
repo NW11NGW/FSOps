@@ -26,8 +26,9 @@ export interface Runway {
 
 export interface AirportDetail extends AirportSummary {
   runways: Runway[]
-  /** Current price per kg at this airport. Fuel prices vary by region, which is what makes
-   *  tankering worthwhile, so the figure has to be visible before departure. */
+  /** Current price per kg at this airport. Fuel prices vary by region - departing an expensive
+   *  airport costs more than a cheap one, since a sector is billed for its burn at the departure
+   *  airport's price, so the figure has to be visible before departure. */
   fuelPricePerKg: number
 }
 

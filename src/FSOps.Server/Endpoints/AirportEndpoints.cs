@@ -69,8 +69,9 @@ public static class AirportEndpoints
         }
 
         // Fuel price on airport detail, same source RouteEndpoints.PreviewAsync's flight brief
-        // uses. The price has to be visible before departure or tankering is a guess. Works before an airline
-        // exists too (Casual is a neutral default - fuel pricing doesn't vary by playstyle).
+        // uses. The price has to be visible before departure, since it's what a sector departing
+        // here will actually be billed per kg burned. Works before an airline exists too (Casual
+        // is a neutral default - fuel pricing doesn't vary by playstyle).
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         var economyConfig = economyConfigCatalog.Get(airline?.Playstyle ?? AirlinePlaystyle.Casual);
         var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
