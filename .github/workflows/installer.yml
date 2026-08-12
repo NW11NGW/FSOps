@@ -1,0 +1,208 @@
+name: Installer
+
+# Separate from CI on purpose. This job publishes FSOps self-contained (~190 MB) and compiles the
+# installer, so it is several times slower than the test run - putting it on every push would make
+# the fast feedback slow for no benefit. It runs only when something it actually covers changes.
+#
+# This is NOT a release workflow. It builds an installer, proves it works, and throws it away.
+# Nothing is tagged, no release is created, and no artefact leaves the runner. Publishing releases
+# waits on a real end-to-end test in the simulator, which no CI can perform.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - 'scripts/**'
+      - 'src/FSOps.Desktop/**'
+      - 'src/FSOps.Server/FSOps.Server.csproj'
+      - 'Directory.Build.props'
+      - '.github/workflows/installer.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - 'scripts/**'
+      - 'src/FSOps.Desktop/**'
+      - 'src/FSOps.Server/FSOps.Server.csproj'
+      - 'Directory.Build.props'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-install:
+    # Same reasoning as CI: SimConnect's native x64 libraries and the net461 FsConnect wrapper mean
+    # the solution does not restore on Linux. Inno Setup is Windows-only regardless.
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Node 24, in step with CI and with the version the project is developed on - publish.ps1
+      # builds the SPA, so this job needs the same runtime the SPA is normally built with.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/fsops-web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: src/fsops-web
+        run: npm ci
+
+      # The whole reason this workflow exists. Inno Setup is not installed on the development
+      # machine, so before this job the .iss had never been compiled by anything - it was validated
+      # only by reading it against the documentation.
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # Publishes self-contained, compiles the .iss, and writes the SHA-256 sidecar. The sidecar is
+      # not decoration: the in-app update checker fetches it before downloading anything and refuses
+      # to offer an in-app download at all without it.
+      - name: Build the installer
+        shell: pwsh
+        run: .\installer\build-installer.ps1
+
+      - name: Record what was built
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem artifacts\installer\FSOps-Setup-*.exe | Select-Object -First 1
+          $checksum  = Get-ChildItem artifacts\installer\FSOps-Setup-*.exe.sha256 | Select-Object -First 1
+          if (-not $installer) { throw 'No installer was produced.' }
+          if (-not $checksum)  { throw 'No .sha256 sidecar was produced - every user''s in-app updater would degrade to a link.' }
+          "installer : $($installer.Name) ($([math]::Round($installer.Length/1MB,1)) MB)"
+          "checksum  : $(Get-Content $checksum.FullName -Raw)"
+          "INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
+
+      # A sentinel standing in for the user's airline. Uninstalling must never remove this: the
+      # data directory holds the database, and someone's whole airline lives in it. Silent uninstall
+      # skips the optional removal prompt entirely, so surviving here is the expected behaviour and
+      # is worth pinning rather than assuming.
+      - name: Plant a sentinel in the data directory
+        shell: pwsh
+        run: |
+          $dataDir = Join-Path $env:LOCALAPPDATA 'FSOps'
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          'do not delete me' | Out-File (Join-Path $dataDir 'sentinel.txt') -Encoding ascii
+          "planted in $dataDir"
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath $env:INSTALLER_PATH `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with $($p.ExitCode)." }
+          'setup completed'
+
+      # Assert on real content, never on the fact that a file exists with the right name. The SPA
+      # fallback page returns a perfectly good HTTP 200 saying "UI not built yet", and a wwwroot
+      # containing that instead of the app is exactly the failure this has to catch.
+      - name: Check what actually landed
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          if (-not (Test-Path $installDir)) { throw "Nothing was installed at $installDir." }
+
+          $required = @(
+            'FSOps.Desktop.exe',
+            'FSOps.Server.exe',
+            'WebView2Loader.dll',
+            'economy-config.json',
+            'wwwroot\index.html',
+            'PanelTemplate\manifest.json',
+            'PanelTemplate\InGamePanels\FSOpsPanel.spb'
+          )
+          foreach ($rel in $required) {
+            $full = Join-Path $installDir $rel
+            if (-not (Test-Path $full)) { throw "Missing from the install: $rel" }
+          }
+
+          # WebView2Loader.dll at the ROOT is load-bearing and separate from the copy under
+          # runtimes\. It ships as plain content, never appears in .deps.json, and a self-contained
+          # build has no NuGet cache to fall back on - omitting it fails before a window exists.
+          $loader = Get-Item (Join-Path $installDir 'WebView2Loader.dll')
+          if ($loader.Length -lt 1000) { throw 'WebView2Loader.dll at the root looks truncated.' }
+
+          $index = Get-Content (Join-Path $installDir 'wwwroot\index.html') -Raw
+          if ($index -notmatch 'id="root"') { throw 'wwwroot\index.html is not the real SPA.' }
+          if ($index -match 'UI not built yet') { throw 'wwwroot contains the placeholder page.' }
+
+          "installed files verified ($installDir)"
+
+      # Launch the SERVER from the installed location, not from a build output. A bug invisible
+      # under "dotnet run" once broke the direct-exe launch and would have shipped a blank app,
+      # because the content root resolves differently. The desktop shell is deliberately not
+      # launched here - it opens a real window, and a GUI on a CI runner proves little while
+      # failing unpredictably.
+      - name: Run the installed server and check it serves the real UI
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          $env:FSOPS_DATA_DIR  = Join-Path $env:RUNNER_TEMP 'fsops-ci-data'
+          $env:FSOPS_NO_BROWSER = '1'
+          $env:FSOPS_PORT = '5987'
+
+          $server = Start-Process -FilePath (Join-Path $installDir 'FSOps.Server.exe') `
+                                  -WorkingDirectory $installDir -PassThru
+          try {
+            $ok = $false
+            foreach ($attempt in 1..40) {
+              Start-Sleep -Seconds 3
+              try {
+                $r = Invoke-WebRequest -Uri 'http://localhost:5987/' -UseBasicParsing -TimeoutSec 10
+                if ($r.Content -match 'id="root"' -and $r.Content -notmatch 'UI not built yet') {
+                  $ok = $true
+                  break
+                }
+              } catch { }
+            }
+            if (-not $ok) { throw 'The installed server never served the real SPA.' }
+
+            $health = (Invoke-WebRequest -Uri 'http://localhost:5987/api/v1/health' -UseBasicParsing -TimeoutSec 10).Content
+            "health: $health"
+            if ($health -notmatch '"status":"ok"') { throw 'Health endpoint did not report ok.' }
+          }
+          finally {
+            # Only ever stop the process this step started, by the PID it captured.
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: Uninstall silently
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          $uninstaller = Get-ChildItem (Join-Path $installDir 'unins*.exe') | Select-Object -First 1
+          if (-not $uninstaller) { throw "No uninstaller found in $installDir." }
+
+          $p = Start-Process -FilePath $uninstaller.FullName `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall exited with $($p.ExitCode)." }
+
+          # Inno's uninstaller returns as soon as it has handed off, so the folder can linger briefly.
+          foreach ($attempt in 1..20) {
+            if (-not (Test-Path (Join-Path $installDir 'FSOps.Desktop.exe'))) { break }
+            Start-Sleep -Seconds 2
+          }
+          if (Test-Path (Join-Path $installDir 'FSOps.Desktop.exe')) {
+            throw 'FSOps.Desktop.exe is still present after uninstalling.'
+          }
+          'uninstall completed'
+
+      # The single most important assertion in this workflow. An installer that removes the user's
+      # airline on uninstall is the one mistake here with no recovery.
+      - name: The user's data must have survived
+        shell: pwsh
+        run: |
+          $sentinel = Join-Path $env:LOCALAPPDATA 'FSOps\sentinel.txt'
+          if (-not (Test-Path $sentinel)) {
+            throw 'UNINSTALL DELETED THE DATA DIRECTORY. On a real machine that is somebody''s airline.'
+          }
+          'data directory survived the uninstall'
