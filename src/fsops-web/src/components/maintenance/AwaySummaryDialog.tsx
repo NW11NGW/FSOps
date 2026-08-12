@@ -58,6 +58,14 @@ function unresolvedStatusLabel(status: UnflyableOccurrenceSummary['status']): { 
   return { label: 'Skipped', variant: 'warning' }
 }
 
+/** e.g. "EconomyClockService" -> "Economy clock" - the raw service name is an implementation
+ *  detail; the player needs "what area of the app", not the class that happens to run it. */
+function catchUpServiceLabel(service: string): string {
+  if (service === 'EconomyClockService') return 'Billing (lease, salary, insurance)'
+  if (service === 'VirtualFlightResolverService') return 'Virtual pilot flights'
+  return service
+}
+
 /**
  * "While you were away" - the app has to explain catch-up, or months of bills arriving at once
  * looks exactly like a bug. On startup after a real
@@ -76,6 +84,12 @@ export function AwaySummaryDialog() {
   }
 
   const netIsPositive = summary.netLedgerChange >= 0
+  // sinceUtc === untilUtc only for a zero-length window the server invents when there's a startup
+  // finding (a reconciled reservation, a failed catch-up pass) but no genuine away-gap to report -
+  // e.g. a reload seconds after the app started. "Closed for 0m" would read as broken, so this case
+  // gets its own, gap-free framing instead.
+  const hasAwayGap = summary.sinceUtc !== summary.untilUtc
+  const reservationChanges = summary.reservationChanges
 
   return (
     <Dialog open onOpenChange={(next) => !next && acknowledge()}>
@@ -83,11 +97,65 @@ export function AwaySummaryDialog() {
         <DialogHeader>
           <DialogTitle>While you were away</DialogTitle>
           <DialogDescription>
-            The airline kept running on the wall clock - closed for {formatAwayDuration(summary.awayHours)}. Here's what happened.
+            {hasAwayGap
+              ? `The airline kept running on the wall clock - closed for ${formatAwayDuration(summary.awayHours)}. Here's what happened.`
+              : "Something needs your attention from startup."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {summary.catchUpFailures.length > 0 && (
+            <div className="space-y-1.5 rounded-md border border-danger/30 bg-danger/5 p-3">
+              <p className="text-xs font-medium text-danger">
+                Catch-up didn't finish - figures below may be incomplete
+              </p>
+              <p className="text-xs text-muted-foreground">
+                It will retry automatically; nothing to do here, but the balance may not yet reflect everything.
+              </p>
+              <div className="space-y-1 pt-1">
+                {summary.catchUpFailures.map((f, i) => (
+                  <div key={i} className="text-sm">
+                    <span className="font-medium">{catchUpServiceLabel(f.service)}</span>
+                    <span className="text-muted-foreground"> - {f.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {reservationChanges && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">Reservation changes</p>
+              <div className="space-y-1.5">
+                {reservationChanges.released.map((r) => (
+                  <div key={r.fleetAircraftId} className="rounded-md border border-border p-2 text-sm">
+                    <span className="font-medium">{r.registration}</span>
+                    <span className="text-muted-foreground">
+                      {' '}
+                      was released from your reservation - it has {r.scheduledLegCount} scheduled leg
+                      {r.scheduledLegCount === 1 ? '' : 's'}, and the schedule takes priority.
+                    </span>
+                  </div>
+                ))}
+                {reservationChanges.fallbackReserved.map((f) => (
+                  <div key={f.fleetAircraftId} className="rounded-md border border-border p-2 text-sm">
+                    <span className="font-medium">{f.registration}</span>
+                    <span className="text-muted-foreground"> was reserved for you instead.</span>
+                  </div>
+                ))}
+                {reservationChanges.leftWithNoReservedAircraft && (
+                  <div className="rounded-md border border-warning/30 bg-warning/10 p-2 text-sm">
+                    <Badge variant="warning">Action needed</Badge>
+                    <p className="mt-1 text-muted-foreground">
+                      Every remaining aircraft in your fleet already has a schedule, so none could be reserved for
+                      you automatically. Reserve one on the Fleet screen.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between rounded-md border border-border p-3">
             <div>
               <p className="text-xs text-muted-foreground">Net effect</p>

@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { BarChart3, Building2, Clock, DollarSign, Gauge, Plane } from 'lucide-react'
+import { BarChart3, Building2, Clock, DollarSign, Gauge, Plane, RadioTower } from 'lucide-react'
 
 import { ChartSkeleton } from '@/components/stats/ChartSkeleton'
 import { ExportCsvButton } from '@/components/stats/ExportCsvButton'
@@ -63,6 +63,14 @@ export function Stats() {
   const avgLoadFactor = average(overview.performance.map((p) => p.loadFactorPercent).filter((v): v is number => v !== null))
   const avgUtilisation = average(overview.fleet.map((a) => a.utilisationPercent))
 
+  // VatsimOnline is three-valued: null means FSOps never checked this sector (no CID configured,
+  // the feature was off, or the feed was unreachable), which is not the same as false ("checked
+  // and never matched"). onlineEligibleSectorsFlown already excludes the null case server-side, so
+  // this percentage is only ever taken over sectors that were actually checked - a flight flown
+  // before this feature existed, or with detection off, drops out of both sides of the fraction
+  // instead of counting as "not online".
+  const onlinePercent = overview.onlineEligibleSectorsFlown === 0 ? null : Math.round((100 * overview.onlineSectorsFlown) / overview.onlineEligibleSectorsFlown)
+
   const hasPerformanceData = overview.performance.length > 0
   const hasFinanceData = overview.routes.length > 0 || (overview.costs !== null && (overview.costs.revenue.total !== 0 || overview.costs.fixed.total !== 0 || overview.costs.variable.total !== 0))
 
@@ -106,6 +114,12 @@ export function Stats() {
           label="Fleet utilisation"
           value={loading ? undefined : avgUtilisation === null ? 'No aircraft' : `${avgUtilisation.toFixed(0)}%`}
           icon={BarChart3}
+          loading={loading}
+        />
+        <StatTile
+          label="Flown online"
+          value={loading ? undefined : onlinePercent === null ? 'Not tracked' : `${onlinePercent}% (${overview.onlineSectorsFlown}/${overview.onlineEligibleSectorsFlown})`}
+          icon={RadioTower}
           loading={loading}
         />
       </div>

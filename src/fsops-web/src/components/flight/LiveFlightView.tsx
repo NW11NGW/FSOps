@@ -53,7 +53,15 @@ export function LiveFlightView({ flight, live, telemetry, hubConnected, departur
   const planned = live?.plannedBlockMinutes ?? flight.plannedBlockMinutes
   const progressPercent = planned > 0 ? Math.min(100, (elapsed / planned) * 100) : 0
   const deltaMinutes = elapsed - planned
-  const aheadOfSchedule = deltaMinutes < 0
+  // Block time only starts counting once the aircraft is off blocks (FlightPhaseStateMachine
+  // sets OutUtc on the Preflight -> TaxiOut transition; the server reports elapsed as exactly 0
+  // until then). Before that, "elapsed - planned" is just "0 minus the whole planned block time",
+  // which reads as a huge false "ahead of plan" the instant a flight starts - there is no plan to
+  // be ahead of yet since nothing has happened. Treat still-at-the-gate the same as "on schedule"
+  // rather than computing a delta against zero elapsed time.
+  const offBlocks = currentPhase !== 'Preflight'
+  const aheadOfSchedule = offBlocks && deltaMinutes < 0
+  const onSchedule = !offBlocks || Math.abs(deltaMinutes) < 2
 
   const aircraftPoint =
     live && telemetry
@@ -117,8 +125,8 @@ export function LiveFlightView({ flight, live, telemetry, hubConnected, departur
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
-              <p className={cn('text-xs font-medium', aheadOfSchedule ? 'text-success' : Math.abs(deltaMinutes) < 2 ? 'text-muted-foreground' : 'text-warning')}>
-                {Math.abs(deltaMinutes) < 2
+              <p className={cn('text-xs font-medium', aheadOfSchedule ? 'text-success' : onSchedule ? 'text-muted-foreground' : 'text-warning')}>
+                {onSchedule
                   ? 'On schedule'
                   : `${Math.round(Math.abs(deltaMinutes))} min ${aheadOfSchedule ? 'ahead of' : 'behind'} plan`}{' '}
                 <span className="text-muted-foreground">· {fmt.duration(planned)} planned</span>

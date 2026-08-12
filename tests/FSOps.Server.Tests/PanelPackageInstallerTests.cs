@@ -435,6 +435,42 @@ public sealed class PanelPackageInstallerTests : IDisposable
         Assert.False(status.Installed);
     }
 
+    /// <summary>
+    /// The port FSOps is running on is knowable before any Community folder has ever been chosen -
+    /// it's a fact about this server, not about the install. Regression for the response reporting
+    /// ExpectedPort as null in this state even though ResolveConfiguredPort answers it fine.
+    /// </summary>
+    [Fact]
+    public void GetStatus_StillReportsTheExpectedPort_WhenNoPathIsConfigured()
+    {
+        var status = PanelPackageInstaller.GetStatus(null, "5978");
+        Assert.Equal("5978", status.ExpectedPort);
+    }
+
+    /// <summary>Same fact, same reasoning, for the two other early-return states in GetStatus - a
+    /// path that fails validation, and a previously-configured folder that no longer exists.</summary>
+    [Fact]
+    public void GetStatus_StillReportsTheExpectedPort_WhenThePathIsInvalid()
+    {
+        var status = PanelPackageInstaller.GetStatus(Path.Combine(_communityFolder, "..", "NotCommunity"), "5978");
+        Assert.False(status.Success);
+        Assert.Equal("5978", status.ExpectedPort);
+    }
+
+    [Fact]
+    public void GetStatus_StillReportsTheExpectedPort_WhenTheConfiguredFolderNoLongerExists()
+    {
+        var deleted = Path.Combine(_communityFolder, "GoneMissing", "Community");
+        Directory.CreateDirectory(deleted);
+        // Deleted after being validated once, same as a player who moved or reinstalled MSFS.
+        Directory.Delete(deleted);
+
+        var status = PanelPackageInstaller.GetStatus(deleted, "5978");
+
+        Assert.False(status.Success);
+        Assert.Equal("5978", status.ExpectedPort);
+    }
+
     [Fact]
     public void GetStatus_ReflectsWhatIsActuallyOnDisk_AfterInstall()
     {

@@ -132,12 +132,17 @@ export interface LegOptionsRequest {
   draftDutyDays?: DutyDayInput[] | null
 }
 
-/** A route that can legally depart at the queried day/time/aircraft. */
+/** A route that can legally depart at the queried day/time/aircraft. `blockMinutes` is computed
+ *  against THIS specific aircraft (see PilotEndpoints.GetLegOptionsAsync) - the same figure a save
+ *  will resolve to, never a route-level default from a different aircraft type. Null only if the
+ *  backend's own lookup came up empty (e.g. world data gap) - callers should fall back the same way
+ *  a saved leg's `ScheduleLeg.blockMinutes` does. */
 export interface LegalLegOption {
   routeId: string
   departureIcao: string
   arrivalIcao: string
   flightNumber: string | null
+  blockMinutes: number | null
 }
 
 /** A route considered and rejected for the queried day/time/aircraft, with the backend's reason -

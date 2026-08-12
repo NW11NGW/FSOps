@@ -382,17 +382,24 @@ public static class PanelPackageInstaller
     /// </summary>
     public static PanelOperationResult GetStatus(string? path, string port, string? templateDirectory = null)
     {
+        // The port is a fact about this running FSOps server, not about whether a Community folder
+        // has been chosen yet - every return below carries it, including the refusals, so the
+        // player (and MsfsPanelSection's port-mismatch check) can always answer "what port would
+        // the panel be pointed at" even before anything is configured or installed.
         if (string.IsNullOrWhiteSpace(path))
         {
             return new PanelOperationResult(
                 true, null, false, null, null, ExpectedPanelVersion, false, false, 0,
-                "No Community folder configured yet.");
+                "No Community folder configured yet.", null, port);
         }
 
         var validation = ValidateCommunityFolder(path);
         if (!validation.Valid || validation.ResolvedPath is null)
         {
-            return PanelOperationResult.Refused(validation.Reason ?? "Invalid Community folder.");
+            var reason = validation.Reason ?? "Invalid Community folder.";
+            return new PanelOperationResult(
+                false, reason, false, null, null, ExpectedPanelVersion, false, false, 0,
+                reason, null, port);
         }
 
         // A configured folder that has since been deleted is its own state, and a far more useful
@@ -400,9 +407,11 @@ public static class PanelPackageInstaller
         // wonder why the panel never turns up.
         if (!validation.Exists)
         {
-            return PanelOperationResult.Refused(
-                $"The Community folder FSOps is set to no longer exists: {validation.ResolvedPath}. " +
-                "If you've reinstalled or moved Microsoft Flight Simulator, choose the new folder below.");
+            var reason = $"The Community folder FSOps is set to no longer exists: {validation.ResolvedPath}. " +
+                "If you've reinstalled or moved Microsoft Flight Simulator, choose the new folder below.";
+            return new PanelOperationResult(
+                false, reason, false, null, null, ExpectedPanelVersion, false, false, 0,
+                reason, null, port);
         }
 
         var target = ResolveWriteTarget(validation.ResolvedPath);
@@ -410,7 +419,7 @@ public static class PanelPackageInstaller
         {
             return new PanelOperationResult(
                 true, null, false, target, null, ExpectedPanelVersion, false, false, 0,
-                "Not installed yet.");
+                "Not installed yet.", null, port);
         }
 
         var installedVersion = ReadManifestVersion(target);

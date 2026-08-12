@@ -156,7 +156,11 @@ export function PerformMaintenanceDialog({ fleetAircraftId, onOpenChange, onSucc
             disabled={submitting || status !== 'ready' || !quote?.canPerform || !selectedQuote}
             variant="destructive"
           >
-            {submitting ? 'Grounding…' : selectedQuote ? `Ground now - ${fmt.money(selectedQuote.cost)}` : 'Perform now'}
+            {submitting
+              ? 'Grounding…'
+              : quote?.canPerform && selectedQuote
+                ? `Ground now - ${fmt.money(selectedQuote.cost)}`
+                : 'Perform now'}
           </Button>
         </DialogFooter>
       </DialogContent>

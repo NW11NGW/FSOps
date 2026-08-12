@@ -43,12 +43,12 @@ function stubQuote(respond: () => Promise<unknown>) {
 /**
  * The dialog's confirm button, whatever it currently calls itself.
  *
- * It is labelled "Ground now - <cost>" whenever a quote for the selected check type exists, and
- * only falls back to "Perform now" when none does - which includes the blocked case, where the
- * button stays priced but disabled. That is a little odd to read (a price on an action you cannot
- * take) but it is not wrong: the button is genuinely disabled, and the block reason is stated
- * right above it. Matching on either label keeps that presentational choice out of the assertions
- * that are actually about whether the control can be used.
+ * It is labelled "Ground now - <cost>" only when the quote is actually performable; every other
+ * state - still loading, failed to load, or blocked outright - falls back to "Perform now" with no
+ * figure attached. A price on an action the player cannot take reads as "this is what it will cost
+ * you" even though nothing is at risk, so the label withholds the number whenever the button is
+ * disabled for that reason. Matching on either label keeps that presentational choice out of the
+ * assertions that are actually about whether the control can be used.
  */
 function confirmButton(): HTMLElement {
   return getByRole(document.body, 'button', { name: /^(Ground now|Perform now)/ })
@@ -118,6 +118,20 @@ describe('PerformMaintenanceDialog - when maintenance is blocked', () => {
     unmount()
   })
 
+  it('does not price an action the player cannot take', async () => {
+    stubQuote(async () => quote({ canPerform: false, blockReason: 'G-ABCD is airborne on FSO204.' }))
+
+    const { unmount } = await render()
+
+    // A quote exists (the A-check quote is right there in the stub), but the button must not
+    // show its cost while the action itself is blocked - that would read as a price on something
+    // the player could actually do.
+    expect(queryByRole(document.body, 'button', { name: /^Ground now/ })).toBeNull()
+    expect(getByRole(document.body, 'button', { name: 'Perform now' })).toBeTruthy()
+
+    unmount()
+  })
+
   it('shows the block reason instead of the check details a player could act on', async () => {
     stubQuote(async () => quote({ canPerform: false, blockReason: 'G-ABCD is airborne.' }))
 
@@ -126,8 +140,7 @@ describe('PerformMaintenanceDialog - when maintenance is blocked', () => {
     const body = text(document.body)
     expect(body).toContain('G-ABCD is airborne.')
     // The quote panel itself is withheld: no tabs to pick a check, no downtime, no forfeiture
-    // warning. (The confirm button does still carry the A-check price while disabled - see the
-    // note on `confirmButton`.)
+    // warning.
     expect(body).not.toContain('Hours since last check')
     expect(body).not.toContain('are forfeited, not refunded')
 

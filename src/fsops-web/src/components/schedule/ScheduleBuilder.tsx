@@ -27,7 +27,6 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useFleetLite, useSchedule, fetchAircraftOptions, fetchLegOptions } from '@/hooks/useSchedule'
 import { useRoutes } from '@/hooks/useRoutes'
-import { useRouteBlockTimes } from '@/hooks/useRouteBlockTimes'
 import type { PilotSummary } from '@/types/pilot'
 import { minutesToTime, timeToMinutes, type DayOfWeek } from '@/types/schedule'
 
@@ -67,7 +66,6 @@ const RETURN_BUFFER_MINUTES = 45
 export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   const schedule = useSchedule(pilot.id)
   const routesQuery = useRoutes()
-  const blockMinutesByRouteId = useRouteBlockTimes(routesQuery.routes)
   const fleetQuery = useFleetLite()
 
   const [week, setWeek] = useState<DraftWeek>({})
@@ -188,7 +186,9 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
           const outboundPick = outboundOptions.legal[0]
           if (!outboundPick) continue
 
-          const outboundBlock = blockMinutesByRouteId[outboundPick.routeId] ?? 60
+          // outboundPick.blockMinutes is already resolved against THIS day's chosen aircraft (see
+          // GetLegOptionsAsync) - never a route-level default from a different aircraft type (K34).
+          const outboundBlock = outboundPick.blockMinutes ?? 60
           const outboundLeg = draftLegFromOption(outboundPick, STARTER_TIME, outboundBlock)
           const withOutbound = addLegToDay(withAircraft, day, outboundLeg)
 
@@ -203,7 +203,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
           // outbound with no return would fail week-closure at save, and the whole point of a
           // suggestion is that it can be saved as-is.
           if (returnPick) {
-            const returnBlock = blockMinutesByRouteId[returnPick.routeId] ?? 60
+            const returnBlock = returnPick.blockMinutes ?? 60
             const returnLeg = draftLegFromOption(returnPick, returnTime, returnBlock)
             built = addLegToDay(withOutbound, day, returnLeg)
             daysProposed += 1
@@ -297,7 +297,6 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
         editingLeg={dialog.editingLeg}
         forceAircraftStep={dialog.forceAircraftStep}
         week={week}
-        blockMinutesByRouteId={blockMinutesByRouteId}
         onSetAircraft={handleSetAircraft}
         onConfirmAdd={handleConfirmAdd}
         onConfirmRetime={handleConfirmRetime}

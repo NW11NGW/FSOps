@@ -35,14 +35,32 @@ public static class LandingQualityCalculator
 
         // A runway is landed on from either end, so compare against its orientation as an
         // undirected line (0-180 degrees) rather than requiring an exact heading/reciprocal match.
+        //
+        // Heading match alone is not enough to pick the right runway: an airport with parallel
+        // runways - LEBL's 06L/24R and 06R/24L are the case that surfaced this, imported from
+        // OurAirports with an IDENTICAL rounded HeadingTrue (66.0/246.0) for both pairs - produces
+        // an exact tie between two PHYSICALLY DIFFERENT runways a runway's-width-plus-separation
+        // apart (over 1,200 m at LEBL). Ordering by heading match alone then breaks that tie by
+        // whatever order the caller's list happened to be in - at FlightLifecycleService.cs this is
+        // undefined SQLite row order, not anything about the landing - so it could just as easily
+        // score the touchdown against the wrong parallel runway's centreline as the right one,
+        // reporting a "deviation" that is really just the runway spacing. Breaking the tie by
+        // physical proximity (the smallest perpendicular distance among the equally-good heading
+        // matches) picks the runway actually landed on instead. This only ever activates the
+        // tiebreak on a genuine heading tie/near-tie, so a normal single-runway airport, or one
+        // whose parallel runways have distinguishable headings, is scored identically to before.
         var best = usable
-            .OrderBy(r => UndirectedHeadingDifferenceDeg(r.HeadingTrue, trackHeadingDeg))
+            .Select(r => (
+                Runway: r,
+                HeadingDiffDeg: UndirectedHeadingDifferenceDeg(r.HeadingTrue, trackHeadingDeg),
+                DeviationMetres: PerpendicularDistanceMetres(
+                    r.LatitudeStart!.Value, r.LongitudeStart!.Value, r.LatitudeEnd!.Value, r.LongitudeEnd!.Value,
+                    touchdownLatitudeDeg, touchdownLongitudeDeg)))
+            .OrderBy(c => c.HeadingDiffDeg)
+            .ThenBy(c => c.DeviationMetres)
             .First();
 
-        return PerpendicularDistanceMetres(
-            best.LatitudeStart!.Value, best.LongitudeStart!.Value,
-            best.LatitudeEnd!.Value, best.LongitudeEnd!.Value,
-            touchdownLatitudeDeg, touchdownLongitudeDeg);
+        return best.DeviationMetres;
     }
 
     private static double UndirectedHeadingDifferenceDeg(double runwayHeadingDeg, double trackHeadingDeg)

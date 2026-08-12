@@ -1,4 +1,5 @@
-﻿using FSOps.Core.Economy;
+﻿using System.Text.Json;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Finance;
 using FSOps.Server.Endpoints;
@@ -597,5 +598,84 @@ public class FleetEndpointsTests
         Assert.False(reloaded.ReservedForPlayer);
     }
 
+    // ---- 2026-08-12: the sole-aircraft safety net must fire on the fleet being EMPTY before an
+    // add, never on the pre-add count, and it must never reserve anything without saying so. -----
+
+    /// <summary>
+    /// The exact real-use shape: release the founding (and only) aircraft - an explicit, confirmed
+    /// player choice - then add a second. The old check fired on "exactly one aircraft, unreserved,
+    /// right now" and ran before the add, so it silently flipped the FOUNDING aircraft back to
+    /// reserved. Neither aircraft may be silently reserved here: the fleet was not empty before
+    /// this add (it already had the released founding aircraft), so the safety net must not fire at
+    /// all.
+    /// </summary>
+    [Fact]
+    public async Task Lease_SecondAircraftAfterReleasingTheFoundingOne_DoesNotReReserveAnything()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedStartingCashAsync(ctx, 5_000_000m);
+        var catalog = EconomyConfigCatalog.Default();
+
+        var founding = await ctx.Db.FleetAircraft.SingleAsync();
+        founding.ReservedForPlayer = false; // the player explicitly released it
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await FleetEndpoints.LeaseAsync(
+            new LeaseAircraftRequest(ctx.AircraftType.Id), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(result));
+
+        Assert.False(JsonOf(result).GetProperty("autoReserved").GetBoolean());
+
+        var reloadedFounding = await ctx.Db.FleetAircraft.AsNoTracking().SingleAsync(f => f.Id == founding.Id);
+        Assert.False(reloadedFounding.ReservedForPlayer);
+
+        var newAircraft = await ctx.Db.FleetAircraft.AsNoTracking().SingleAsync(f => f.Id != founding.Id);
+        Assert.False(newAircraft.ReservedForPlayer);
+    }
+
+    /// <summary>Same shape via Buy instead of Lease - both acquisition paths share the same helper.</summary>
+    [Fact]
+    public async Task Buy_SecondAircraftAfterReleasingTheFoundingOne_DoesNotReReserveAnything()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedStartingCashAsync(ctx, 200_000_000m);
+        var catalog = EconomyConfigCatalog.Default();
+
+        var founding = await ctx.Db.FleetAircraft.SingleAsync();
+        founding.ReservedForPlayer = false;
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await FleetEndpoints.BuyAsync(
+            new BuyAircraftRequest(ctx.AircraftType.Id, "New"), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(result));
+
+        Assert.False(JsonOf(result).GetProperty("autoReserved").GetBoolean());
+
+        var reloadedFounding = await ctx.Db.FleetAircraft.AsNoTracking().SingleAsync(f => f.Id == founding.Id);
+        Assert.False(reloadedFounding.ReservedForPlayer);
+    }
+
+    /// <summary>The ordinary case (founding aircraft still reserved, as it starts) must keep
+    /// behaving exactly as before: the safety net is a no-op, and the response says so.</summary>
+    [Fact]
+    public async Task Lease_SecondAircraftWithFoundingStillReserved_AutoReservedIsFalse()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedStartingCashAsync(ctx, 5_000_000m);
+        var catalog = EconomyConfigCatalog.Default();
+        // Founding aircraft is reserved by fixture default - nothing released here.
+
+        var result = await FleetEndpoints.LeaseAsync(
+            new LeaseAircraftRequest(ctx.AircraftType.Id), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status201Created, StatusCodeOf(result));
+
+        Assert.False(JsonOf(result).GetProperty("autoReserved").GetBoolean());
+
+        var founding = await ctx.Db.FleetAircraft.AsNoTracking().SingleAsync(f => f.Registration == "G-TEST");
+        Assert.True(founding.ReservedForPlayer); // unchanged, still reserved from founding
+    }
+
     private static int StatusCodeOf(IResult result) => ((IStatusCodeHttpResult)result).StatusCode ?? 0;
+
+    private static JsonElement JsonOf(IResult result) => JsonSerializer.SerializeToElement(((IValueHttpResult)result).Value!);
 }

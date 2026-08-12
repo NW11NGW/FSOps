@@ -31,10 +31,15 @@ public class PilotScheduleValidatorTests
 
     private static readonly Guid NarrowbodyTypeId = Guid.NewGuid();
 
-    private static Dictionary<Guid, FleetAircraft> Fleet(bool reserved = false) => new()
+    /// <summary>EGGD by default for both airframes - every existing fixture's chronologically
+    /// earliest leg on AircraftX already departs EGGD (RouteOut), so this is a non-event for every
+    /// test that isn't specifically about the first-leg-location rule. Pass
+    /// <paramref name="locationIcao"/> to make it relevant (see the
+    /// Validate_FirstLegMustDepartFromWhereTheAircraftIs_* tests below).</summary>
+    private static Dictionary<Guid, FleetAircraft> Fleet(bool reserved = false, string locationIcao = "EGGD") => new()
     {
-        [AircraftX] = new FleetAircraft { Id = AircraftX, Registration = "G-ONEX", ReservedForPlayer = reserved, AircraftTypeId = NarrowbodyTypeId },
-        [AircraftY] = new FleetAircraft { Id = AircraftY, Registration = "G-TWOY", ReservedForPlayer = false, AircraftTypeId = NarrowbodyTypeId },
+        [AircraftX] = new FleetAircraft { Id = AircraftX, Registration = "G-ONEX", ReservedForPlayer = reserved, AircraftTypeId = NarrowbodyTypeId, LocationIcao = locationIcao },
+        [AircraftY] = new FleetAircraft { Id = AircraftY, Registration = "G-TWOY", ReservedForPlayer = false, AircraftTypeId = NarrowbodyTypeId, LocationIcao = locationIcao },
     };
 
     /// <summary>Keyed by AircraftTypeId, as the validator's range and runway checks expect. 3,300 nm
@@ -549,5 +554,81 @@ public class PilotScheduleValidatorTests
         var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
 
         Assert.True(result.IsValid);
+    }
+
+    // ---- K36: the first leg of the pattern has to depart from where the aircraft actually is ----
+
+    [Fact]
+    public void Validate_FirstLegDoesNotDepartFromWhereTheAircraftIs_IsRejected()
+    {
+        // Real-use shape: the aircraft is sitting at EGPF, but the drafted week's first (and only,
+        // chronologically earliest) leg on it departs EGGD - a chain that closes on itself perfectly
+        // (EGGD -> EGPH -> EGGD) is still unflyable because the aircraft can never reach EGGD to
+        // start it in the first place.
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(locationIcao: "EGPF"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("EGPF") && c.Contains("EGGD") && c.Contains("first leg"));
+    }
+
+    [Fact]
+    public void Validate_FirstLegDepartsFromWhereTheAircraftIs_IsAllowed()
+    {
+        // Same chain, but the aircraft is actually at EGGD (the fixture default) - the anchor check
+        // must never fire when the pattern's first leg genuinely matches reality.
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(locationIcao: "EGGD"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_FirstLegLocationAnchorsToTheChronologicallyEarliestEntry_NotDaySunday()
+    {
+        // The pattern doesn't fly on Sunday or Monday at all - Wednesday is its first flown day.
+        // The anchor must be Wednesday's first leg, not an assumption about the week always
+        // starting Sunday. The aircraft is genuinely at EGGD, Wednesday's leg genuinely departs
+        // EGGD, and every later day just inherits wherever the previous day's chain left it
+        // (already covered by the ordinary pairwise continuity check) - so the whole pattern is
+        // valid with no special-casing for which day happens to be "first".
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Wednesday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Wednesday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(locationIcao: "EGGD"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_WithClosureNotRequired_FirstLegLocationStillEnforced()
+    {
+        // The options endpoint's own case (requireWeekClosure: false): a lone candidate leg,
+        // nothing else drafted yet for this aircraft. The anchor check is NOT a whole-week property
+        // like the wrap/closure check, so it must still fire even with closure relaxed - this is
+        // the exact "LEBL -> EGKK offered while the ATR sat at EGKK" shape from real use.
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(
+            entries, Routes(), Fleet(locationIcao: "EGPH"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs(), requireWeekClosure: false);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Conflicts, c => c.Contains("EGPH") && c.Contains("EGGD") && c.Contains("first leg"));
     }
 }

@@ -72,6 +72,48 @@ public class LandingQualityCalculatorTests
     }
 
     [Fact]
+    public void CentrelineDeviation_TwoParallelRunwaysShareTheSameHeading_PicksThePhysicallyCloserOne()
+    {
+        // Reproduces the real LEBL defect (K33): 06L/24R and 06R/24L are two DIFFERENT physical
+        // runways that OurAirports reports with an IDENTICAL rounded HeadingTrue (66.0/246.0), so
+        // heading-match alone ties exactly between them - about 1,370 m apart in the real data.
+        // "near" sits right on the near runway's centreline; "far" is the same heading, offset
+        // sideways by roughly that real-world separation, standing in for the other parallel
+        // runway. Track 250 matches both equally (undirected diff 4 degrees either way).
+        var near = MakeRunway(41.293244, 2.067251, 41.305735, 2.103751, 66.0);
+        var far = MakeRunway(41.282311, 2.074342, 41.292218, 2.103282, 66.0);
+
+        var deviation = LandingQualityCalculator.CentrelineDeviationMetres(
+            new[] { near, far }, touchdownLatitudeDeg: 41.2974, touchdownLongitudeDeg: 2.0833, trackHeadingDeg: 250);
+
+        Assert.NotNull(deviation);
+        Assert.InRange(deviation!.Value, 0, 300);
+    }
+
+    [Fact]
+    public void CentrelineDeviation_TwoParallelRunwaysShareTheSameHeading_OrderInTheListDoesNotChangeWhichIsPicked()
+    {
+        // Same scenario as above but with the candidates in the opposite order - the bug this
+        // guards against was exactly that .OrderBy(headingDiff).First() breaks an exact tie by
+        // whatever order the caller's (unordered) database query happened to return, not by
+        // anything about the landing. The result must be identical either way.
+        var near = MakeRunway(41.293244, 2.067251, 41.305735, 2.103751, 66.0);
+        var far = MakeRunway(41.282311, 2.074342, 41.292218, 2.103282, 66.0);
+
+        var deviationNearFirst = LandingQualityCalculator.CentrelineDeviationMetres(
+            new[] { near, far }, touchdownLatitudeDeg: 41.2974, touchdownLongitudeDeg: 2.0833, trackHeadingDeg: 250);
+        var deviationFarFirst = LandingQualityCalculator.CentrelineDeviationMetres(
+            new[] { far, near }, touchdownLatitudeDeg: 41.2974, touchdownLongitudeDeg: 2.0833, trackHeadingDeg: 250);
+
+        Assert.NotNull(deviationNearFirst);
+        Assert.NotNull(deviationFarFirst);
+        Assert.Equal(deviationNearFirst!.Value, deviationFarFirst!.Value, precision: 6);
+        // Both orderings must land on the near runway's small deviation, not the ~1,200 m gap to
+        // the far one.
+        Assert.InRange(deviationNearFirst.Value, 0, 300);
+    }
+
+    [Fact]
     public void CentrelineDeviation_NoRunwaysHaveCoordinates_ReturnsNullInsteadOfThrowing()
     {
         var runway = new Runway { Id = Guid.NewGuid(), AirportIcao = "TEST", HeadingTrue = 90 };

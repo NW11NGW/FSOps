@@ -12,9 +12,18 @@ export interface StatsPerformancePoint {
   loadFactorPercent: number | null
 }
 
+/**
+ * `onlineEligibleSectorsFlown` is the count of sectors where VATSIM online detection actually ran
+ * (Flight.VatsimOnline is non-null); `onlineSectorsFlown` is how many of those matched online.
+ * Both are over the whole window, not bucketed by day. A flight FSOps never checked - no CID
+ * configured, the feature off, or the feed unreachable - is excluded from both counts rather than
+ * folded into "not online": null is "unknown", not "no".
+ */
 export interface StatsPerformanceResponse {
   periodDays: number
   points: StatsPerformancePoint[]
+  onlineSectorsFlown: number
+  onlineEligibleSectorsFlown: number
 }
 
 /**

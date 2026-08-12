@@ -25,7 +25,7 @@ public class StatsEndpointsTests
         return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
-    private sealed record PerformanceResponseProbe(int PeriodDays, List<PerformancePointProbe> Points);
+    private sealed record PerformanceResponseProbe(int PeriodDays, List<PerformancePointProbe> Points, int OnlineSectorsFlown, int OnlineEligibleSectorsFlown);
 
     private sealed record PerformancePointProbe(string DateUtc, int SectorsFlown, double? OnTimePercent, double? LoadFactorPercent);
 
@@ -81,7 +81,8 @@ public class StatsEndpointsTests
     /// ledger). arrivalDelayMinutes offsets In from the planned arrival to control on-time/late.</summary>
     private static Flight SeedCompletedFlight(
         RouteTestContext ctx, Route route, Guid fleetAircraftId, Guid pilotId, DateTimeOffset plannedDepartureUtc,
-        int plannedBlockMinutes, double arrivalDelayMinutes, int paxFlown, bool simRateElevated = false, double? landingFpm = null)
+        int plannedBlockMinutes, double arrivalDelayMinutes, int paxFlown, bool simRateElevated = false, double? landingFpm = null,
+        bool? vatsimOnline = null)
     {
         var outUtc = plannedDepartureUtc;
         var inUtc = plannedDepartureUtc.AddMinutes(plannedBlockMinutes + arrivalDelayMinutes);
@@ -105,6 +106,7 @@ public class StatsEndpointsTests
             LandingFpmFirst = landingFpm,
             TitleFlown = "Test Aircraft",
             CreatedUtc = plannedDepartureUtc,
+            VatsimOnline = vatsimOnline,
         };
         ctx.Db.Flights.Add(flight);
         return flight;
@@ -171,6 +173,54 @@ public class StatsEndpointsTests
         Assert.Null(point.OnTimePercent);
         // Load factor is a telemetry-independent figure (pax vs seats), so it is still measured.
         Assert.Equal(100.0, point.LoadFactorPercent);
+    }
+
+    // ---------- Online sectors (VATSIM) ----------
+
+    /// <summary>
+    /// Flight.VatsimOnline is three-valued: true (checked and matched), false (checked, never
+    /// matched) and null (never checked at all - no CID configured, the feature off, or the feed
+    /// unreachable for the whole flight). Counting null as "not online" would tell the player their
+    /// entire back catalogue was checked and found offline, including every sector flown before this
+    /// feature existed - so a never-checked flight must drop out of both the numerator and the
+    /// denominator, not just the numerator.
+    /// </summary>
+    [Fact]
+    public async Task Performance_OnlineSectorCounts_ExcludeNeverCheckedFlights_FromBothNumeratorAndDenominator()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var route = SeedRoute(ctx);
+        var pilot = SeedPilot(ctx, "Player", isPlayer: true);
+        var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        var day = DateTimeOffset.UtcNow.AddDays(-1);
+
+        // Checked and matched.
+        SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day, plannedBlockMinutes: 60, arrivalDelayMinutes: 0, paxFlown: 100, vatsimOnline: true);
+        // Checked, never matched.
+        SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day.AddHours(1), plannedBlockMinutes: 60, arrivalDelayMinutes: 0, paxFlown: 100, vatsimOnline: false);
+        // Never checked - predates the feature / CID not configured. vatsimOnline defaults to null.
+        SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day.AddHours(2), plannedBlockMinutes: 60, arrivalDelayMinutes: 0, paxFlown: 100);
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await StatsEndpoints.PerformanceAsync(30, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), CancellationToken.None);
+
+        var body = OkValueOf<PerformanceResponseProbe>(result);
+        // 3 sectors flown in total, but only 2 were ever checked - the never-checked one must not
+        // silently count as "not online" on either side of the fraction.
+        Assert.Equal(1, body.OnlineSectorsFlown);
+        Assert.Equal(2, body.OnlineEligibleSectorsFlown);
+    }
+
+    [Fact]
+    public async Task Performance_NoCompletedFlights_ReportsZeroOnlineCounts()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+
+        var result = await StatsEndpoints.PerformanceAsync(30, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), CancellationToken.None);
+
+        var body = OkValueOf<PerformanceResponseProbe>(result);
+        Assert.Equal(0, body.OnlineSectorsFlown);
+        Assert.Equal(0, body.OnlineEligibleSectorsFlown);
     }
 
     // ---------- Fleet utilisation ----------

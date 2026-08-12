@@ -41,6 +41,18 @@ public static class StatsEndpoints
     /// with the Dashboard's reputation card over the same window. <c>loadFactorPercent</c> is
     /// PaxFlown against the flown aircraft's own seat capacity, averaged over the day's sectors;
     /// null (never 0) for a day where no flown flight can be matched to a known aircraft type.
+    ///
+    /// <para>
+    /// <c>onlineSectorsFlown</c>/<c>onlineEligibleSectorsFlown</c> answer "how many sectors were
+    /// flown online", over the whole window rather than per-day. <see cref="Flight.VatsimOnline"/>
+    /// is three-valued - null means FSOps never checked (no CID configured, the feature was off, or
+    /// the feed was unreachable for that whole flight), which is not the same as false ("checked and
+    /// never matched"). Counting null as "not online" would tell the player their entire back
+    /// catalogue was checked and found offline, including every sector flown before this feature
+    /// existed - so <c>onlineEligibleSectorsFlown</c> (the denominator a percentage should use) counts
+    /// only flights where VatsimOnline is non-null, and <c>onlineSectorsFlown</c> counts strictly
+    /// VatsimOnline == true within that same set.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> PerformanceAsync(
         int? days, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
@@ -49,7 +61,7 @@ public static class StatsEndpoints
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
-            return Results.Ok(new { periodDays, points = Array.Empty<object>() });
+            return Results.Ok(new { periodDays, points = Array.Empty<object>(), onlineSectorsFlown = 0, onlineEligibleSectorsFlown = 0 });
         }
 
         var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
@@ -65,8 +77,11 @@ public static class StatsEndpoints
 
         if (flights.Count == 0)
         {
-            return Results.Ok(new { periodDays, points = Array.Empty<object>() });
+            return Results.Ok(new { periodDays, points = Array.Empty<object>(), onlineSectorsFlown = 0, onlineEligibleSectorsFlown = 0 });
         }
+
+        var onlineEligibleSectorsFlown = flights.Count(f => f.VatsimOnline.HasValue);
+        var onlineSectorsFlown = flights.Count(f => f.VatsimOnline == true);
 
         var fleetAircraftIds = flights.Select(f => f.FleetAircraftId).Distinct().ToList();
         var fleet = await db.FleetAircraft.Where(f => fleetAircraftIds.Contains(f.Id)).ToListAsync(ct);
@@ -110,7 +125,7 @@ public static class StatsEndpoints
             })
             .ToList();
 
-        return Results.Ok(new { periodDays, points });
+        return Results.Ok(new { periodDays, points, onlineSectorsFlown, onlineEligibleSectorsFlown });
     }
 
     /// <summary>

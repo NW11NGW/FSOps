@@ -511,6 +511,80 @@ public class PilotEndpointsTests
     }
 
     [Fact]
+    public async Task LegOptions_FirstLegOfTheWeek_MustDepartFromWhereTheAircraftActuallyIs()
+    {
+        // Real-use defect (K36): LEBL -> EGKK was offered as a duty day's first leg while the
+        // aircraft actually sat at EGKK. Here the aircraft sits at EGPH (not the home airport,
+        // EGGD) with nothing drafted yet - the EGGD -> EGPH outbound must now be illegal (it
+        // departs from where the aircraft ISN'T), while the EGPH -> EGGD inbound - which departs
+        // from where it actually is - stays legal.
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraftId);
+        aircraft.LocationIcao = "EGPH";
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", aircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.Contains(value.Illegal, i => i.RouteId == outbound.Id && i.Reason.Contains("EGPH") && i.Reason.Contains("EGGD") && i.Reason.Contains("first leg"));
+        Assert.DoesNotContain(value.Legal, l => l.RouteId == outbound.Id);
+        Assert.Contains(value.Legal, l => l.RouteId == inbound.Id);
+    }
+
+    [Fact]
+    public async Task LegOptions_LegalOption_CarriesBlockMinutesForTheChosenAircraft_NotASharedDefault()
+    {
+        // K34: the draft grid used to show a block time computed for SOME default aircraft (the
+        // route preview endpoint, called with no aircraft in mind), then jump to a different figure
+        // once save recomputed it against the REAL aircraft for the duty day - a slow ATR duty day
+        // briefly showing an A320's faster estimate. Proven here by asking leg-options for the SAME
+        // route on two aircraft of very different cruise speeds and confirming each gets its own,
+        // materially different block time - never one figure shared between them.
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, _) = await SeedRoundTripRoutesAsync(ctx);
+        var fastAircraftId = await FleetAircraftIdAsync(ctx); // RouteTestContext's A320neo, 450 kts cruise
+        await ReleaseReservationAsync(ctx, fastAircraftId);
+
+        var slowType = new AircraftType
+        {
+            Id = Guid.NewGuid(), IcaoType = "ATR72", Family = "ATR", Manufacturer = "ATR", Name = "ATR 72-600",
+            PaxCapacity = 70, RangeNm = 900, CruiseTasKts = 275, FuelBurnKgPerHour = 700, MtowTonnes = 23.0,
+            MinRunwayFt = 3500, ServiceCeilingFt = 25000, PurchasePrice = 20_000_000m, MonthlyLeaseRate = 100_000m, MatchPatterns = "[]",
+        };
+        ctx.Db.AircraftTypes.Add(slowType);
+        var slowAircraft = new FleetAircraft
+        {
+            Id = Guid.NewGuid(), AirlineId = ctx.Airline.Id, AircraftTypeId = slowType.Id, Registration = "G-SLOW",
+            Ownership = AircraftOwnership.Owned, LocationIcao = "EGGD", Status = FleetAircraftStatus.Active,
+            ReservedForPlayer = false, CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.FleetAircraft.Add(slowAircraft);
+        await ctx.Db.SaveChangesAsync();
+
+        var fastResult = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", fastAircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var slowResult = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", slowAircraft.Id, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var fastOption = Assert.Single(OkValueOf<LegOptionsDto>(fastResult).Legal, l => l.RouteId == outbound.Id);
+        var slowOption = Assert.Single(OkValueOf<LegOptionsDto>(slowResult).Legal, l => l.RouteId == outbound.Id);
+
+        Assert.NotNull(fastOption.BlockMinutes);
+        Assert.NotNull(slowOption.BlockMinutes);
+        Assert.True(slowOption.BlockMinutes > fastOption.BlockMinutes, $"Expected the slower ATR ({slowOption.BlockMinutes}min) to take longer than the A320 ({fastOption.BlockMinutes}min) on the identical route.");
+    }
+
+    [Fact]
     public async Task LegOptions_WrongAirportIsStillIllegal_WithItsReason()
     {
         // Geographic continuity within the drafted day must still be enforced even with closure
@@ -747,7 +821,7 @@ public class PilotEndpointsTests
 
     private sealed record LegOptionsDto(List<LegOptionDto> Legal, List<IllegalLegOptionDto> Illegal);
 
-    private sealed record LegOptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber);
+    private sealed record LegOptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber, int? BlockMinutes);
 
     private sealed record IllegalLegOptionDto(Guid RouteId, string Reason);
 

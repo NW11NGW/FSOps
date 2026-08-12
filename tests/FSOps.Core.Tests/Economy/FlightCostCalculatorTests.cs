@@ -39,25 +39,16 @@ public class FlightCostCalculatorTests
     [Fact]
     public void LandingFee_ScalesLinearlyWithMtow()
     {
+        // This is a property of the MTOW input alone, not of tankering: production always passes
+        // the aircraft type's fixed certificated MtowTonnes here, never the weight on the day, so
+        // a tankered sector pays exactly the same landing fee as an empty one. Cost-of-carry burn
+        // is the only counterweight to tankering.
         var at50Tonnes = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Large, 50);
         var at100Tonnes = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Large, 100);
 
         Assert.Equal(475.00m, at50Tonnes);
         Assert.Equal(950.00m, at100Tonnes);
         Assert.Equal(at50Tonnes * 2, at100Tonnes);
-    }
-
-    [Fact]
-    public void LandingFee_TankeredHeavierAircraft_PaysMore()
-    {
-        // The fee scales with MTOW tonnes. NOTE this is NOT a tankering counterweight, despite
-        // reading like one here: production always passes the aircraft TYPE's fixed certificated
-        // MtowTonnes, never the weight on the day, so a tankered sector pays exactly the same
-        // landing fee as an empty one. Cost-of-carry burn is the only counterweight to tankering.
-        var lightWithoutTankeredFuel = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Medium, 65);
-        var heavyWithTankeredFuel = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Medium, 70);
-
-        Assert.True(heavyWithTankeredFuel > lightWithoutTankeredFuel);
     }
 
     [Fact]

@@ -525,7 +525,15 @@ public static class PilotEndpoints
 
             if (newConflicts.Count == 0)
             {
-                legal.Add(new { routeId = candidate.RouteId, route.DepartureIcao, route.ArrivalIcao, route.FlightNumber });
+                // K34: this MUST be the block time for the aircraft actually chosen for this duty
+                // day (blockMinutesByLeg is keyed by (RouteId, FleetAircraftId) - see
+                // BuildValidationDataAsync), never a route-level default computed against whatever
+                // aircraft type happens to be first in the fleet. The draft grid used to fall back
+                // to exactly that route-only default because this DTO carried no block time at all,
+                // which is why an ATR duty day could show an A320's faster block time right up until
+                // save recomputed it against the real airframe and the number visibly jumped.
+                var blockMinutes = blockMinutesByLeg.TryGetValue((candidate.RouteId, fleetAircraftId), out var minutes) ? (int?)minutes : null;
+                legal.Add(new { routeId = candidate.RouteId, route.DepartureIcao, route.ArrivalIcao, route.FlightNumber, blockMinutes });
             }
             else
             {

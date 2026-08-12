@@ -15,6 +15,8 @@ interface UseStatsOverviewResult {
   pilots: StatsPilotLogbookEntry[]
   costs: FinanceCosts | null
   routes: FinanceRoute[]
+  onlineSectorsFlown: number
+  onlineEligibleSectorsFlown: number
   refetch: () => void
 }
 
@@ -36,6 +38,8 @@ export function useStatsOverview(): UseStatsOverviewResult {
   const [pilots, setPilots] = useState<StatsPilotLogbookEntry[]>([])
   const [costs, setCosts] = useState<FinanceCosts | null>(null)
   const [routes, setRoutes] = useState<FinanceRoute[]>([])
+  const [onlineSectorsFlown, setOnlineSectorsFlown] = useState(0)
+  const [onlineEligibleSectorsFlown, setOnlineEligibleSectorsFlown] = useState(0)
   const [token, setToken] = useState(0)
 
   useEffect(() => {
@@ -56,6 +60,8 @@ export function useStatsOverview(): UseStatsOverviewResult {
         setPilots(pilotsResult.pilots)
         setCosts(costsResult)
         setRoutes(routesResult.routes)
+        setOnlineSectorsFlown(performanceResult.onlineSectorsFlown)
+        setOnlineEligibleSectorsFlown(performanceResult.onlineEligibleSectorsFlown)
         setStatus('ready')
       })
       .catch(() => {
@@ -70,5 +76,5 @@ export function useStatsOverview(): UseStatsOverviewResult {
 
   const refetch = useCallback(() => setToken((t) => t + 1), [])
 
-  return { status, periodDays, setPeriodDays, performance, fleet, pilots, costs, routes, refetch }
+  return { status, periodDays, setPeriodDays, performance, fleet, pilots, costs, routes, onlineSectorsFlown, onlineEligibleSectorsFlown, refetch }
 }

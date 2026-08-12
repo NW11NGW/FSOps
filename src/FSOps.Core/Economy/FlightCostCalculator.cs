@@ -6,9 +6,16 @@ namespace FSOps.Core.Economy;
 /// Every cost line for a single flight, itemised. Fuel is charged on what was uplifted, at the
 /// price where it was uplifted - never on what was burned, and never when nothing was uplifted
 /// (a return leg flown on fuel already in the tanks costs nothing further in fuel). Landing,
-/// handling and parking are weight-based like the real thing, so a heavier aircraft - including
-/// one carrying tankered fuel - costs more to operate into an airport, which is deliberate: it
-/// is fuel tankering's second natural counterweight alongside the extra burn.
+/// handling and parking are weight-based like the real thing, so a bigger aircraft costs more to
+/// operate into an airport than a smaller one.
+/// <para>
+/// That weight is the type's <b>fixed certificated MTOW</b>, never the aircraft's actual weight on
+/// the day, so <b>tankered fuel does not raise these fees at all</b> - a tankered sector pays
+/// exactly what an empty one does. An earlier version of this comment claimed the opposite and
+/// called it tankering's "second counterweight"; it is not. The extra fuel burned carrying the
+/// extra weight (see BlockFuelEstimator's cost-of-carry) is the <b>only</b> counterweight, which
+/// is worth knowing before tuning either number - there is no second lever here to lean on.
+/// </para>
 /// </summary>
 public static class FlightCostCalculator
 {

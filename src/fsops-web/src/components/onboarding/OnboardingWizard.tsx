@@ -87,11 +87,14 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
     setSubmitError(null)
     try {
       const payload = buildCreateAirlineInput(data)
-      // POST /airline answers with the same summary envelope GET /airline/summary does - the
-      // airline itself is nested, not the top-level object. Unwrapping it here is what lets the
-      // app re-theme around the chosen accent colour the moment onboarding finishes; reading the
-      // envelope as if it were the airline left accentColour undefined, so the colour only
-      // appeared after a reload (when the gate re-fetches the bare airline from GET /airline).
+      // POST /airline answers with the same summary envelope every /airline route does now
+      // (GET, PUT, GET /airline/summary) - the airline itself is nested, not the top-level object.
+      // Unwrapping it here is what lets the app re-theme around the chosen accent colour the moment
+      // onboarding finishes. This used to be the one place that mattered: GET /airline returned the
+      // bare Airline while POST returned this envelope, so reading the POST result as if it were the
+      // airline left accentColour undefined until the gate's next GET papered over it. All four
+      // routes agree on this shape now, so that particular trap can't recur - but the unwrap here
+      // stays, since this call site wants the envelope for cashBalance/etc too.
       const createdSummary = await post<AirlineSummary>('/airline', payload)
 
       // Best-effort, never blocks finishing onboarding - the airline is already created by this

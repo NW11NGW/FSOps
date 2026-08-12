@@ -50,6 +50,20 @@ public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string
 /// is not an error, it is an unfinished week, and reporting it as a conflict would make the
 /// builder unusable while a player is still filling it in (clarified 2026-08-08).
 /// </para>
+/// <para>
+/// <b>The first leg of the pattern has to depart from where the aircraft actually is.</b> Geographic
+/// continuity between consecutive legs (above) says nothing about where an aircraft's very first
+/// scheduled leg of the week departs from - a chain that closes on itself perfectly can still start
+/// nowhere near the airframe's recorded <see cref="FleetAircraft.LocationIcao"/>, which produces a
+/// week that can never actually be flown as drafted. <see cref="ValidateAircraftChains"/> anchors the
+/// chronologically earliest entry per aircraft to <c>LocationIcao</c> for exactly this reason. For the
+/// first duty day an aircraft flies this week that anchor is the aircraft's own recorded location; for
+/// every day after that, it is wherever the previous day's chain left the aircraft, which the ordinary
+/// pairwise continuity check already guarantees - so this needs no day-by-day special-casing, only
+/// the one entry with nothing before it. Unlike the wrap/closure check, this is never gated on
+/// <see cref="requireWeekClosure"/>: it is knowable the moment a single leg is proposed (the
+/// leg-options endpoint's own case), not only once the whole week closes.
+/// </para>
 /// </summary>
 public static class PilotScheduleValidator
 {
@@ -256,6 +270,27 @@ public static class PilotScheduleValidator
                 })
                 .OrderBy(x => x.Departure)
                 .ToList();
+
+            // The first leg of the pattern (chronologically earliest across the whole week, for
+            // THIS aircraft) must depart from where the aircraft actually is - not a second
+            // mechanism, just the same continuity rule this loop already enforces between every
+            // other consecutive pair, anchored once at the start. This is deliberately NOT gated on
+            // requireWeekClosure: it isn't a whole-week property like the wrap check below - it's
+            // knowable the moment a single candidate leg is proposed, which is exactly the
+            // leg-options endpoint's case (a week under construction, one aircraft, its very first
+            // leg). Every subsequent day's starting point is whatever the previous day's chain left
+            // the aircraft at, which the pairwise checks below already guarantee - only the very
+            // first entry has no prior leg to inherit a location from, so only it needs anchoring
+            // to the aircraft's own recorded LocationIcao. Combined with the wrap/closure check,
+            // this also guarantees the aircraft is back where it started by week's end.
+            var firstRoute = routesById[ordered[0].Entry.RouteId];
+            if (!string.Equals(firstRoute.DepartureIcao, aircraft.LocationIcao, StringComparison.OrdinalIgnoreCase))
+            {
+                conflicts.Add(
+                    $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern's first leg departs " +
+                    $"{firstRoute.DepartureIcao} ({FormatSlot(ordered[0].Entry.DayOfWeek, ordered[0].Entry.DepartureTimeUtc)}) - " +
+                    "the first leg of the week has to depart from where the aircraft actually is.");
+            }
 
             for (var i = 0; i < ordered.Count; i++)
             {

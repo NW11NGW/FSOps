@@ -158,12 +158,12 @@ public sealed class FakeSimSource : ISimSource
                     }
                     else
                     {
-                        _channel.Writer.TryWrite(FakeFlightInterpolator.Sample(script, durationSeconds));
+                        _channel.Writer.TryWrite(SampleAt(script, durationSeconds));
                         break;
                     }
                 }
 
-                _channel.Writer.TryWrite(FakeFlightInterpolator.Sample(script, simSeconds));
+                _channel.Writer.TryWrite(SampleAt(script, simSeconds));
 
                 await Task.Delay(_options.SampleInterval, ct);
             }
@@ -172,5 +172,35 @@ public sealed class FakeSimSource : ISimSource
         {
             // Normal shutdown path - StopAsync cancelled the token.
         }
+    }
+
+    /// <summary>
+    /// Interpolates a sample and corrects its reported <see cref="TelemetrySample.SimulationRate"/>
+    /// for <see cref="FakeSimSourceOptions.TimeCompressionFactor"/>.
+    /// <para>
+    /// The keyframe's own <c>SimulationRate</c> field describes how fast sim-time was moving
+    /// relative to wall-clock time WHEN THE REPLAY WAS RECORDED (normally 1.0 - a real-time
+    /// capture). <see cref="TimeCompressionFactor"/> is a second, independent acceleration this
+    /// player applies on top, purely to compress a long sector into a short test/dev run - see its
+    /// own doc comment. Position deltas already reflect the full simSeconds advance dictated by
+    /// that factor (RunAsync's simSeconds calculation), so the wall-clock distance-per-second this
+    /// replay is actually producing is inflated by both factors multiplied together, not by the
+    /// keyframe's alone.
+    /// </para>
+    /// <para>
+    /// Before this fix, an accelerated fake replay reported <c>SimulationRate</c> unchanged from
+    /// the keyframe (1.0 for every real fixture), so <see cref="FSOps.Core.Flights.FlightIntegrityMonitor"/>
+    /// - which trusts the reported rate to normalise its impossible-ground-speed check - saw a
+    /// huge implied speed with no rate to explain it away, and flagged every accelerated replay as
+    /// a position jump. The detector's normalisation logic was already correct; it was simply
+    /// never told the truth about how compressed this replay's elapsed time actually was. Reporting
+    /// the true combined rate here, rather than relaxing the detector, keeps identical protection
+    /// against a genuine slew or teleport at any compression factor, including 1.0.
+    /// </para>
+    /// </summary>
+    private TelemetrySample SampleAt(FakeFlightScript script, double simSeconds)
+    {
+        var sample = FakeFlightInterpolator.Sample(script, simSeconds);
+        return sample with { SimulationRate = sample.SimulationRate * _options.TimeCompressionFactor };
     }
 }

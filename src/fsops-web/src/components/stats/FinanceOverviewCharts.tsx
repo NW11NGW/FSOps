@@ -46,6 +46,14 @@ export function FinanceOverviewCharts({ costs, routes, fmtMoney }: FinanceOvervi
       ]
     : []
 
+  // costs is never null once loaded (the endpoint always returns a zeroed shape for a real
+  // airline), so a brand-new airline lands here with three genuinely-zero bars rather than an
+  // empty array. Recharts still has to invent a Y-axis scale for three zeros - it has no real
+  // extent to anchor on - and the result reads as "we measured this and it came to nothing"
+  // rather than "nothing has been measured yet". Same empty-state treatment as the route chart
+  // below, just gated on the totals instead of on an empty list.
+  const hasBreakdownData = breakdown.some((entry) => entry.amount !== 0)
+
   // Top 8 by |profit| so a long route list never crushes the bars unreadably thin - still sorted
   // by profit descending (the order RoutesAsync already returns), so the biggest winner leads.
   const topRoutes = routes.slice(0, 8).map((r) => ({
@@ -57,26 +65,33 @@ export function FinanceOverviewCharts({ costs, routes, fmtMoney }: FinanceOvervi
     <div className="grid gap-4 md:grid-cols-2">
       <div>
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Revenue vs cost</p>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={breakdown} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-            <XAxis dataKey="label" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={{ stroke: 'hsl(var(--border))' }} />
-            <YAxis
-              tickFormatter={(v: number) => fmtMoney(v)}
-              stroke="hsl(var(--muted-foreground))"
-              fontSize={11}
-              tickLine={false}
-              axisLine={{ stroke: 'hsl(var(--border))' }}
-              width={72}
-            />
-            <Tooltip content={<MoneyTooltip />} cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />
-            <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
-              {breakdown.map((entry) => (
-                <Cell key={entry.label} fill={entry.color} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        {hasBreakdownData ? (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={breakdown} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+              <XAxis dataKey="label" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={{ stroke: 'hsl(var(--border))' }} />
+              <YAxis
+                tickFormatter={(v: number) => fmtMoney(v)}
+                stroke="hsl(var(--muted-foreground))"
+                fontSize={11}
+                tickLine={false}
+                axisLine={{ stroke: 'hsl(var(--border))' }}
+                width={72}
+              />
+              <Tooltip content={<MoneyTooltip />} cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />
+              <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
+                {breakdown.map((entry) => (
+                  <Cell key={entry.label} fill={entry.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-[240px] flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-center">
+            <p className="text-sm font-medium">No revenue or costs posted yet</p>
+            <p className="max-w-[220px] text-xs text-muted-foreground">Revenue and costs appear here once flights start posting to the ledger.</p>
+          </div>
+        )}
       </div>
 
       <div>

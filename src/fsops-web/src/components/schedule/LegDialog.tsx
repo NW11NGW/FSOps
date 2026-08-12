@@ -38,7 +38,6 @@ interface LegDialogProps {
    *  "Change aircraft" entry point. */
   forceAircraftStep?: boolean
   week: DraftWeek
-  blockMinutesByRouteId: Record<string, number | undefined>
   onSetAircraft: (day: DayOfWeek, option: AircraftOption) => void
   onConfirmAdd: (day: DayOfWeek, leg: DraftLeg) => void
   onConfirmRetime: (day: DayOfWeek, legId: string, time: string) => void
@@ -61,7 +60,6 @@ export function LegDialog({
   editingLeg,
   forceAircraftStep,
   week,
-  blockMinutesByRouteId,
   onSetAircraft,
   onConfirmAdd,
   onConfirmRetime,
@@ -161,7 +159,10 @@ export function LegDialog({
   }
 
   function handlePickLeg(option: LegalLegOption) {
-    const blockMinutes = blockMinutesByRouteId[option.routeId] ?? 60
+    // option.blockMinutes is already resolved against THIS duty day's actual aircraft (see
+    // GetLegOptionsAsync) - never a route-level default from a different aircraft type, which is
+    // what used to make the draft show one figure and save jump to another (K34).
+    const blockMinutes = option.blockMinutes ?? 60
     const leg = draftLegFromOption(option, time, blockMinutes)
     onConfirmAdd(day, leg)
     onOpenChange(false)
@@ -271,18 +272,17 @@ export function LegDialog({
             )}
 
             {legStatus === 'ready' &&
-              legalOptions.map((option) => {
-                const blockMinutes = blockMinutesByRouteId[option.routeId]
-                return (
-                  <LegOptionRow key={option.routeId} option={option} blockMinutes={blockMinutes} onPick={() => handlePickLeg(option)} />
-                )
-              })}
+              legalOptions.map((option) => (
+                <LegOptionRow key={option.routeId} option={option} onPick={() => handlePickLeg(option)} />
+              ))}
 
             {legStatus === 'ready' && illegalOptions.length > 0 && (
               <div className="space-y-1">
-                {legalOptions.length > 0 && (
-                  <p className="pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Not available in this slot</p>
-                )}
+                {/* K35: this heading must show whenever there's a wall of reasons below it, even
+                 *  when NO leg is legal in this slot (legalOptions.length === 0) - it used to be
+                 *  gated on legalOptions.length > 0, so a fully-blocked slot lost its heading
+                 *  entirely and read as an unlabelled list of reasons with no empty state. */}
+                <p className="pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Not available in this slot</p>
                 {illegalOptions.map(({ routeId, reason }) => (
                   <div key={routeId} className="flex items-start gap-2 rounded-md border border-dashed border-border p-2 text-sm text-muted-foreground">
                     <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
@@ -334,8 +334,9 @@ export function LegDialog({
   )
 }
 
-function LegOptionRow({ option, blockMinutes, onPick }: { option: LegalLegOption; blockMinutes: number | undefined; onPick: () => void }) {
+function LegOptionRow({ option, onPick }: { option: LegalLegOption; onPick: () => void }) {
   const { fmt } = useSettings()
+  const blockMinutes = option.blockMinutes
   return (
     <button
       type="button"

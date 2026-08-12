@@ -361,13 +361,21 @@ public static class AirlineEndpoints
         }
     }
 
-    private static async Task<IResult> GetAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    // Returns the same { airline, cashBalance, fleetCount, routeCount, pilotCount, playerPilotName }
+    // envelope as CreateAsync and GetSummaryAsync below - GET and POST /airline used to disagree
+    // (POST returned the envelope, GET the bare Airline), and the onboarding wizard typing both
+    // responses as Airline silently read accentColour as undefined from the POST result until the
+    // next reload re-fetched from GET. Rather than leave that trap for the next caller, every /airline
+    // response now agrees on one shape - the envelope, since that is what every real consumer (the
+    // gate, onboarding, Settings) actually wants: cashBalance/fleetCount/etc without a second request.
+    internal static async Task<IResult> GetAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
-        return airline is null ? Results.NoContent() : Results.Ok(airline);
+        return airline is null ? Results.NoContent() : Results.Ok(await BuildSummaryAsync(db, airline, ct));
     }
 
-    private static async Task<IResult> UpdateAsync(UpdateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    // Same envelope-consistency reasoning as GetAsync above - PUT used to return the bare Airline too.
+    internal static async Task<IResult> UpdateAsync(UpdateAirlineRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -442,7 +450,7 @@ public static class AirlineEndpoints
         }
 
         await db.SaveChangesAsync(ct);
-        return Results.Ok(airline);
+        return Results.Ok(await BuildSummaryAsync(db, airline, ct));
     }
 
     /// <summary>
@@ -529,6 +537,13 @@ public static class AirlineEndpoints
         return airline is null ? Results.NoContent() : Results.Ok(await BuildSummaryAsync(db, airline, ct));
     }
 
+    /// <summary>
+    /// The one response shape every <c>/airline</c> route agrees on now - <see cref="CreateAsync"/>,
+    /// <see cref="GetAsync"/>, <see cref="UpdateAsync"/> and <see cref="GetSummaryAsync"/> all return
+    /// this, never the bare <see cref="Airline"/> row. GET and PUT used not to, which is what let the
+    /// onboarding wizard read <c>accentColour</c> as undefined straight after POST /airline: it typed
+    /// the response as <c>Airline</c> to match GET, but POST already returned this envelope.
+    /// </summary>
     private static async Task<object> BuildSummaryAsync(FsOpsDbContext db, Airline airline, CancellationToken ct)
     {
         // Cash balance is never a stored column - it's always the sum of the append-only ledger,

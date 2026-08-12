@@ -248,15 +248,12 @@ public static class FleetEndpoints
             ConditionPercent = 100,
             LocationIcao = airline.HomeAirportIcao,
             Status = FleetAircraftStatus.Active,
-            // Never auto-reserved itself - see EnsureSoleAircraftIsReservedAsync below, which
-            // protects the PRE-EXISTING aircraft the moment this one becomes the second, per
-            // preferring to reserve an aircraft where the player actually is, so the one held back
-            // for them is genuinely usable rather than an arbitrary airframe at the wrong airport.
-            ReservedForPlayer = false,
+            // Reserved only when the fleet was genuinely empty before this add - see
+            // ReserveIfFleetWasEmptyAsync's own doc for why that's the ONLY case this ever fires,
+            // and why the aircraft being added is what gets reserved, never a pre-existing one.
+            ReservedForPlayer = await ReserveIfFleetWasEmptyAsync(db, airline.Id, ct),
             CreatedUtc = now,
         };
-
-        await EnsureSoleAircraftIsReservedAsync(db, airline.Id, ct);
 
         db.FleetAircraft.Add(fleetAircraft);
         db.Leases.Add(new Lease
@@ -281,7 +278,16 @@ public static class FleetEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        return Results.Created("/api/v1/fleet", new { fleetAircraft, cashBalance = await CashBalanceAsync(db, airline.Id, ct) });
+        return Results.Created("/api/v1/fleet", new
+        {
+            fleetAircraft,
+            cashBalance = await CashBalanceAsync(db, airline.Id, ct),
+            // Visible, never silent (2026-08-12: the old safety net re-reserved a PRE-EXISTING
+            // aircraft the player had deliberately released, with nothing in the response to say so
+            // - see ReserveIfFleetWasEmptyAsync's own doc). True only in the genuinely-empty-fleet
+            // case, so the client can toast it when it happens.
+            autoReserved = fleetAircraft.ReservedForPlayer,
+        });
     }
 
     /// <summary>
@@ -357,11 +363,12 @@ public static class FleetEndpoints
             ConditionPercent = isUsed ? usedState.ConditionPercent : 100,
             LocationIcao = airline.HomeAirportIcao,
             Status = FleetAircraftStatus.Active,
-            ReservedForPlayer = false,
+            // Reserved only when the fleet was genuinely empty before this add - see
+            // ReserveIfFleetWasEmptyAsync's own doc for why that's the ONLY case this ever fires,
+            // and why the aircraft being added is what gets reserved, never a pre-existing one.
+            ReservedForPlayer = await ReserveIfFleetWasEmptyAsync(db, airline.Id, ct),
             CreatedUtc = now,
         };
-
-        await EnsureSoleAircraftIsReservedAsync(db, airline.Id, ct);
 
         db.FleetAircraft.Add(fleetAircraft);
         db.LedgerTransactions.Add(new LedgerTransaction
@@ -376,7 +383,14 @@ public static class FleetEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        return Results.Created("/api/v1/fleet", new { fleetAircraft, cashBalance = await CashBalanceAsync(db, airline.Id, ct) });
+        return Results.Created("/api/v1/fleet", new
+        {
+            fleetAircraft,
+            cashBalance = await CashBalanceAsync(db, airline.Id, ct),
+            // Visible, never silent - see LeaseAsync's matching remark and
+            // ReserveIfFleetWasEmptyAsync's own doc.
+            autoReserved = fleetAircraft.ReservedForPlayer,
+        });
     }
 
     internal static async Task<IResult> ListLoansAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -546,23 +560,38 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Fires the moment a fleet exceeds one aircraft. One airframe is always kept free for the
-    /// human: opening the app to find your whole fleet booked out to virtual pilots is the fastest
-    /// way to feel locked out of your own airline. Below two aircraft the rule does not apply at
-    /// all, or a new airline's pilots could never fly anything. A brand-new
-    /// airline's sole aircraft already starts reserved (AirlineEndpoints.CreateAsync), but this is
-    /// the moment that reservation actually starts to matter (before now there was only ever one
-    /// aircraft to fly anyway), so this defensively (re-)asserts it rather than trusting it was
-    /// never since cleared. After this call, reservation is entirely player-controlled via
-    /// PUT /fleet/{id}/reservation - nothing else in the app touches this flag again.
+    /// One airframe is always kept free for the human: opening the app to find your whole fleet
+    /// booked out to virtual pilots is the fastest way to feel locked out of your own airline. A
+    /// brand-new airline's sole (founding) aircraft already starts reserved
+    /// (AirlineEndpoints.CreateAsync) - this exists purely to defensively mirror that same default
+    /// for whatever aircraft turns out to be the FIRST one a fleet ever has, in case that founding
+    /// step is ever bypassed. It returns true (and the caller reserves the aircraft being added)
+    /// only when the fleet was completely EMPTY before this call - never when it already had at
+    /// least one aircraft, reserved or not.
+    /// <para>
+    /// <b>2026-08-12 fix: this used to fire on the PRE-add count instead.</b> The old check read
+    /// "does the fleet have exactly one aircraft, unreserved, right now" and ran BEFORE the new
+    /// aircraft was added - so releasing your only aircraft (explicitly, via the Fleet page's
+    /// "none will be held back for you" confirmation) and then adding a second silently flipped the
+    /// first one back to reserved, with no toast and no explanation. That check was answering a
+    /// question that had already been resolved by the very add it was guarding: once a second
+    /// aircraft is being added, the fleet is no longer "one aircraft, might end up with nothing
+    /// reserved" - it is "the player already made an explicit, informed choice about reservation,
+    /// and adding another aircraft is not grounds to override it." Reservation is meant to be
+    /// entirely player-controlled from the moment a fleet exists at all (see
+    /// <see cref="FleetAircraft.ReservedForPlayer"/>'s own doc) - the only state that genuinely still
+    /// needs a default is a fleet with nothing in it yet, which is what this now actually checks.
+    /// </para>
+    /// <para>
+    /// Whenever this DOES reserve the new aircraft, the caller must say so in its response
+    /// (<c>autoReserved</c>) - nothing in this app is allowed to change <c>ReservedForPlayer</c>
+    /// without the player being told, silently or otherwise.
+    /// </para>
     /// </summary>
-    private static async Task EnsureSoleAircraftIsReservedAsync(FsOpsDbContext db, Guid airlineId, CancellationToken ct)
+    private static async Task<bool> ReserveIfFleetWasEmptyAsync(FsOpsDbContext db, Guid airlineId, CancellationToken ct)
     {
-        var existingFleet = await db.FleetAircraft.Where(f => f.AirlineId == airlineId).ToListAsync(ct);
-        if (existingFleet.Count == 1 && !existingFleet.Any(f => f.ReservedForPlayer))
-        {
-            existingFleet[0].ReservedForPlayer = true;
-        }
+        var fleetIsEmpty = !await db.FleetAircraft.AnyAsync(f => f.AirlineId == airlineId, ct);
+        return fleetIsEmpty;
     }
 
     /// <summary>

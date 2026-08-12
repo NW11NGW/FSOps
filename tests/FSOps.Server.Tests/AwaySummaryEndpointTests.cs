@@ -1,5 +1,6 @@
 using FSOps.Core.Entities;
 using FSOps.Server.Endpoints;
+using FSOps.Server.Services;
 using FSOps.Server.Tests.Fakes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -26,7 +27,7 @@ public class AwaySummaryEndpointTests
         await SeedEconomyStateAsync(ctx, awaySummaryLastViewedUtc: null);
         var clock = new FakeClock(Base);
 
-        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, new StartupReconciliationState(), CancellationToken.None);
         var summary = ValueOf<AwaySummaryResponse>(result);
 
         Assert.False(summary.HasSummary);
@@ -47,7 +48,7 @@ public class AwaySummaryEndpointTests
         // a normal reload, not a genuine gap.
         var clock = new FakeClock(lastViewed.AddMinutes(2));
 
-        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, new StartupReconciliationState(), CancellationToken.None);
         var summary = ValueOf<AwaySummaryResponse>(result);
 
         Assert.False(summary.HasSummary);
@@ -115,7 +116,7 @@ public class AwaySummaryEndpointTests
         var now = lastViewed.AddDays(7);
         var clock = new FakeClock(now);
 
-        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, new StartupReconciliationState(), CancellationToken.None);
         var summary = ValueOf<AwaySummaryResponse>(result);
 
         Assert.True(summary.HasSummary);
@@ -194,7 +195,7 @@ public class AwaySummaryEndpointTests
         var now = lastViewed.AddDays(7);
         var clock = new FakeClock(now);
 
-        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, new StartupReconciliationState(), CancellationToken.None);
         var summary = ValueOf<AwaySummaryResponse>(result);
 
         Assert.True(summary.HasSummary);
@@ -216,14 +217,14 @@ public class AwaySummaryEndpointTests
         await AddLedgerLineAsync(ctx, lastViewed.AddDays(1), LedgerCategory.Fuel, -500m);
 
         var ackTime = lastViewed.AddDays(2);
-        var ackResult = await MaintenanceEndpoints.AcknowledgeAwaySummaryAsync(ctx.Db, ctx.CurrentUser, new FakeClock(ackTime), CancellationToken.None);
+        var ackResult = await MaintenanceEndpoints.AcknowledgeAwaySummaryAsync(ctx.Db, ctx.CurrentUser, new FakeClock(ackTime), new StartupReconciliationState(), CancellationToken.None);
         Assert.Equal(StatusCodes.Status204NoContent, Assert.IsAssignableFrom<IStatusCodeHttpResult>(ackResult).StatusCode);
 
         var state = await ctx.Db.EconomyStates.AsNoTracking().SingleAsync();
         Assert.Equal(ackTime, state.AwaySummaryLastViewedUtc);
 
         // Immediately after acknowledging: no new activity since ackTime, so nothing to report.
-        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, new FakeClock(ackTime.AddMinutes(1)), CancellationToken.None);
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, new FakeClock(ackTime.AddMinutes(1)), new StartupReconciliationState(), CancellationToken.None);
         Assert.False(ValueOf<AwaySummaryResponse>(result).HasSummary);
     }
 
@@ -275,7 +276,7 @@ public class AwaySummaryEndpointTests
         var now = lastViewed.AddDays(7);
         var clock = new FakeClock(now);
 
-        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, new StartupReconciliationState(), CancellationToken.None);
         var summary = ValueOf<AwaySummaryResponse>(result);
 
         Assert.True(summary.HasSummary);
@@ -287,5 +288,129 @@ public class AwaySummaryEndpointTests
         var ordinaryPayment = Assert.Single(summary.ChargesByCategory, c => c.Category == "LeasePayment");
         Assert.Equal(-1200m, ordinaryPayment.Amount);
         Assert.Equal(1, ordinaryPayment.Count);
+    }
+
+    /// <summary>
+    /// The case the requirement is built around: a failed catch-up pass means real money movements
+    /// may be missing, and the player was previously told nothing at all about it. This has to
+    /// surface even well inside the normal 5-minute "away" threshold and even with zero ledger
+    /// activity - waiting for a genuine away-gap before mentioning a startup failure would be too
+    /// late for the player who reopens the tab a few seconds after boot.
+    /// </summary>
+    [Fact]
+    public async Task CatchUpFailure_SurfacesImmediately_EvenWithNoAwayGapOrLedgerActivity()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var lastViewed = Base;
+        await SeedEconomyStateAsync(ctx, lastViewed);
+
+        var startupState = new StartupReconciliationState();
+        var failedAt = lastViewed.AddSeconds(1);
+        startupState.RecordCatchUpFailure(nameof(EconomyClockService), new InvalidOperationException("database unreadable"), failedAt);
+
+        // Only 2 seconds since last viewed - nowhere near the 5-minute away threshold, and no
+        // ledger/flight/maintenance activity either. Without the startup finding this would be
+        // AwaySummaryResponse.None.
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(
+            ctx.Db, ctx.CurrentUser, new FakeClock(lastViewed.AddSeconds(2)), startupState, CancellationToken.None);
+        var summary = ValueOf<AwaySummaryResponse>(result);
+
+        Assert.True(summary.HasSummary);
+        var failure = Assert.Single(summary.CatchUpFailures);
+        Assert.Equal(nameof(EconomyClockService), failure.Service);
+        Assert.Contains("database unreadable", failure.Message);
+        Assert.Equal(failedAt, failure.OccurredUtc);
+        Assert.Null(summary.ReservationChanges);
+    }
+
+    [Fact]
+    public async Task CatchUpFailure_ClearsAfterAcknowledge_ButANewOneAfterThatStillSurfaces()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var lastViewed = Base;
+        await SeedEconomyStateAsync(ctx, lastViewed);
+
+        var startupState = new StartupReconciliationState();
+        startupState.RecordCatchUpFailure(nameof(EconomyClockService), new InvalidOperationException("first failure"), lastViewed);
+
+        var ackTime = lastViewed.AddSeconds(5);
+        await MaintenanceEndpoints.AcknowledgeAwaySummaryAsync(ctx.Db, ctx.CurrentUser, new FakeClock(ackTime), startupState, CancellationToken.None);
+
+        // Same startupState instance (mirrors it being a DI singleton in production) - the
+        // already-acknowledged failure must not reappear.
+        var afterAck = ValueOf<AwaySummaryResponse>(await MaintenanceEndpoints.AwaySummaryAsync(
+            ctx.Db, ctx.CurrentUser, new FakeClock(ackTime.AddSeconds(1)), startupState, CancellationToken.None));
+        Assert.False(afterAck.HasSummary);
+
+        // A genuinely new failure after acknowledging must still be reported - acknowledging must
+        // not have silenced the channel permanently, only what existed at that moment.
+        startupState.RecordCatchUpFailure(nameof(VirtualFlightResolverService), new InvalidOperationException("second failure"), ackTime.AddSeconds(2));
+        var afterNewFailure = ValueOf<AwaySummaryResponse>(await MaintenanceEndpoints.AwaySummaryAsync(
+            ctx.Db, ctx.CurrentUser, new FakeClock(ackTime.AddSeconds(3)), startupState, CancellationToken.None));
+
+        Assert.True(afterNewFailure.HasSummary);
+        var failure = Assert.Single(afterNewFailure.CatchUpFailures);
+        Assert.Equal(nameof(VirtualFlightResolverService), failure.Service);
+        Assert.Contains("second failure", failure.Message);
+    }
+
+    [Fact]
+    public async Task ReservationReconciliation_SurfacesOnlyForThisAirline_AndOnlyUntilAcknowledged()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var lastViewed = Base;
+        await SeedEconomyStateAsync(ctx, lastViewed);
+
+        var otherAirlineId = Guid.NewGuid();
+        var thisAirlineAircraftId = (await ctx.Db.FleetAircraft.FirstAsync()).Id;
+
+        var startupState = new StartupReconciliationState
+        {
+            Result = new ReservationReconciliationResult(
+                Released:
+                [
+                    new ReleasedAircraft(thisAirlineAircraftId, "G-TEST", ctx.Airline.Id, ScheduledLegCount: 3),
+                    new ReleasedAircraft(Guid.NewGuid(), "G-OTHER", otherAirlineId, ScheduledLegCount: 1),
+                ],
+                FallbackReserved: [],
+                AirlinesLeftWithNoReservedAircraft: []),
+        };
+
+        var result = ValueOf<AwaySummaryResponse>(await MaintenanceEndpoints.AwaySummaryAsync(
+            ctx.Db, ctx.CurrentUser, new FakeClock(lastViewed.AddSeconds(1)), startupState, CancellationToken.None));
+
+        Assert.True(result.HasSummary);
+        Assert.NotNull(result.ReservationChanges);
+        var released = Assert.Single(result.ReservationChanges!.Released);
+        Assert.Equal("G-TEST", released.Registration);
+        Assert.Equal(3, released.ScheduledLegCount);
+        Assert.Empty(result.CatchUpFailures);
+
+        await MaintenanceEndpoints.AcknowledgeAwaySummaryAsync(ctx.Db, ctx.CurrentUser, new FakeClock(lastViewed.AddSeconds(2)), startupState, CancellationToken.None);
+
+        var afterAck = ValueOf<AwaySummaryResponse>(await MaintenanceEndpoints.AwaySummaryAsync(
+            ctx.Db, ctx.CurrentUser, new FakeClock(lastViewed.AddSeconds(3)), startupState, CancellationToken.None));
+        Assert.False(afterAck.HasSummary);
+    }
+
+    /// <summary>
+    /// The requirement's own negative case: a reconciliation pass that changed nothing (the common
+    /// case - most databases have no contradiction to fix) and no catch-up failures must show
+    /// nothing at all, never an empty dialog. Otherwise every launch would surface something to
+    /// dismiss and the player would learn to stop reading it.
+    /// </summary>
+    [Fact]
+    public async Task ReconciliationWithNoFindings_AndNoCatchUpFailures_ShowsNothing()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var lastViewed = Base;
+        await SeedEconomyStateAsync(ctx, lastViewed);
+
+        var startupState = new StartupReconciliationState { Result = ReservationReconciliationResult.Empty };
+
+        var result = ValueOf<AwaySummaryResponse>(await MaintenanceEndpoints.AwaySummaryAsync(
+            ctx.Db, ctx.CurrentUser, new FakeClock(lastViewed.AddSeconds(1)), startupState, CancellationToken.None));
+
+        Assert.False(result.HasSummary);
     }
 }

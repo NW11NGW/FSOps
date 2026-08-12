@@ -234,7 +234,8 @@ public static class MaintenanceEndpoints
     /// Dashboard mid-session is always safe - see <see cref="AcknowledgeAwaySummaryAsync"/> for the
     /// only thing that consumes it.
     /// </summary>
-    internal static async Task<IResult> AwaySummaryAsync(FsOpsDbContext db, ICurrentUser currentUser, IClock clock, CancellationToken ct)
+    internal static async Task<IResult> AwaySummaryAsync(
+        FsOpsDbContext db, ICurrentUser currentUser, IClock clock, StartupReconciliationState startupState, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -242,28 +243,43 @@ public static class MaintenanceEndpoints
             return Results.Ok(AwaySummaryResponse.None);
         }
 
+        // Startup findings (a reservation reconciled at boot, a catch-up pass that threw) are
+        // tracked independently of the ledger-based watermark below - see StartupReconciliationState's
+        // own doc for why. They can make this call worth reporting even when nothing else below does.
+        var (reconciliationResult, catchUpFailures) = startupState.GetUnacknowledged(airline.Id);
+        var reservationChanges = BuildReservationChangeSummary(reconciliationResult, airline.Id);
+        var catchUpFailureSummaries = catchUpFailures
+            .Select(f => new StartupCatchUpFailureSummary(f.Service, f.Message, f.OccurredUtc))
+            .ToList();
+        var hasStartupFindings = reservationChanges is not null || catchUpFailureSummaries.Count > 0;
+
         var state = await db.EconomyStates.FirstOrDefaultAsync(ct);
         var now = clock.UtcNow;
 
         if (state is null)
         {
-            return Results.Ok(AwaySummaryResponse.None);
+            return hasStartupFindings
+                ? Results.Ok(await BuildStartupOnlyResponseAsync(db, airline.Id, now, reservationChanges, catchUpFailureSummaries, ct))
+                : Results.Ok(AwaySummaryResponse.None);
         }
 
         if (state.AwaySummaryLastViewedUtc is null)
         {
             // Bootstrap only, same "no opinion until something explicitly sets it" convention as
             // VirtualFlightResolverService's own watermark - a brand-new airline has nothing to
-            // catch up on, so this pass reports nothing rather than guessing a start point.
+            // catch up on ledger-wise, so this pass reports nothing on that front. Startup findings
+            // are a separate concern and still get reported even on this very first call.
             state.AwaySummaryLastViewedUtc = now;
             await db.SaveChangesAsync(ct);
-            return Results.Ok(AwaySummaryResponse.None);
+            return hasStartupFindings
+                ? Results.Ok(await BuildStartupOnlyResponseAsync(db, airline.Id, now, reservationChanges, catchUpFailureSummaries, ct))
+                : Results.Ok(AwaySummaryResponse.None);
         }
 
         var windowStart = state.AwaySummaryLastViewedUtc.Value;
         var windowEnd = now;
 
-        if (windowEnd - windowStart < AwayThreshold)
+        if (windowEnd - windowStart < AwayThreshold && !hasStartupFindings)
         {
             return Results.Ok(AwaySummaryResponse.None);
         }
@@ -280,7 +296,7 @@ public static class MaintenanceEndpoints
             .Where(m => m.CreatedUtc > windowStart && m.CreatedUtc <= windowEnd)
             .ToList();
 
-        if (ledgerLines.Count == 0 && flights.Count == 0 && maintenanceEvents.Count == 0)
+        if (ledgerLines.Count == 0 && flights.Count == 0 && maintenanceEvents.Count == 0 && !hasStartupFindings)
         {
             return Results.Ok(AwaySummaryResponse.None);
         }
@@ -337,7 +353,66 @@ public static class MaintenanceEndpoints
             ledgerLines.Sum(t => t.Amount),
             virtualPilots,
             maintenanceSummaries,
-            unresolved));
+            unresolved,
+            reservationChanges,
+            catchUpFailureSummaries));
+    }
+
+    /// <summary>
+    /// Reports a startup finding (reservation reconciled, catch-up pass failed) on its own, for the
+    /// calls where there is genuinely nothing else to say - no ledger activity, or not even an
+    /// <see cref="EconomyState"/> row yet. <paramref name="instant"/> is used for both ends of the
+    /// window: there is no meaningful "since" for a finding that isn't itself ledger-window-based,
+    /// and a zero-length window reads better in the dialog than an invented one. See
+    /// AwaySummaryDialog's own handling of a zero <c>awayHours</c> for the other half of this.
+    /// </summary>
+    private static async Task<AwaySummaryResponse> BuildStartupOnlyResponseAsync(
+        FsOpsDbContext db, Guid airlineId, DateTimeOffset instant,
+        ReservationChangeSummary? reservationChanges, List<StartupCatchUpFailureSummary> catchUpFailures, CancellationToken ct)
+    {
+        var cashBalance = await CashBalanceAsync(db, airlineId, ct);
+        return new AwaySummaryResponse(
+            true,
+            instant,
+            instant,
+            0,
+            cashBalance,
+            [],
+            0,
+            new VirtualPilotActivitySummary(0, 0, 0, 0),
+            [],
+            [],
+            reservationChanges,
+            catchUpFailures);
+    }
+
+    /// <summary>Narrows a raw <see cref="ReservationReconciliationResult"/> down to what one
+    /// airline needs to see, or null if it turns out this airline had no part in it (reconciliation
+    /// can touch several airlines' fleets in one pass under a future multi-user model, even though
+    /// today there is only ever one).</summary>
+    private static ReservationChangeSummary? BuildReservationChangeSummary(ReservationReconciliationResult? result, Guid airlineId)
+    {
+        if (result is null)
+        {
+            return null;
+        }
+
+        var released = result.Released
+            .Where(r => r.AirlineId == airlineId)
+            .Select(r => new ReservationReleaseSummary(r.FleetAircraftId, r.Registration, r.ScheduledLegCount))
+            .ToList();
+        var fallbackReserved = result.FallbackReserved
+            .Where(f => f.AirlineId == airlineId)
+            .Select(f => new ReservationFallbackSummary(f.FleetAircraftId, f.Registration))
+            .ToList();
+        var leftWithNoReservedAircraft = result.AirlinesLeftWithNoReservedAircraft.Contains(airlineId);
+
+        if (released.Count == 0 && fallbackReserved.Count == 0 && !leftWithNoReservedAircraft)
+        {
+            return null;
+        }
+
+        return new ReservationChangeSummary(released, fallbackReserved, leftWithNoReservedAircraft);
     }
 
     /// <summary>
@@ -362,13 +437,19 @@ public static class MaintenanceEndpoints
     /// <summary>Marks the away-summary window as seen - moves <see cref="EconomyState.AwaySummaryLastViewedUtc"/>
     /// forward to now. The only endpoint that ever advances that cursor - see <see cref="AwaySummaryAsync"/>'s
     /// own doc for why every GET there is deliberately side-effect free.</summary>
-    internal static async Task<IResult> AcknowledgeAwaySummaryAsync(FsOpsDbContext db, ICurrentUser currentUser, IClock clock, CancellationToken ct)
+    internal static async Task<IResult> AcknowledgeAwaySummaryAsync(
+        FsOpsDbContext db, ICurrentUser currentUser, IClock clock, StartupReconciliationState startupState, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
         {
             return Results.BadRequest(new { error = "Create an airline first." });
         }
+
+        // Moves the startup-findings cursor forward alongside the ledger one below, so from the
+        // player's side "Got it" clears the whole dialog in one action even though the two are
+        // tracked independently under the hood - see StartupReconciliationState.Acknowledge.
+        startupState.Acknowledge();
 
         var state = await db.EconomyStates.FirstOrDefaultAsync(ct);
         if (state is null)
@@ -421,11 +502,13 @@ public record AwaySummaryResponse(
     decimal NetLedgerChange,
     VirtualPilotActivitySummary VirtualPilots,
     List<MaintenanceEventSummary> MaintenanceEvents,
-    List<UnflyableOccurrenceSummary> UnresolvedOccurrences)
+    List<UnflyableOccurrenceSummary> UnresolvedOccurrences,
+    ReservationChangeSummary? ReservationChanges,
+    List<StartupCatchUpFailureSummary> CatchUpFailures)
 {
     public static readonly AwaySummaryResponse None = new(
         false, default, default, 0, 0, [], 0,
-        new VirtualPilotActivitySummary(0, 0, 0, 0), [], []);
+        new VirtualPilotActivitySummary(0, 0, 0, 0), [], [], null, []);
 }
 
 public record LedgerCategoryTotal(string Category, decimal Amount, int Count);
@@ -435,3 +518,29 @@ public record VirtualPilotActivitySummary(int SectorsFlown, decimal Revenue, dec
 public record MaintenanceEventSummary(Guid FleetAircraftId, string Registration, string Type, DateTimeOffset StartUtc, DateTimeOffset? EndUtc, decimal Cost);
 
 public record UnflyableOccurrenceSummary(Guid FlightId, string Status, string RouteLabel, DateTimeOffset PlannedDepartureUtc, string? Reason);
+
+/// <summary>One aircraft the startup <see cref="Services.ReservationReconciler"/> released because
+/// it had a contradictory reservation - see <see cref="Services.ReleasedAircraft"/> for the full
+/// story of why this happens.</summary>
+public record ReservationReleaseSummary(Guid FleetAircraftId, string Registration, int ScheduledLegCount);
+
+/// <summary>One aircraft the reconciler reserved as a replacement after a release above left the
+/// airline with none - see <see cref="Services.FallbackReservedAircraft"/>.</summary>
+public record ReservationFallbackSummary(Guid FleetAircraftId, string Registration);
+
+/// <summary>What the startup reservation reconciler did to this player's fleet, if anything -
+/// folded into the away-summary rather than shown separately. <see cref="LeftWithNoReservedAircraft"/>
+/// is true when a release left the airline with nothing reserved and no safe replacement could be
+/// chosen (every remaining aircraft had scheduled legs of its own) - the player has to pick one
+/// explicitly on the Fleet screen.</summary>
+public record ReservationChangeSummary(
+    List<ReservationReleaseSummary> Released,
+    List<ReservationFallbackSummary> FallbackReserved,
+    bool LeftWithNoReservedAircraft);
+
+/// <summary>One wall-clock catch-up pass (<see cref="Services.EconomyClockService"/> or
+/// <see cref="Services.VirtualFlightResolverService"/>) that threw instead of completing - see
+/// <see cref="Services.StartupCatchUpFailure"/> for why this matters enough to surface. Carries only
+/// the exception's message, not its type - the type is an implementation detail the player has no
+/// use for; the log has the full exception if a developer needs it.</summary>
+public record StartupCatchUpFailureSummary(string Service, string Message, DateTimeOffset OccurredUtc);

@@ -79,11 +79,51 @@ export interface UnflyableOccurrenceSummary {
   reason: string | null
 }
 
+/** One aircraft the startup reservation reconciler released because it was marked reserved for the
+ *  player but also had active scheduled legs - the schedule was kept, only the flag changed. */
+export interface ReservationReleaseSummary {
+  fleetAircraftId: string
+  registration: string
+  scheduledLegCount: number
+}
+
+/** One aircraft the reconciler auto-reserved to replace a release that would otherwise have left
+ *  the airline with nothing reserved. */
+export interface ReservationFallbackSummary {
+  fleetAircraftId: string
+  registration: string
+}
+
+/** What the startup reservation reconciler did to this player's fleet, if anything - present only
+ *  when it found and fixed a contradiction. `leftWithNoReservedAircraft` means a release left the
+ *  airline with nothing reserved and no safe replacement existed (every remaining aircraft had
+ *  scheduled legs of its own) - the player needs to reserve one explicitly on the Fleet screen. */
+export interface ReservationChangeSummary {
+  released: ReservationReleaseSummary[]
+  fallbackReserved: ReservationFallbackSummary[]
+  leftWithNoReservedAircraft: boolean
+}
+
+/** One wall-clock catch-up pass (economy clock or virtual-flight resolver) that threw instead of
+ *  completing. Not cosmetic: a failed pass can mean real money movements (lease/salary/insurance
+ *  charges, virtual-pilot flight settlement) have not been posted. */
+export interface StartupCatchUpFailureSummary {
+  service: string
+  message: string
+  occurredUtc: string
+}
+
 /**
  * GET /away-summary - what happened while the app was closed, for the window since the player last
  * acknowledged a summary. Catch-up has to be explained or it reads as a bug.
  * Read-only - never advances the server's cursor on its own; see POST /away-summary/acknowledge
  * for the only thing that does.
+ *
+ * `reservationChanges` and `catchUpFailures` are startup-time findings folded into this same
+ * dialog rather than surfaced separately - see StartupReconciliationState's own doc on the server
+ * for why there is deliberately only one "something happened while you weren't looking" mechanism.
+ * They can make `hasSummary` true even when nothing else here does (e.g. a reload seconds after a
+ * catch-up pass failed, well before the normal away-gap threshold).
  */
 export interface AwaySummaryResponse {
   hasSummary: boolean
@@ -96,4 +136,6 @@ export interface AwaySummaryResponse {
   virtualPilots: VirtualPilotActivitySummary
   maintenanceEvents: MaintenanceEventSummary[]
   unresolvedOccurrences: UnflyableOccurrenceSummary[]
+  reservationChanges: ReservationChangeSummary | null
+  catchUpFailures: StartupCatchUpFailureSummary[]
 }

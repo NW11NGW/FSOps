@@ -131,12 +131,21 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
     setError(null)
 
     try {
+      let autoReserved = false
       if (mode === 'lease') {
-        await post('/fleet/lease', { aircraftTypeId: selected.id, registration })
+        const result = await post<{ autoReserved?: boolean }>('/fleet/lease', { aircraftTypeId: selected.id, registration })
+        autoReserved = result.autoReserved ?? false
         toast.success(`Leased a ${selected.name} (${selected.icaoType}) - ${registration}.`)
       } else {
-        await post('/fleet/buy', { aircraftTypeId: selected.id, condition, registration })
+        const result = await post<{ autoReserved?: boolean }>('/fleet/buy', { aircraftTypeId: selected.id, condition, registration })
+        autoReserved = result.autoReserved ?? false
         toast.success(`Bought a ${condition.toLowerCase()} ${selected.name} (${selected.icaoType}) - ${registration}.`)
+      }
+      // The fleet was completely empty before this add, so the backend reserved THIS aircraft for
+      // the player by default (see FleetEndpoints.ReserveIfFleetWasEmptyAsync) - never silent, so
+      // it gets its own toast rather than being folded quietly into the flag on the Fleet page.
+      if (autoReserved) {
+        toast.info(`${registration} was automatically reserved for you to fly, since your fleet was empty.`)
       }
       onOpenChange(false)
       onSuccess()
