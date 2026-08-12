@@ -6,16 +6,50 @@ data, airline cash, next scheduled flights) served from FSOps' local server. Thi
 technique used by Navigraph's in-game panel and by `buzinin/msfs2024-efb-panel` - a toolbar panel
 whose content is just an iframe pointed at `http://localhost:<port>`.
 
-## Status: the package is complete and the `.spb` is compiled and committed
+## Status: loaded by the simulator for the first time (2026-08-12) - found broken, root-caused, partially fixed
 
-`package/InGamePanels/FSOpsPanel.spb` is present. It was compiled with the MSFS 2024 SDK's
-`fspackagetool.exe` against a real MSFS 2024 install, produced no errors, and is byte-for-byte
-reproducible from the sources in `source/` (verified by building the same project twice from
-different directories and comparing SHA-256).
+The panel was installed and MSFS 2024 loaded it for real for the first time. Two things were
+proven by that alone, before anything else: the compiled `.spb` **is** read and honoured by the
+sim (the toolbar button appeared, positioned correctly, and opened a window), and the install
+machinery **does** produce a correct `layout.json` (confirmed by reading the actual installed copy
+in the player's Community folder afterwards - present, correctly formatted, listing every file).
+Neither of those was in question before; both now are settled facts, not hypotheses.
 
-Nothing further is required to ship the panel. It has **not yet been loaded by the simulator** -
-that happens the first time the sim is started with the package installed, and is the one step
-that cannot be verified without launching MSFS and looking at the toolbar.
+What was broken, both **still unconfirmed by the simulator** (see the two items below):
+
+1. **Toolbar button had no icon** - rendered as a plain colour square. Root cause (well-evidenced,
+   not simulator-proven): the icon shipped only at the legacy MSFS 2020 path,
+   `html_ui/Textures/Menu/toolbar/`. Two other real, currently-installed MSFS 2024 packages on the
+   machine this was diagnosed on - `fsdreamteam-gsx-pro` (built fresh for 2024) and
+   `fsltl-traffic-injector` (a 2020-era package patched for 2024) - both ship the icon at
+   `html_ui/icons/toolbar/` instead (FSLTL ships it at *both* paths). FSOps now does the same - see
+   "Toolbar icon ships at two paths" below. This is a plain file addition; **no recompile needed**,
+   already applied.
+2. **Panel content was entirely black**, and the window's title bar read `FSOPSPANEL` (the `.spb`'s
+   registered `Name`, uppercased) rather than the panel's own title. Root cause (well-evidenced, not
+   simulator-proven): `source/PackageSources/FSOpsPanel.xml` declared
+   `url="html_UI/InGamePanels/FSOpsPanel/FSOpsPanel.html"` (capital `UI`), while the package's real
+   folder on disk, and the `layout.json` generated for it, both say `html_ui` (lower-case) - so does
+   every other real package checked. That mismatch is fixed in `source/PackageSources/FSOpsPanel.xml`
+   now, but **this one is baked into the compiled `.spb` and needs a recompile** - see "Rebuilding
+   the `.spb`" below.
+   A `<title>FSOps</title>` was also added to `FSOpsPanel.html`'s `<head>` as a low-risk second
+   fix (present in one confirmed-working reference package, absent in another, so not decisive on
+   its own - kept because it costs nothing and is more correct regardless).
+
+> **The `.spb` has NOT been rebuilt. Say this loudly because it is easy to miss:**
+> `package/InGamePanels/FSOpsPanel.spb` is still **668 bytes**, SHA-256
+> `5AA95E70CC4A4E75548A4DB0D1A2F7EFB1B4B0C17FE22511E8DA642A083099C8`, and still carries the
+> uncorrected `html_UI` URL. `source/PackageSources/FSOpsPanel.xml` has the fix sitting right next
+> to it, uncompiled. A rebuild attempt on 2026-08-12 was aborted before producing any output - see
+> "Rebuilding the `.spb`" below for why, and do not assume a future rebuild attempt succeeded
+> without checking the hash changed. A source fix with a stale binary beside it is exactly the kind
+> of thing that gets forgotten and confuses someone badly in three months, hence this warning.
+
+The icon fix (item 1) IS live in `package/` right now - it is loose files, not compiled, and any
+Repair from FSOps' Settings picks it up immediately. The casing fix (item 2) will not take effect
+until the `.spb` is actually rebuilt with the simulator closed and the result copied over the file
+above.
 
 ## Rebuilding the `.spb` (only needed if `source/PackageSources/FSOpsPanel.xml` changes)
 
@@ -23,14 +57,16 @@ The panel's HTML, CSS, JS and the port it points at are plain text and are **nev
 Only the toolbar registration - the icon, panel ID, default size and docking - lives in the
 compiled file. So a change to the panel's content, or to the port, never needs the SDK.
 
-With the MSFS 2024 SDK installed, and MSFS 2024 installed (the tool drives the simulator to do
-the conversion, so the game itself must be present):
+**Close MSFS 2024 completely before running the tool - see trap 4 below.** With the MSFS 2024 SDK
+installed:
 
 ```
 & "C:\MSFS 2024 SDK\Tools\bin\fspackagetool.exe" "<repo>\src\fsops-ingame-panel\source\FSOpsPanel.xml" -nopause
 ```
 
-Then copy the result over the committed copy:
+**Then verify it actually produced something before trusting it** - see trap 4. Only once
+`source/_out/Packages/fsops-panel/InGamePanels/FSOpsPanel.spb` exists and its hash differs from the
+committed copy, copy the result over the committed copy:
 
 ```
 copy "<repo>\src\fsops-ingame-panel\source\_out\Packages\fsops-panel\InGamePanels\FSOpsPanel.spb" "<repo>\src\fsops-ingame-panel\package\InGamePanels\FSOpsPanel.spb"
@@ -39,9 +75,9 @@ copy "<repo>\src\fsops-ingame-panel\source\_out\Packages\fsops-panel\InGamePanel
 `source/_out/` and `source/_Temp/` are build scratch and are gitignored; the compiled `.spb` under
 `package/` is what is committed.
 
-### Three things about the package tool that cost time to work out
+### Four things about the package tool that cost time to work out
 
-These are recorded because none of them are obvious, and two of them fail *silently*.
+These are recorded because none of them are obvious, and three of them fail *silently*.
 
 1. **The tool takes a project file, not the panel definition.** An earlier version of this README
    told you to point `fspackagetool.exe` straight at the panel definition XML with a `-nomirroring`
@@ -56,6 +92,20 @@ These are recorded because none of them are obvious, and two of them fail *silen
    the document. `PackageSources/FSOpsPanel.xml` is what makes the output `FSOpsPanel.spb`; the
    `<Filename>InGamePanel_FSOpsPanel.spb</Filename>` line inside it does not control the name.
    This is why the source file is named for the panel rather than something descriptive.
+4. **The tool attaches to a *running* MSFS instance, and on this machine neither survived that -
+   with no error either way.** Run against a real, already-open MSFS 2024 session (2026-08-12): the
+   tool printed `Attached to EXE - waiting for completion.` and nothing else, then exited by itself
+   about fifty seconds later with a blank (unreadable) exit code. `source/_out/` was never created -
+   no output, no partial output, nothing. In the same window, the running `FlightSimulator2024.exe`
+   process disappeared entirely - it did not merely lose focus or hang, it was gone from the process
+   list, and nothing that ran that evening issued a stop/kill against it. The working conclusion:
+   **`fspackagetool.exe` must be run with MSFS 2024 completely closed.** It is not documented
+   anywhere obvious that the tool wants to attach to a live instance at all, so this is easy to get
+   wrong by simply having the sim open in the background while you rebuild a package, the way you
+   normally would for everything else in this repo. Because this fails with no error, no exception,
+   and a *clean-looking* exit, the only reliable check is the one already recommended above:
+   confirm `source/_out/...FSOpsPanel.spb` exists and hash it against the previously-committed copy
+   before assuming anything changed - a successful-looking run is not evidence of a successful build.
 
 ## Why the port lives in its own file
 
@@ -69,6 +119,39 @@ requires the MSFS SDK or a recompile, only re-running install from the app.
 
 If FSOps later moves port, an already-installed panel keeps pointing at the old one. FSOps'
 Settings page detects that drift and offers Repair, which rewrites just this file.
+
+## Toolbar icon ships at two paths
+
+The toolbar button appeared with no icon (a plain colour square) the first time this package was
+loaded by a real MSFS 2024 install. `source/PackageSources/FSOpsPanel.xml` references the icon only
+by bare ID (`icon="ICON_TOOLBAR_FSOPS_PANEL"`, no path), so MSFS resolves it by searching fixed,
+conventional directories rather than a literal path baked into the compiled `.spb` - unlike the
+panel's HTML `url`, which *is* a literal baked-in path (see the status note above).
+
+This package was built from a 2020-era reference template and only ever shipped the icon at the
+MSFS 2020 convention, `html_ui/Textures/Menu/toolbar/`. Two real MSFS 2024 packages installed on
+the machine this was diagnosed on say otherwise:
+
+- `fsdreamteam-gsx-pro` (built and versioned for MSFS 2024, `minimum_game_version` 1.39.12) ships
+  its toolbar icon *only* at `html_ui/icons/toolbar/` - no legacy copy at all.
+- `fsltl-traffic-injector` (an older, 2020-era package since patched for 2024,
+  `minimum_game_version` 1.32.7) ships the *identical* icon file at **both**
+  `html_ui/icons/toolbar/` and `html_ui/Textures/Menu/toolbar/` - the same shape of fix being made
+  here.
+
+So the icon now ships at both paths too: `html_ui/icons/toolbar/ICON_TOOLBAR_FSOPS_PANEL.svg` (the
+new, apparently MSFS-2024-read one) and `html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_FSOPS_PANEL.svg`
+(the original, kept for compatibility - not a leftover to be cleaned up later). This is a plain file
+addition - the `.spb` does not need recompiling for it, `PanelPackageInstaller` picks it up
+automatically because `CopyTemplateFiles` and `WriteLayoutJson` both walk the template directory
+rather than reading a hardcoded file list (see
+`PanelPackageInstallerTests.InstallOrRepair_FromTheRealTemplate_WritesTheToolbarIconAtBothTheNewAndLegacyPaths`
+and the companion repair test, which install from this real template into a throwaway folder and
+assert both files land and both are listed in the generated `layout.json`).
+
+Which of the two paths MSFS 2024 actually reads has not been confirmed by launching the sim - only
+inferred by comparing against other installed packages. Shipping both costs a few hundred bytes and
+cannot make things worse, so there was no reason to guess between them.
 
 ## Package layout
 
@@ -84,9 +167,12 @@ package/                                          <- copied byte-for-byte into
       FSOpsPanel.css                               and lays out the iframe
       FSOpsPanel.js
       FSOpsPanel.config.js                        <- ONLY file the app rewrites (the port)
+    icons/toolbar/
+      ICON_TOOLBAR_FSOPS_PANEL.svg                <- toolbar icon, MSFS 2024 path - see
+                                                      "Toolbar icon ships at two paths" below
     Textures/Menu/toolbar/
-      ICON_TOOLBAR_FSOPS_PANEL.svg                <- toolbar icon (MSFS recolours it; single
-                                                      black fill, matches the reference format)
+      ICON_TOOLBAR_FSOPS_PANEL.svg                <- SAME icon, legacy MSFS 2020 path, kept for
+                                                      compatibility - not a leftover, see below
   InGamePanels/
     FSOpsPanel.spb                                <- compiled toolbar registration (committed)
 

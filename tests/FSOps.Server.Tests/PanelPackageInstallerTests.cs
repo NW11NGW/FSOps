@@ -200,6 +200,70 @@ public sealed class PanelPackageInstallerTests : IDisposable
         Assert.False(result.ToolbarWillAppearInSim);
     }
 
+    /// <summary>
+    /// The real, checked-in package template - the same folder that ships beside the server as
+    /// PanelTemplate and that CopyTemplateFiles/WriteLayoutJson walk with Directory.EnumerateFiles
+    /// rather than any hardcoded list. Fake-template tests above prove the mechanism; these prove
+    /// the mechanism actually reaches the toolbar icon fix, because a hardcoded list would pass
+    /// every fake-template test and still silently drop a real file nobody remembered to list.
+    /// </summary>
+    private static string ShippedTemplate => Path.Combine(AppContext.BaseDirectory, "PanelTemplate");
+
+    [Fact]
+    public void InstallOrRepair_FromTheRealTemplate_WritesTheToolbarIconAtBothTheNewAndLegacyPaths()
+    {
+        // MSFS 2024's toolbar reads html_ui/icons/toolbar/ (confirmed against two real installed
+        // packages - fsdreamteam-gsx-pro and fsltl-traffic-injector - on the machine this was
+        // diagnosed on); html_ui/Textures/Menu/toolbar/ is the legacy MSFS 2020 location our panel
+        // was built from and is kept for backwards compatibility, exactly as fsltl-traffic-injector
+        // ships both. Losing either copy - accidentally deleting the new one, or "cleaning up" the
+        // legacy one - would silently reintroduce the blank-toolbar-icon bug, so both are pinned
+        // here rather than left to be noticed only in a real MSFS session.
+        var result = PanelPackageInstaller.InstallOrRepair(_communityFolder, ShippedTemplate, "5977");
+
+        Assert.True(result.Success);
+        var target = result.InstalledPath!;
+        Assert.True(File.Exists(Path.Combine(target, "html_ui", "icons", "toolbar", "ICON_TOOLBAR_FSOPS_PANEL.svg")));
+        Assert.True(File.Exists(Path.Combine(target, "html_ui", "Textures", "Menu", "toolbar", "ICON_TOOLBAR_FSOPS_PANEL.svg")));
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(target, "layout.json")));
+        var paths = doc.RootElement.GetProperty("content")
+            .EnumerateArray()
+            .Select(e => e.GetProperty("path").GetString())
+            .ToList();
+
+        // Proves WriteLayoutJson picked the new file up by walking the target directory, not from
+        // any list that would have needed a manual update when the icon file was added.
+        Assert.Contains("html_ui/icons/toolbar/ICON_TOOLBAR_FSOPS_PANEL.svg", paths);
+        Assert.Contains("html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_FSOPS_PANEL.svg", paths);
+    }
+
+    [Fact]
+    public void InstallOrRepair_RepairingAnOldStyleInstall_AddsTheNewIconPath_AndStaysRecognisedAsOurs()
+    {
+        // Reproduces exactly what is sitting in the user's real Community folder right now: a
+        // pre-fix FSOps install with only the legacy icon path, an older (pre-fix) layout.json, and
+        // no icons/toolbar file at all. The only way the user's existing install ever gets the fix
+        // is through Repair overwriting it - so this proves that path specifically, including that
+        // IsOurPackage still fingerprints the old install as ours (via FSOpsPanel.config.js) and
+        // does not refuse to touch it.
+        var target = Path.Combine(_communityFolder, "fsops-panel");
+        var legacyIconDir = Path.Combine(target, "html_ui", "Textures", "Menu", "toolbar");
+        var panelDir = Path.Combine(target, "html_ui", "InGamePanels", "FSOpsPanel");
+        Directory.CreateDirectory(legacyIconDir);
+        Directory.CreateDirectory(panelDir);
+        File.WriteAllText(Path.Combine(legacyIconDir, "ICON_TOOLBAR_FSOPS_PANEL.svg"), "<svg><!-- old --></svg>");
+        File.WriteAllText(Path.Combine(panelDir, "FSOpsPanel.config.js"), "window.FSOPS_PANEL_PORT = 5977;\n");
+        File.WriteAllText(Path.Combine(target, "manifest.json"), """{ "title": "FSOps In-Game Panel", "package_version": "0.9.0" }""");
+        Assert.False(File.Exists(Path.Combine(target, "html_ui", "icons", "toolbar", "ICON_TOOLBAR_FSOPS_PANEL.svg")));
+
+        var result = PanelPackageInstaller.InstallOrRepair(_communityFolder, ShippedTemplate, "5977");
+
+        Assert.True(result.Success);
+        Assert.True(File.Exists(Path.Combine(target, "html_ui", "icons", "toolbar", "ICON_TOOLBAR_FSOPS_PANEL.svg")));
+        Assert.True(File.Exists(Path.Combine(target, "html_ui", "Textures", "Menu", "toolbar", "ICON_TOOLBAR_FSOPS_PANEL.svg")));
+    }
+
     [Fact]
     public void InstallOrRepair_ReportsToolbarWillAppear_WhenTheSpbIsPresentInTheTemplate()
     {
