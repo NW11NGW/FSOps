@@ -250,7 +250,9 @@ public class RunwaySuitabilityAssessorTests
         var fleet = new[] { Narrowbody("G-BBBB"), Narrowbody("G-AAAA"), Widebody("G-CCCC") };
 
         var forwards = RunwaySuitabilityAssessor.Assess(departure, arrival, fleet);
-        var backwards = RunwaySuitabilityAssessor.Assess(departure, arrival, fleet.Reverse().ToArray());
+        // Enumerable.Reverse, not fleet.Reverse(): on an array the latter binds to the Span
+        // extension, which reverses in place and returns void.
+        var backwards = RunwaySuitabilityAssessor.Assess(departure, arrival, Enumerable.Reverse(fleet).ToArray());
 
         Assert.Equal(forwards, backwards);
     }

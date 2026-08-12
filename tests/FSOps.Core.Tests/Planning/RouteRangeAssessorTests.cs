@@ -95,7 +95,9 @@ public class RouteRangeAssessorTests
         var fleet = new[] { Narrowbody("G-BBBB"), Narrowbody("G-AAAA"), Widebody("G-CCCC") };
 
         var forwards = RouteRangeAssessor.Assess(3761, fleet);
-        var backwards = RouteRangeAssessor.Assess(3761, fleet.Reverse().ToArray());
+        // Enumerable.Reverse, not fleet.Reverse(): on an array the latter binds to the Span
+        // extension, which reverses in place and returns void.
+        var backwards = RouteRangeAssessor.Assess(3761, Enumerable.Reverse(fleet).ToArray());
 
         Assert.Equal(forwards, backwards);
         Assert.Equal("G-CCCC", forwards.AircraftRegistration);
