@@ -82,10 +82,16 @@ function Invoke-Native {
 # ---------------------------------------------------------------------------------------------
 Write-Step 'Reading the version from Directory.Build.props'
 
+# SelectSingleNode rather than dotted property access. Directory.Build.props has more than one
+# <PropertyGroup> and only one of them carries <Version>, so $props.Project.PropertyGroup is an
+# array whose first element has no such property - and under Set-StrictMode that is a terminating
+# error ("The property 'Version' cannot be found on this object") rather than a null. XPath asks the
+# question that is actually meant: the first Version element anywhere under Project.
 [xml]$props = Get-Content $propsPath -Raw
-$version = ($props.Project.PropertyGroup.Version | Where-Object { $_ }) | Select-Object -First 1
-if (-not $version) { throw "No <Version> element found in $propsPath." }
-$version = "$version".Trim()
+$versionNode = $props.SelectSingleNode('/Project/PropertyGroup/Version')
+if (-not $versionNode) { throw "No <Version> element found in $propsPath." }
+$version = $versionNode.InnerText.Trim()
+if (-not $version) { throw "The <Version> element in $propsPath is empty." }
 
 # Inno's VersionInfoVersion wants a numeric x.y[.z[.b]]. A version with a pre-release suffix would
 # compile to something misleading rather than fail, so it is rejected here instead.
