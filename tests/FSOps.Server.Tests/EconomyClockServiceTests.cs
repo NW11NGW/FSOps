@@ -10,11 +10,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Chunk E1's own stated verification (docs/PLAN.md "Wall-clock manipulation" and the E1 task
-/// brief): the monthly cycle must post lease/salary/insurance lines exactly once per period no
-/// matter how many times or how concurrently it is resolved, must catch up correctly after the app
-/// was closed for days, must never move <see cref="EconomyState.LastProcessedUtc"/> backwards, and
-/// must bound how much catch-up a single pass performs. Every test drives
+/// Guards against the wall-clock exploit where winding the system clock forward would otherwise
+/// complete flights and post revenue instantly: the monthly cycle must post lease/salary/insurance
+/// lines exactly once per period no matter how many times or how concurrently it is resolved, must
+/// catch up correctly after the app was closed for days, must never move
+/// <see cref="EconomyState.LastProcessedUtc"/> backwards, and must bound how much catch-up a single
+/// pass performs. Every test drives
 /// <see cref="EconomyClockService.RunOnceAsync"/> directly against an isolated in-memory SQLite
 /// database (see RouteTestContext) with a <see cref="FakeClock"/> - never the real database, never
 /// a real wall-clock wait.

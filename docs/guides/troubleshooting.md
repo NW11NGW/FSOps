@@ -26,6 +26,11 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [I can't release a pilot](#i-cant-release-a-pilot)
 - [SimBrief import did nothing](#simbrief-import-did-nothing)
 - [No controllers are showing](#no-controllers-are-showing)
+- [A controller is online but never appears anywhere on the map](#a-controller-is-online-but-never-appears-anywhere-on-the-map)
+- [En-route sectors never appear, only airport circles](#en-route-sectors-never-appear-only-airport-circles)
+- [My flight doesn't show as "flown online"](#my-flight-doesnt-show-as-flown-online)
+- [The "Flown online" history card is empty, or says I haven't set a CID](#the-flown-online-history-card-is-empty-or-says-i-havent-set-a-cid)
+- [Other VATSIM traffic isn't showing on the map](#other-vatsim-traffic-isnt-showing-on-the-map)
 - [The toolbar button isn't there](#the-toolbar-button-isnt-there)
 - [The panel opens but shows nothing](#the-panel-opens-but-shows-nothing)
 - [I moved my Community folder, or reinstalled MSFS](#i-moved-my-community-folder-or-reinstalled-msfs)
@@ -273,6 +278,41 @@ Two related limits worth knowing, since neither is visible on screen: coverage i
 **Cause:** The bundled boundary data is missing or unreadable. FSOps ships two files in `data/vatspy/` beside the application (`Boundaries.geojson.gz` and `VATSpy.dat.gz`); without them it can't resolve any en-route callsign to a shape, so it shows none — the same behaviour it had before boundary data existed. This never affects anything else: terminal controllers, the map, your flights and your airline are all unaffected.
 
 **Solution:** Reinstall FSOps, which restores the data files. If you're running from a build you made yourself, confirm both files are present in the `data/vatspy` folder next to the executable.
+
+## My flight doesn't show as "flown online"
+
+**Symptom:** You were connected to VATSIM for the whole flight, but the report card doesn't show the **"Flown online"** badge, or the flight doesn't appear in the Dashboard's flown-online history card.
+
+**Cause:** A few ordinary reasons, all handled by quietly leaving the badge off rather than guessing:
+
+- **No VATSIM CID set.** Go to Settings and enter your CID — see [Your VATSIM CID](user-guide.md#vatsim). With nothing set, FSOps never even asks the network about a flight.
+- **The flight was too short for a single check.** FSOps checks the network at most every ~20 seconds while a flight is tracked, matched to your own configured CID; a flight completed before the first check ran simply has nothing to show either way.
+- **You weren't online for enough of the flight.** FSOps corroborates your position against the network, not just your presence on it — briefly logging on and then disconnecting doesn't qualify. The badge (and the small bonus that comes with it) needs a meaningful share of the tracked flight to have matched, not just a moment of it.
+- **The flight was completed manually** ("Complete with estimates"). There's no reliable telemetry to corroborate against on that path at all — see [Why did completing manually cost me reputation](#why-did-completing-manually-cost-me-reputation).
+- **VATSIM's public feed was unreachable** for the whole flight — no internet, or the feed itself was down. FSOps never shows an error for this; the flight just completes as an ordinary offline sector.
+
+**Solution:** Nothing to fix if any of the above applies — this is expected. If you're confident none of them do (a real CID set, a flight of normal length, genuinely connected throughout, completed normally), that's worth reporting with the flight's completion time so the corroboration attempts around it can be checked in the [log files](#where-to-find-log-files).
+
+## The "Flown online" history card is empty, or says I haven't set a CID
+
+**Symptom:** The Dashboard's **Flown online** card either asks you to set a VATSIM CID, or shows no flights even though you've flown several while connected.
+
+**Cause:** This card is built entirely from FSOps' **own record** of flights it corroborated while they were tracked (see the section above) — it is never a pull from VATSIM's own history, which FSOps has no way to read (VATSIM doesn't publish a keyless public history of a member's past sessions; the only such endpoint requires an API key FSOps doesn't have). If it's asking for a CID, none is set in Settings yet. If a CID is set but the list is empty, none of your flights *since setting it* have been corroborated yet — a flight flown before you added your CID was never checked, and can't retroactively be.
+
+**Solution:** Set your CID in Settings if you haven't, then fly a tracked sector while connected to VATSIM. It'll appear here once that flight completes.
+
+## Other VATSIM traffic isn't showing on the map
+
+**Symptom:** The Dashboard's live operations map shows your own aircraft and any online controllers, but no other VATSIM pilots nearby, even though you can see them in a VATSIM client.
+
+**Solutions, in order:**
+
+1. **Check the toggle.** The **"Show/Hide VATSIM traffic"** button above the map switches this layer on and off; it's on by default. If it reads "Show VATSIM traffic", select it.
+2. **Check they're actually near your network.** This layer only shows traffic within about 150 nm of one of your own airports or your active routes' flight paths — it's deliberately not a whole-network traffic display, which would be far more than a dashboard map needs. Someone controlling or flying well away from your network genuinely won't appear.
+3. **Check the feed is reachable.** If VATSIM's public feed can't be read at all, other traffic (and the ATC layer alongside it) both quietly show nothing rather than an error — see [No controllers are showing](#no-controllers-are-showing) for the same underlying feed and how to tell "nobody nearby" apart from "feed unreachable".
+4. **On the in-game panel, this is off by design.** The panel has no map at all, so there's nothing to toggle there — this layer only ever appears on the Dashboard's map in a browser.
+
+Other traffic is drawn deliberately small, faint, and without the accent colour your own aircraft or a controller uses — that's intentional, so it reads as background context rather than competing with your own flight for attention.
 
 ## The toolbar button isn't there
 

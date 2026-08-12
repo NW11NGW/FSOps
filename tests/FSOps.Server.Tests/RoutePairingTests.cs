@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Routes are always a there-and-back pair (see docs/PLAN.md and RouteEndpoints.CreateAsync's
+/// Routes are always a there-and-back pair (see RouteEndpoints.CreateAsync's
 /// summary): POST /routes must create both legs atomically, DELETE must remove both, and a
 /// pre-existing single-leg route (from before pairing was mandatory) must be handled without
 /// crashing or losing data. These tests call the endpoint handlers directly against an isolated

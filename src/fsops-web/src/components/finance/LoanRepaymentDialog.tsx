@@ -28,6 +28,18 @@ interface LoanRepaymentDialogProps {
 type Mode = 'full' | 'partial'
 
 /**
+ * True only for the settlement endpoint's own stale-quote refusal (FinanceEndpoints.SettleLoanAsync),
+ * which is the one case where re-quoting is the right next step - the figure the player confirmed
+ * has genuinely moved since they opened this dialog (a background billing tick posted against the
+ * loan in between). Every other refusal from the same endpoint - insufficient funds chief among
+ * them - is a 400 with a plain `error` string and no `currentTotalPayoff`, so checking for that
+ * field (rather than matching on the error message's wording) is what actually tells the two apart.
+ */
+function isStaleQuoteError(err: ApiError): boolean {
+  return typeof err.body === 'object' && err.body !== null && 'currentTotalPayoff' in err.body
+}
+
+/**
  * Loans, with partial and full repayment: pay off in full (showing the payoff
  * figure and interest saved before confirming) or overpay any amount against the principal, always
  * blocked before it would drive cash negative, always stated consistently as shortening the term
@@ -78,10 +90,16 @@ export function LoanRepaymentDialog({ loan, onOpenChange, onSuccess }: LoanRepay
       onOpenChange(false)
       onSuccess()
     } catch (err) {
-      if (err instanceof ApiError) {
-        // A refusal here is the guard working, not a failure - re-quote and let them decide again.
+      if (err instanceof ApiError && isStaleQuoteError(err)) {
+        // A genuine stale quote - the guard working as intended, not a failure. Re-quote and let
+        // them decide again against the current figure.
         setStaleQuoteNotice(err.message)
         reloadQuote()
+      } else if (err instanceof ApiError) {
+        // Any other refusal (insufficient funds, the loan already being paid off, etc.) - nothing
+        // about the quote changed, so this must never claim otherwise. Shown as a plain error
+        // instead of the stale-quote banner, and the quote is left alone rather than re-fetched.
+        setError(err.message)
       } else {
         setError('Could not settle this loan. Check your connection and try again.')
       }

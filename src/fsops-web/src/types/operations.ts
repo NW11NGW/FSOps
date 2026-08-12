@@ -127,3 +127,58 @@ export interface VatsimAtcResponse {
    *  anything about altitude bands. */
   boundaries: Record<string, number[][][][]> | null
 }
+
+/**
+ * GET /vatsim/traffic - G11: other VATSIM pilots' live traffic near the airline's own network,
+ * for the live operations map. Deliberately thin (no CID, no pilot name) - this is "other people's
+ * traffic" for a subordinate map marker, never a profile. Toggled off by default on the in-game
+ * panel, which has no map to draw it on at all - see `Panel.tsx`'s own note that it draws no map.
+ */
+export type VatsimTrafficStatus = 'ok' | 'unavailable'
+
+export interface VatsimTrafficPilot {
+  callsign: string
+  latitudeDeg: number
+  longitudeDeg: number
+  altitudeFt: number
+  groundSpeedKt: number
+  headingDeg: number
+  departureIcao: string | null
+  arrivalIcao: string | null
+}
+
+export interface VatsimTrafficResponse {
+  status: VatsimTrafficStatus
+  fetchedAtUtc: string | null
+  pilots: VatsimTrafficPilot[]
+}
+
+/**
+ * GET /vatsim/history - G9: FSOps' OWN record of which of the airline's flights were corroborated
+ * as genuinely flown online on VATSIM (see `Flight.vatsimOnline`/G8). This is deliberately NOT a
+ * call to VATSIM's own history - the public feed has no history at all, and VATSIM's Core API
+ * history endpoint is key-gated (reading any CID's past sessions is a real privacy surface VATSIM
+ * doesn't hand out keylessly). Present this plainly as FSOps' own record - see the component that
+ * renders it.
+ */
+export interface VatsimHistoryEntry {
+  flightId: string
+  routeId: string
+  departureIcao: string | null
+  arrivalIcao: string | null
+  flightNumber: string | null
+  completedUtc: string
+  online: boolean
+  /** Fraction (0-1) of the corroboration checks that matched while this flight was tracked. */
+  onlineFraction: number | null
+  /** The callsign the configured CID was flying under when last matched. */
+  callsign: string | null
+  controllersWorked: string[]
+}
+
+export interface VatsimHistoryResponse {
+  /** False means no VATSIM CID is set in Settings at all - a different, more actionable empty
+   *  state than "a CID is set but nothing has been corroborated yet". */
+  cidConfigured: boolean
+  flights: VatsimHistoryEntry[]
+}

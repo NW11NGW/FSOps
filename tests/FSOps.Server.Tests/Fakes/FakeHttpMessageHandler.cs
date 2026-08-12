@@ -6,8 +6,9 @@ namespace FSOps.Server.Tests.Fakes;
 /// <summary>
 /// Stub transport for <see cref="HttpClient"/> so VatsimNetworkClient's failure paths (bad status,
 /// malformed body, a fetch that throws) can be exercised deterministically. The real VATSIM feed
-/// must never be hit from a test - see docs/PLAN.md "poll no more often than the 15-second
-/// regeneration interval" and the project's own etiquette rules toward third-party infrastructure.
+/// must never be hit from a test - the project polls VATSIM no more often than its 15-second
+/// regeneration interval and treats hitting third-party infrastructure from a test suite as
+/// against its own etiquette rules toward that infrastructure.
 /// </summary>
 internal sealed class FakeHttpMessageHandler : HttpMessageHandler
 {

@@ -12,7 +12,7 @@ namespace FSOps.Server.Tests;
 /// showed only 6 types and priced the A320 at the stale £101,000,000 figure. Reconciliation must
 /// bring an existing database into line with the current catalogue on every startup, not just
 /// seed once into an empty table - and it must do so without disturbing anything a player already
-/// owns (see docs/PLAN.md / the class's own doc for why FleetAircraft.AircraftTypeId makes
+/// owns (see the class's own doc for why FleetAircraft.AircraftTypeId makes
 /// matching-by-Id instead of by-IcaoType unsafe).
 /// </summary>
 public class AircraftTypeSeederReconciliationTests

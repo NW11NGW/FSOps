@@ -154,6 +154,16 @@ public enum LedgerCategory
     /// </summary>
     CancellationFee,
 
+    /// <summary>
+    /// The modest revenue uplift for a sector FSOps corroborated as genuinely flown online on
+    /// VATSIM - see <see cref="FSOps.Server.Services.FlightEconomicsPoster.PostVatsimOnlineBonus"/>
+    /// and <see cref="EconomyConfig.VatsimOnlineBonus"/>. Posted as its own line (rather than folded
+    /// into <see cref="TicketRevenue"/>) so the report card and ledger can show plainly that it came
+    /// from flying online, not from the fare itself. Stored as text, so adding this value needs no
+    /// migration.
+    /// </summary>
+    VatsimOnlineBonus,
+
     Other,
 }
 

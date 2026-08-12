@@ -2,6 +2,7 @@
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Finance;
+using FSOps.Core.Money;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using FSOps.Server.Services;
@@ -219,9 +220,10 @@ public static class FleetEndpoints
         var cashBalance = await CashBalanceAsync(db, airline.Id, ct);
         if (cashBalance < deposit)
         {
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
             return Results.BadRequest(new
             {
-                error = $"Insufficient funds - leasing a {aircraftType.Name} needs a deposit of {deposit:F2}, you have {cashBalance:F2}.",
+                error = $"Insufficient funds - leasing a {aircraftType.Name} needs a deposit of {MoneyFormatter.Format(deposit, currency)}, you have {MoneyFormatter.Format(cashBalance, currency)}.",
             });
         }
 
@@ -327,9 +329,10 @@ public static class FleetEndpoints
         var cashBalance = await CashBalanceAsync(db, airline.Id, ct);
         if (cashBalance < price)
         {
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
             return Results.BadRequest(new
             {
-                error = $"Insufficient funds - a {condition.ToLowerInvariant()} {aircraftType.Name} costs {price:F2}, you have {cashBalance:F2}.",
+                error = $"Insufficient funds - a {condition.ToLowerInvariant()} {aircraftType.Name} costs {MoneyFormatter.Format(price, currency)}, you have {MoneyFormatter.Format(cashBalance, currency)}.",
             });
         }
 
@@ -500,10 +503,11 @@ public static class FleetEndpoints
 
         if (!eligibility.IsEligible)
         {
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
             return Results.BadRequest(new
             {
-                error = $"This loan's monthly payment ({eligibility.MonthlyPayment:F2}) exceeds what your airline's recent cash flow can service " +
-                         $"(max {eligibility.MaxMonthlyPayment:F2}/month, {LoanEligibilityCalculator.MaxDebtServiceFraction:P0} of trailing 30-day net operating cash flow). " +
+                error = $"This loan's monthly payment ({MoneyFormatter.Format(eligibility.MonthlyPayment, currency)}) exceeds what your airline's recent cash flow can service " +
+                         $"(max {MoneyFormatter.Format(eligibility.MaxMonthlyPayment, currency)}/month, {LoanEligibilityCalculator.MaxDebtServiceFraction:P0} of trailing 30-day net operating cash flow). " +
                          "Try a smaller amount, a longer term, or grow your revenue first.",
                 monthlyPayment = eligibility.MonthlyPayment,
                 maxMonthlyPayment = eligibility.MaxMonthlyPayment,
@@ -657,6 +661,20 @@ public static class FleetEndpoints
     {
         var amounts = await db.LedgerTransactions.Where(t => t.AirlineId == airlineId).Select(t => t.Amount).ToListAsync(ct);
         return amounts.Sum();
+    }
+
+    /// <summary>
+    /// The player's own display currency, for formatting a money figure inside an error message -
+    /// every stored figure stays in the base unit (GBP) forever (see <see cref="MoneyFormatter"/>'s
+    /// own doc); only text shown back to the player should ever be converted. Falls back to the
+    /// base currency if <see cref="UserSettings"/> somehow doesn't exist yet or holds an
+    /// unrecognised code - never expected once an airline exists, but a refusal message must never
+    /// throw over a missing settings row.
+    /// </summary>
+    private static async Task<Currency> ResolveCurrencyAsync(FsOpsDbContext db, Guid ownerUserId, CancellationToken ct)
+    {
+        var settings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == ownerUserId, ct);
+        return CurrencyCatalogue.TryGet(settings?.CurrencyCode) ?? CurrencyCatalogue.TryGet(CurrencyCatalogue.BaseCurrencyCode)!;
     }
 
     /// <summary>

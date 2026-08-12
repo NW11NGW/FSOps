@@ -160,6 +160,38 @@ public static class FlightEconomicsPoster
         return result;
     }
 
+    /// <summary>
+    /// Posts the modest VATSIM online-flying bonus (G12) - see
+    /// <see cref="EconomyConfig.VatsimOnlineBonus"/>'s own doc. Callers (currently only
+    /// <see cref="FlightLifecycleService.FinalizeFlightAsync"/>) must have already established that
+    /// this flight qualifies - <see cref="Flight.VatsimOnline"/> true and
+    /// <see cref="Flight.VatsimOnlineFraction"/> at or above
+    /// <see cref="Core.Economy.VatsimOnlineBonusConfig.MinimumOnlineFraction"/> - and that
+    /// <see cref="PostCompletionAsync"/> actually posted ticket revenue for this sector (a slew/
+    /// position-jump flight, or one <see cref="PostCompletionAsync"/> otherwise declined to price,
+    /// earns no bonus either - there is nothing to be "extra" on top of). Computed as a fraction of
+    /// THIS sector's own <paramref name="ticketRevenue"/>, never a flat figure, so it scales with
+    /// the sector actually flown rather than being a fixed reward regardless of size. Returns the
+    /// amount posted (0 if the computed bonus rounds to nothing) purely for the caller's own
+    /// bookkeeping (folding it into <see cref="Flight.Revenue"/>).
+    /// </summary>
+    public static decimal PostVatsimOnlineBonus(
+        FsOpsDbContext db, Flight flight, EconomyConfig config, decimal ticketRevenue, DateTimeOffset utc)
+    {
+        var bonus = Math.Round(ticketRevenue * (decimal)config.VatsimOnlineBonus.RevenueUpliftFraction, 2, MidpointRounding.AwayFromZero);
+        if (bonus <= 0)
+        {
+            return 0m;
+        }
+
+        var callsignSuffix = string.IsNullOrWhiteSpace(flight.VatsimCallsign) ? string.Empty : $" as {flight.VatsimCallsign}";
+        Post(
+            db, flight, LedgerCategory.VatsimOnlineBonus, bonus, utc,
+            $"VATSIM online-flying bonus ({config.VatsimOnlineBonus.RevenueUpliftFraction:P0} uplift, flown{callsignSuffix})");
+
+        return bonus;
+    }
+
     private static void Post(FsOpsDbContext db, Flight flight, LedgerCategory category, decimal amount, DateTimeOffset utc, string description)
     {
         if (amount == 0m)

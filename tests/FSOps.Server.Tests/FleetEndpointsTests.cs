@@ -187,7 +187,8 @@ public class FleetEndpointsTests
     }
 
     /// <summary>
-    /// docs/PLAN.md "The country comes from the airline's HUB, always" - RouteTestContext's airline
+    /// A registration's country always comes from the airline's HUB, never from the airline's own
+    /// ICAO code or the aircraft's current location. RouteTestContext's airline
     /// is based at EGGD, whose country is "GB", so every auto-generated registration must be
     /// UK-format (G- + 4 letters), never the old airline-ICAO-derived scheme.
     /// </summary>
@@ -206,7 +207,7 @@ public class FleetEndpointsTests
         Assert.Equal(6, leased.Registration.Length);
     }
 
-    /// <summary>docs/PLAN.md "Let the player set a custom registration when buying or leasing".</summary>
+    /// <summary>The player may set a custom registration when buying or leasing, instead of the auto-generated suggestion.</summary>
     [Fact]
     public async Task Lease_WithCustomRegistration_UsesItInsteadOfGenerating()
     {
@@ -263,8 +264,8 @@ public class FleetEndpointsTests
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
     }
 
-    /// <summary>docs/PLAN.md "Renaming an existing aircraft should also be possible from the Fleet
-    /// page ... subject to the same uniqueness rule".</summary>
+    /// <summary>Renaming an existing aircraft should also be possible from the Fleet
+    /// page (repaints happen), subject to the same uniqueness rule as a fresh registration.</summary>
     [Fact]
     public async Task Rename_ToAFreeRegistration_Succeeds()
     {
@@ -315,8 +316,9 @@ public class FleetEndpointsTests
         var cashBefore = await CashBalanceAsync(ctx);
 
         // 100,000 trailing net cash flow -> max monthly payment 30,000. A small, clearly
-        // affordable loan. No rate is supplied - TakeLoanRequest has no rate field at all (see
-        // docs/PLAN.md "Loan interest is set by the simulation, never by the player").
+        // affordable loan. No rate is supplied - TakeLoanRequest has no rate field at all, because
+        // the interest rate is computed by the simulation and never accepted from the caller (a
+        // player-supplied rate could be set to zero, turning borrowing into a free exploit).
         var result = await FleetEndpoints.TakeLoanAsync(
             new TakeLoanRequest(200_000m, 60), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
 
@@ -391,8 +393,8 @@ public class FleetEndpointsTests
 
     /// <summary>
     /// The Chunk E1 exploit fix's own regression test: TakeLoanRequest has no rate field at all,
-    /// so there is no way for a caller to smuggle a 0% (or any other) rate into a loan - see
-    /// docs/PLAN.md "Loan interest is set by the simulation, never by the player". A healthy cash
+    /// so there is no way for a caller to smuggle a 0% (or any other) rate into a loan - the rate
+    /// is always computed by the simulation, never supplied by the player. A healthy cash
     /// flow but a tiny loan (barely touches borrowing capacity) must still be priced at the
     /// playstyle's BASE rate, never 0%.
     /// </summary>
@@ -425,8 +427,7 @@ public class FleetEndpointsTests
     }
 
     /// <summary>
-    /// A loan's rate is fixed for its life at the rate computed when it was taken - see
-    /// docs/PLAN.md "A loan's rate is fixed for its life". Taking a second, larger loan later
+    /// A loan's rate is fixed for its life at the rate computed when it was taken. Taking a second, larger loan later
     /// (against a materially different trailing cash flow, so it necessarily prices at a different
     /// rate) must not retroactively touch the first loan's stored AnnualInterestRate.
     /// </summary>
@@ -473,7 +474,7 @@ public class FleetEndpointsTests
         Assert.True(secondLoanAfter.AnnualInterestRate > firstLoanAfter.AnnualInterestRate);
     }
 
-    /// <summary>docs/PLAN.md "3a" - reserving an airframe a pilot is already scheduled to fly is
+    /// <summary>Reserving an airframe a pilot is already scheduled to fly is
     /// refused, naming the offending legs, rather than silently orphaning the schedule.</summary>
     [Fact]
     public async Task SetReservation_ReservingAnAircraftWithScheduledLegs_IsRefused_NamingTheLegs()

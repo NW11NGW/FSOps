@@ -95,6 +95,42 @@ public class LoanSettlementCalculatorTests
     }
 
     [Fact]
+    public void SimulateRemainingAmortization_BrandNew36MonthLoan_ReportsExactly36MonthsRemaining_NeverThirtySeven()
+    {
+        // The exact defect this test guards: FinanceEndpoints.LoansAsync feeds a brand-new loan's
+        // RemainingBalance/AnnualInterestRate/MonthlyPayment straight into this method to compute
+        // remainingTermMonths for the Finances page. Before the LoanCalculator rounding-remainder
+        // fix, 10,000 at 3% APR over 36 months (level payment 290.81) reported 37 months remaining -
+        // a brand-new loan appearing to already be behind schedule on the day it was taken out.
+        const decimal principal = 10_000m;
+        const double annualRatePct = 3.0;
+        var payment = LoanCalculator.MonthlyPayment(principal, annualRatePct, termMonths: 36);
+
+        var (remainingTermMonths, totalInterestRemaining) =
+            LoanSettlementCalculator.SimulateRemainingAmortization(principal, annualRatePct, payment);
+
+        Assert.Equal(36, remainingTermMonths);
+        Assert.Equal(469.25m, totalInterestRemaining);
+    }
+
+    [Fact]
+    public void SimulateRemainingAmortization_BrandNew36MonthLoanWherePaymentRoundsUp_AlsoReportsExactly36Months()
+    {
+        // Companion to the 3% case above, at a rate where the level payment rounds UP from the
+        // exact theoretical figure instead of down. Both directions matter: an earlier, incorrect
+        // version of the underlying fix collapsed this exact case to 35 months instead of 36.
+        const decimal principal = 10_000m;
+        const double annualRatePct = 5.0;
+        var payment = LoanCalculator.MonthlyPayment(principal, annualRatePct, termMonths: 36);
+
+        var (remainingTermMonths, totalInterestRemaining) =
+            LoanSettlementCalculator.SimulateRemainingAmortization(principal, annualRatePct, payment);
+
+        Assert.Equal(36, remainingTermMonths);
+        Assert.Equal(789.54m, totalInterestRemaining);
+    }
+
+    [Fact]
     public void SimulateRemainingAmortization_PathologicalRate_StopsAtTheSafetyCap()
     {
         // A payment that barely covers interest never pays down principal (ApplyMonthlyPayment

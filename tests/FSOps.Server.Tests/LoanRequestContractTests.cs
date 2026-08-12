@@ -6,11 +6,12 @@ namespace FSOps.Server.Tests;
 
 /// <summary>
 /// Chunk E1's own stated requirement, verified against the wire contract itself, not just the
-/// endpoint logic - see docs/PLAN.md "Loan interest is set by the simulation, never by the player".
+/// endpoint logic - loan interest is set by the simulation, never by the player, because a
+/// player-supplied rate could be set to zero and turn borrowing into a free exploit.
 /// <see cref="StartingLoanRequest"/> (AirlineEndpoints.CreateAsync's starting loan) and
 /// <see cref="TakeLoanRequest"/> (FleetEndpoints.TakeLoanAsync's mid-game loan) have NO rate
 /// property at all, so a request body still carrying "annualRatePct" - an old client, or a
-/// deliberate probe for the 0% exploit the plan describes - is silently dropped by JSON
+/// deliberate probe for that 0% exploit - is silently dropped by JSON
 /// deserialization rather than read, validated, or trusted. This is stronger than a runtime check:
 /// the exploit is impossible to express in the type, not merely rejected after the fact.
 /// </summary>

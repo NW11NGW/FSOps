@@ -188,6 +188,10 @@ public sealed class EconomyConfigCatalog
         // game-balance figure the user asked to differ by playstyle).
         Reputation = baseConfig.Reputation,
         PilotSkill = baseConfig.PilotSkill,
+        // Shared across playstyles - see VatsimOnlineBonusConfig's own doc (how generous the online
+        // bonus is is a simulation-fairness question, not a game-balance figure the user asked to
+        // differ by playstyle).
+        VatsimOnlineBonus = baseConfig.VatsimOnlineBonus,
         Fuel = baseConfig.Fuel,
         Costs = baseConfig.Costs,
         StrategyProfiles = baseConfig.StrategyProfiles,

@@ -1,6 +1,7 @@
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Finance;
+using FSOps.Core.Money;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using FSOps.Server.Services;
@@ -214,9 +215,10 @@ public static class FinanceEndpoints
 
         if (quote.TotalPayoff != request.ExpectedTotalPayoff)
         {
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
             return Results.BadRequest(new
             {
-                error = $"The payoff figure has changed since you last checked (was {request.ExpectedTotalPayoff:F2}, now {quote.TotalPayoff:F2}) - please confirm the new figure.",
+                error = $"The payoff figure has changed since you last checked (was {MoneyFormatter.Format(request.ExpectedTotalPayoff, currency)}, now {MoneyFormatter.Format(quote.TotalPayoff, currency)}) - please confirm the new figure.",
                 currentTotalPayoff = quote.TotalPayoff,
             });
         }
@@ -224,7 +226,8 @@ public static class FinanceEndpoints
         var cashBalance = await CashBalanceAsync(db, airline.Id, ct);
         if (cashBalance < quote.TotalPayoff)
         {
-            return Results.BadRequest(new { error = $"Settling this loan needs {quote.TotalPayoff:F2}, you have {cashBalance:F2}." });
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
+            return Results.BadRequest(new { error = $"Settling this loan needs {MoneyFormatter.Format(quote.TotalPayoff, currency)}, you have {MoneyFormatter.Format(cashBalance, currency)}." });
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -275,13 +278,15 @@ public static class FinanceEndpoints
 
         if (request.Amount > loan.RemainingBalance)
         {
-            return Results.BadRequest(new { error = $"amount ({request.Amount:F2}) exceeds the remaining balance ({loan.RemainingBalance:F2}) - use full settlement instead." });
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
+            return Results.BadRequest(new { error = $"amount ({MoneyFormatter.Format(request.Amount, currency)}) exceeds the remaining balance ({MoneyFormatter.Format(loan.RemainingBalance, currency)}) - use full settlement instead." });
         }
 
         var cashBalance = await CashBalanceAsync(db, loan.AirlineId, ct);
         if (cashBalance < request.Amount)
         {
-            return Results.BadRequest(new { error = $"Overpaying {request.Amount:F2} needs that much cash, you have {cashBalance:F2}." });
+            var currency = await ResolveCurrencyAsync(db, currentUser.UserId, ct);
+            return Results.BadRequest(new { error = $"Overpaying {MoneyFormatter.Format(request.Amount, currency)} needs that much cash, you have {MoneyFormatter.Format(cashBalance, currency)}." });
         }
 
         var newBalance = LoanSettlementCalculator.ApplyOverpayment(loan.RemainingBalance, request.Amount);
@@ -637,6 +642,21 @@ public static class FinanceEndpoints
     {
         var amounts = await db.LedgerTransactions.Where(t => t.AirlineId == airlineId).Select(t => t.Amount).ToListAsync(ct);
         return amounts.Sum();
+    }
+
+    /// <summary>
+    /// The player's own display currency, for formatting a money figure inside an error message -
+    /// every <see cref="LedgerTransaction.Amount"/> stays in the base unit (GBP) forever (see
+    /// <see cref="MoneyFormatter"/>'s own doc); only text shown back to the player should ever be
+    /// converted. Falls back to the base currency if <see cref="UserSettings"/> doesn't exist yet
+    /// (never expected once an airline exists - <see cref="Endpoints.AirlineEndpoints.CreateAsync"/>
+    /// always upserts one - but a refusal message must never throw over a missing settings row) or
+    /// somehow holds an unrecognised code.
+    /// </summary>
+    private static async Task<Currency> ResolveCurrencyAsync(FsOpsDbContext db, Guid ownerUserId, CancellationToken ct)
+    {
+        var settings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == ownerUserId, ct);
+        return CurrencyCatalogue.TryGet(settings?.CurrencyCode) ?? CurrencyCatalogue.TryGet(CurrencyCatalogue.BaseCurrencyCode)!;
     }
 }
 

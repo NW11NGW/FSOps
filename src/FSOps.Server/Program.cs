@@ -141,6 +141,11 @@ builder.Services.AddSingleton<IVatsimNetworkClient, VatsimNetworkClient>();
 // needs a boundary; nothing is fetched, so this stays true inside the in-game panel and offline.
 builder.Services.AddSingleton<IAtcBoundarySource, VatSpyBoundarySource>();
 
+// Recognises the player's own flights on the public feed while a sector is being tracked.
+// Deliberately no HttpClient of its own: it reuses the IVatsimNetworkClient singleton above, so
+// online detection shares the one cached fetch rather than adding a second poll of the same feed.
+builder.Services.AddSingleton<VatsimFlightCorroborationService>();
+
 // The update check's transport - see UpdateChecker for why this exists at all and how far it is
 // allowed to go. Second and last outbound call the server makes, after VATSIM. Nothing is
 // registered as a hosted service on purpose: the check is lazy and cached on disk, so there is

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// docs/PLAN.md "A schedule option: suspend during maintenance and resume automatically" - the
+/// A per-schedule option to suspend during maintenance and resume automatically - the
 /// fourteen-cancellation-fees bug this exists to prevent: a True-life C-check against a daily
 /// schedule must not cancel every occurrence for the fourteen days the aircraft is grounded.
 /// <see cref="PilotSchedule.AutoSuspendOnMaintenance"/> gates the behaviour and defaults true (see

@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { boundsForPath, sampleGreatCirclePath, splitAntimeridian } from '@/lib/geo'
 import { cn } from '@/lib/utils'
 import type { LonLat } from '@/types/route'
-import type { LiveAircraft, LiveNetworkRoute, VatsimAtcController, VatsimAtcResponse } from '@/types/operations'
+import type { LiveAircraft, LiveNetworkRoute, VatsimAtcController, VatsimAtcResponse, VatsimTrafficPilot } from '@/types/operations'
 import type { MultiPolygon, Polygon } from 'geojson'
 
 const NETWORK_SOURCE_ID = 'live-ops-network'
@@ -64,6 +64,25 @@ function controllerMarkerElement(label: string): HTMLDivElement {
   return wrapper
 }
 
+/**
+ * G11 - other VATSIM pilots' traffic. Deliberately the most visually subordinate marker on the
+ * map: small, low-opacity, no ring, no fill - clearly "somebody else, elsewhere", never competing
+ * with the player's own aircraft (solid accent, full weight) or even virtual pilots (outlined
+ * accent). Unlike the aircraft markers above, this has no click/keyboard interaction - there is
+ * nothing of the player's own to navigate to.
+ */
+function trafficMarkerElement(label: string): HTMLDivElement {
+  const wrapper = document.createElement('div')
+  wrapper.className =
+    'flex size-4 items-center justify-center rounded-full text-muted-foreground opacity-70'
+  wrapper.innerHTML = PLANE_SVG
+  wrapper.style.width = '14px'
+  wrapper.style.height = '14px'
+  wrapper.setAttribute('role', 'img')
+  wrapper.setAttribute('aria-label', label)
+  return wrapper
+}
+
 /** Smooth interpolated-position transition duration. Positions update on a gentle interval with
  *  smooth transitions rather than jumping. Aircraft refresh about once a minute, so this
  *  only needs to be long enough to read as motion rather than a jump, not to match real speed. */
@@ -80,6 +99,11 @@ interface LiveOpsMapProps {
    *  Sector controllers whose boundary is absent here draw nothing at all rather than a guess. */
   atcBoundaries?: VatsimAtcResponse['boundaries']
   atcUnavailable?: boolean
+  /** G11 - other VATSIM pilots' traffic near the airline's own network. Omit (or pass an empty
+   *  array) to show none at all - the caller's own toggle (default on for the dashboard, and this
+   *  component is never even mounted on the in-game panel, which has no map) decides whether this
+   *  is populated; the map itself has no opinion. */
+  vatsimTraffic?: VatsimTrafficPilot[]
   /** Reports the visible map bounds after every pan and zoom, debounced, so the controller list
    *  beside the map can show what is genuinely on screen. Called with the initial view on load.
    *  A consumer without a map simply never receives one, which is the panel's case. */
@@ -224,6 +248,7 @@ export function LiveOpsMap({
   atcControllers = [],
   atcBoundaries = null,
   atcUnavailable = false,
+  vatsimTraffic = [],
   onViewportChange,
   className,
 }: LiveOpsMapProps) {
@@ -232,10 +257,11 @@ export function LiveOpsMap({
   const markersRef = useRef<Map<string, AircraftMarkerEntry>>(new Map())
   const airportMarkersRef = useRef<Map<string, Marker>>(new Map())
   const controllerMarkersRef = useRef<Map<string, Marker>>(new Map())
+  const trafficMarkersRef = useRef<Map<string, Marker>>(new Map())
   const modeRef = useRef<MapThemeMode>('dark')
   const styleReadyRef = useRef(false)
   const firedInitialFitRef = useRef(false)
-  const latestRef = useRef({ aircraft, network, atcControllers, atcBoundaries })
+  const latestRef = useRef({ aircraft, network, atcControllers, atcBoundaries, vatsimTraffic })
   const navigate = useNavigate()
   const navigateRef = useRef(navigate)
   const onViewportChangeRef = useRef(onViewportChange)
@@ -251,7 +277,7 @@ export function LiveOpsMap({
   const hoveredKeyRef = useRef<string | null>(null)
   const hoveredControllerKeyRef = useRef<string | null>(null)
 
-  latestRef.current = { aircraft, network, atcControllers, atcBoundaries }
+  latestRef.current = { aircraft, network, atcControllers, atcBoundaries, vatsimTraffic }
   navigateRef.current = navigate
   onViewportChangeRef.current = onViewportChange
   hoveredKeyRef.current = hoveredKey
@@ -362,6 +388,7 @@ export function LiveOpsMap({
         network: currentNetwork,
         atcControllers: currentAtc,
         atcBoundaries: currentBoundaries,
+        vatsimTraffic: currentTraffic,
       } = latestRef.current
 
       const networkSource = current.getSource(NETWORK_SOURCE_ID) as GeoJSONSource | undefined
@@ -414,6 +441,36 @@ export function LiveOpsMap({
         element.addEventListener('mouseleave', () => {
           setHoveredControllerKey((k) => (k === key ? null : k))
         })
+      }
+
+      // G11 - other VATSIM traffic. Plain add/remove/reposition, no animation, same rationale as
+      // the controller markers above: this refreshes on a slow poll (see useVatsimTraffic), so a
+      // snap between positions reads fine and isn't worth the animation machinery the player's own
+      // aircraft markers use.
+      const nextTrafficKeys = new Set(currentTraffic.map((p) => p.callsign))
+      for (const [key, marker] of trafficMarkersRef.current) {
+        if (!nextTrafficKeys.has(key)) {
+          marker.remove()
+          trafficMarkersRef.current.delete(key)
+        }
+      }
+      for (const pilot of currentTraffic) {
+        const label = `${pilot.callsign} - other VATSIM traffic${pilot.departureIcao && pilot.arrivalIcao ? ` (${pilot.departureIcao} → ${pilot.arrivalIcao})` : ''}`
+        const existing = trafficMarkersRef.current.get(pilot.callsign)
+        if (existing) {
+          existing.setLngLat([pilot.longitudeDeg, pilot.latitudeDeg])
+          existing.setRotation(pilot.headingDeg)
+          existing.getElement().setAttribute('aria-label', label)
+          continue
+        }
+
+        const element = trafficMarkerElement(label)
+        const marker = new Marker({ element, anchor: 'center', rotationAlignment: 'map' })
+          .setLngLat([pilot.longitudeDeg, pilot.latitudeDeg])
+          .setRotation(pilot.headingDeg)
+          .addTo(current)
+        element.setAttribute('aria-label', label)
+        trafficMarkersRef.current.set(pilot.callsign, marker)
       }
 
       // Airport dots - static, deduplicated by ICAO.
@@ -632,6 +689,8 @@ export function LiveOpsMap({
       airportMarkersRef.current.clear()
       for (const marker of controllerMarkersRef.current.values()) marker.remove()
       controllerMarkersRef.current.clear()
+      for (const marker of trafficMarkersRef.current.values()) marker.remove()
+      trafficMarkersRef.current.clear()
       map.remove()
       mapRef.current = null
       firedInitialFitRef.current = false
@@ -644,7 +703,7 @@ export function LiveOpsMap({
     if (!map || !styleReadyRef.current) return
     const resync = (map as unknown as { __fsopsResync?: () => void }).__fsopsResync
     resync?.()
-  }, [aircraft, network, atcControllers, atcBoundaries])
+  }, [aircraft, network, atcControllers, atcBoundaries, vatsimTraffic])
 
   const hasNetwork = network.length > 0
   const hasAircraft = aircraft.length > 0
@@ -715,7 +774,7 @@ export function LiveOpsMap({
         </div>
       )}
 
-      {(hasAircraft || atcControllers.length > 0) && (
+      {(hasAircraft || atcControllers.length > 0 || vatsimTraffic.length > 0) && (
         <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex flex-col gap-1 rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-elevation-2">
           {hasAircraft && (
             <div className="flex items-center gap-3">
@@ -728,6 +787,12 @@ export function LiveOpsMap({
                 Virtual
               </span>
             </div>
+          )}
+          {vatsimTraffic.length > 0 && (
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 shrink-0 rounded-full bg-muted-foreground/70" />
+              Other VATSIM traffic
+            </span>
           )}
           {atcControllers.length > 0 && (
             <>

@@ -211,6 +211,19 @@ public sealed class EconomyConfig
     /// </summary>
     public UnflyableScheduleConfig UnflyableSchedule { get; init; } = new();
 
+    /// <summary>
+    /// The modest reward for a sector FSOps itself corroborated as genuinely flown online on
+    /// VATSIM (see <see cref="FSOps.Server.Services.VatsimFlightCorroborationService"/>) - a small
+    /// revenue uplift plus a small reputation nudge, applied only from recorded evidence, never
+    /// from the mere presence of a VATSIM CID in Settings. Shared across playstyles, same reasoning
+    /// as <see cref="Reputation"/>/<see cref="PilotSkill"/> above: how generous this bonus is is a
+    /// simulation-fairness question, not a game-balance figure that should differ by how
+    /// realistically the player wants to be billed. Deliberately small - offline flying has to stay
+    /// fully rewarding with no VATSIM account at all; see each field's own doc for the exact
+    /// magnitude and reasoning.
+    /// </summary>
+    public VatsimOnlineBonusConfig VatsimOnlineBonus { get; init; } = new();
+
     public IReadOnlyList<StrategyProfileConfig> StrategyProfiles { get; init; } = Array.Empty<StrategyProfileConfig>();
 
     [JsonIgnore]
@@ -585,6 +598,28 @@ public sealed class EconomyConfig
             throw new InvalidOperationException(
                 $"LoanEarlySettlement.FeePercentOfRemainingBalance must be in [0,1), was {LoanEarlySettlement.FeePercentOfRemainingBalance}.");
         }
+
+        // Capped well below "modest" (0.25 = a quarter of ticket revenue) - a config authoring
+        // mistake here would otherwise silently turn a VATSIM CID into the dominant income
+        // strategy, which is exactly what G12 was scoped to avoid.
+        if (VatsimOnlineBonus.RevenueUpliftFraction is < 0 or > 0.25)
+        {
+            throw new InvalidOperationException(
+                $"VatsimOnlineBonus.RevenueUpliftFraction must be in [0,0.25] - the online bonus must stay modest, " +
+                $"was {VatsimOnlineBonus.RevenueUpliftFraction}.");
+        }
+
+        if (VatsimOnlineBonus.ReputationAlphaMultiplier is < 0 or >= 1)
+        {
+            throw new InvalidOperationException(
+                $"VatsimOnlineBonus.ReputationAlphaMultiplier must be in [0,1), was {VatsimOnlineBonus.ReputationAlphaMultiplier}.");
+        }
+
+        if (VatsimOnlineBonus.MinimumOnlineFraction is < 0 or > 1)
+        {
+            throw new InvalidOperationException(
+                $"VatsimOnlineBonus.MinimumOnlineFraction must be in [0,1], was {VatsimOnlineBonus.MinimumOnlineFraction}.");
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -819,6 +854,14 @@ public sealed class EconomyConfig
             // with a real cost) is applied separately in EconomyConfigCatalog.Default()'s Resolve()
             // call, same pattern as FleetFinance/Maintenance/Loan.
             UnflyableSchedule = new UnflyableScheduleConfig { CancellationFee = 0m },
+            // Shared across playstyles - see VatsimOnlineBonusConfig's own doc for the reasoning
+            // behind each figure.
+            VatsimOnlineBonus = new VatsimOnlineBonusConfig
+            {
+                RevenueUpliftFraction = 0.03,
+                ReputationAlphaMultiplier = 0.15,
+                MinimumOnlineFraction = 0.5,
+            },
             StrategyProfiles = new List<StrategyProfileConfig>
             {
                 // Elasticity and baseline load factor are chosen so the demand-cap mechanism
@@ -1278,6 +1321,51 @@ public sealed class SchedulingConfig
 /// unpenalised; True-life cancels it with a real, clearly-reported charge. Resolved per playstyle,
 /// unlike <see cref="SchedulingConfig"/> above.
 /// </summary>
+/// <summary>
+/// The modest reward for a sector FSOps corroborated as genuinely flown online on VATSIM - see
+/// <see cref="EconomyConfig.VatsimOnlineBonus"/>'s own doc, <see
+/// cref="FSOps.Server.Services.VatsimFlightCorroborationService"/>, and
+/// <see cref="FSOps.Server.Services.FlightEconomicsPoster.PostVatsimOnlineBonus"/>. Every figure
+/// here is deliberately small: the bonus exists to reward the extra effort of flying online without
+/// making offline flying feel pointless, and it applies only to a flight already computed from
+/// recorded evidence - never from the presence of a CID alone.
+/// </summary>
+public sealed class VatsimOnlineBonusConfig
+{
+    /// <summary>
+    /// Fraction of THIS sector's own ticket revenue posted as a separate
+    /// <see cref="Entities.LedgerCategory.VatsimOnlineBonus"/> line (never folded into
+    /// <see cref="Entities.LedgerCategory.TicketRevenue"/> itself, so the report card can show
+    /// plainly where it came from). 0.03 (3%): a typical ~65-3,000+ fare sector earns a few percent
+    /// extra for flying it online - noticeable on the report card, never close to being the
+    /// difference between a sector being worth flying or not. Capped at 0.25 by
+    /// <see cref="EconomyConfig.Validate"/> so a config mistake can never turn this into a dominant
+    /// income strategy.
+    /// </summary>
+    public double RevenueUpliftFraction { get; init; } = 0.03;
+
+    /// <summary>
+    /// Multiplies <see cref="ReputationConfig.Alpha"/> for the reputation half of the bonus - see
+    /// <see cref="FSOps.Core.Economy.ReputationCalculator.AdvanceForVatsimOnlineBonus"/>, which
+    /// advances toward the same maximum target (100) every other positive reputation effect in this
+    /// app uses, just with a smaller step. At the default 0.15, one qualifying sector moves
+    /// reputation by about +0.10 from a baseline of 50 (0.0137672955 x 0.15 x (100-50)) - roughly a
+    /// seventh of an ordinary sector's own best-case step (~0.69), and well under half the
+    /// magnitude of the manual-completion penalty's own worst case (~-0.23) in the opposite
+    /// direction. Modest by construction, not by accident.
+    /// </summary>
+    public double ReputationAlphaMultiplier { get; init; } = 0.15;
+
+    /// <summary>
+    /// The minimum corroborated-online fraction of a flight's tracked block time
+    /// (<see cref="Entities.Flight.VatsimOnlineFraction"/>) required to earn the bonus at all. 0.5:
+    /// briefly logging on for a minute near departure and then disconnecting must not qualify a
+    /// whole sector for the reward - the bonus is for genuinely flying the sector online, not for
+    /// touching the network at all.
+    /// </summary>
+    public double MinimumOnlineFraction { get; init; } = 0.5;
+}
+
 public sealed class UnflyableScheduleConfig
 {
     /// <summary>

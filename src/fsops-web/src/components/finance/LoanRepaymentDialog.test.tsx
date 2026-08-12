@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LoanRepaymentDialog } from './LoanRepaymentDialog'
 import { SettingsProvider } from '@/hooks/useSettings'
+import { ApiError } from '@/lib/api'
 import { click, findButton, flush, mount, typeInto } from '@/test/domHarness'
 import type { FinanceLoan, LoanSettlementQuote } from '@/types/finance'
 
@@ -86,6 +87,61 @@ describe('LoanRepaymentDialog - pay off in full', () => {
     expect(post).toHaveBeenCalledWith('/finance/loans/loan-1/settle', { expectedTotalPayoff: 301500 })
     expect(onSuccess).toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
+
+    mounted.unmount()
+  })
+
+  it('shows the stale-quote banner and re-quotes when the server refusal carries currentTotalPayoff', async () => {
+    // FinanceEndpoints.SettleLoanAsync's ONE stale-quote branch returns currentTotalPayoff
+    // alongside the error - that field, not the message text, is what the dialog must key off to
+    // decide this was a genuine stale quote worth re-fetching.
+    vi.mocked(post).mockRejectedValue(
+      new ApiError(400, 'The payoff figure has changed since you last checked (was $3,015.00, now $3,020.00) - please confirm the new figure.', {
+        error: 'The payoff figure has changed since you last checked (was $3,015.00, now $3,020.00) - please confirm the new figure.',
+        currentTotalPayoff: 302000,
+      }),
+    )
+
+    const mounted = await mount(
+      <SettingsProvider>
+        <LoanRepaymentDialog loan={loan} onOpenChange={vi.fn()} onSuccess={vi.fn()} />
+      </SettingsProvider>,
+    )
+    await flush()
+
+    click(findButton(document.body, 'Pay off -'))
+    await flush()
+
+    expect(document.body.textContent).toContain('This loan’s figures changed')
+    expect(document.body.textContent).toContain('has changed since you last checked')
+    // The quote is re-fetched (a second GET to the settlement-quote endpoint) rather than left
+    // showing the stale figure the player just tried to pay.
+    expect(vi.mocked(get)).toHaveBeenCalledTimes(4) // settings, currencies, initial quote, re-quote
+
+    mounted.unmount()
+  })
+
+  it('shows a plain error, NOT the stale-quote banner, when the refusal is insufficient funds', async () => {
+    // FinanceEndpoints.SettleLoanAsync's insufficient-funds branch is a plain { error } body with
+    // no currentTotalPayoff - nothing about the quote changed, so the dialog must never claim it did.
+    vi.mocked(post).mockRejectedValue(
+      new ApiError(400, 'Settling this loan needs $3,015.00, you have $2,000.00.', {
+        error: 'Settling this loan needs $3,015.00, you have $2,000.00.',
+      }),
+    )
+
+    const mounted = await mount(
+      <SettingsProvider>
+        <LoanRepaymentDialog loan={loan} onOpenChange={vi.fn()} onSuccess={vi.fn()} />
+      </SettingsProvider>,
+    )
+    await flush()
+
+    click(findButton(document.body, 'Pay off -'))
+    await flush()
+
+    expect(document.body.textContent).not.toContain('This loan’s figures changed')
+    expect(document.body.textContent).toContain('Settling this loan needs $3,015.00, you have $2,000.00.')
 
     mounted.unmount()
   })

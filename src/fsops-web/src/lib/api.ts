@@ -2,11 +2,17 @@ const API_BASE = '/api/v1'
 
 export class ApiError extends Error {
   readonly status: number
+  /** The parsed JSON error body, when the response had one - lets a caller branch on a specific
+   *  field (e.g. a stale-quote endpoint returning `currentTotalPayoff`) rather than pattern-matching
+   *  on `.message` text, which is for display and can be reworded without warning. Undefined when
+   *  the body wasn't JSON or wasn't an object. */
+  readonly body: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.body = body
   }
 }
 
@@ -26,19 +32,25 @@ function buildPath(path: string, params?: QueryParams): string {
   return `${API_BASE}${path}${query ? `?${query}` : ''}`
 }
 
-async function extractErrorMessage(response: Response): Promise<string> {
+interface ParsedErrorResponse {
+  message: string
+  body: unknown
+}
+
+async function extractErrorResponse(response: Response): Promise<ParsedErrorResponse> {
   try {
     const body: unknown = await response.clone().json()
     if (body && typeof body === 'object') {
       const record = body as Record<string, unknown>
-      if (typeof record.message === 'string') return record.message
-      if (typeof record.title === 'string') return record.title
-      if (typeof record.error === 'string') return record.error
+      if (typeof record.message === 'string') return { message: record.message, body }
+      if (typeof record.title === 'string') return { message: record.title, body }
+      if (typeof record.error === 'string') return { message: record.error, body }
     }
+    return { message: response.statusText || `Request failed with status ${response.status}`, body }
   } catch {
     // response body wasn't JSON (or was empty) — fall back below
   }
-  return response.statusText || `Request failed with status ${response.status}`
+  return { message: response.statusText || `Request failed with status ${response.status}`, body: undefined }
 }
 
 interface RequestOptions {
@@ -73,7 +85,8 @@ async function request<T>(method: string, path: string, options?: RequestOptions
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, await extractErrorMessage(response))
+    const { message, body } = await extractErrorResponse(response)
+    throw new ApiError(response.status, message, body)
   }
 
   if (response.status === 204) {

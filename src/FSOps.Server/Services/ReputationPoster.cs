@@ -39,4 +39,16 @@ public static class ReputationPoster
     {
         airline.ReputationScore = ReputationCalculator.AdvanceForUnverifiedManualCompletion(airline.ReputationScore, config.Reputation);
     }
+
+    /// <summary>The modest reputation half of the VATSIM online-flying bonus (G12) - see
+    /// <see cref="ReputationCalculator.AdvanceForVatsimOnlineBonus"/> and
+    /// <see cref="EconomyConfig.VatsimOnlineBonus"/>. Callers must apply this only for a flight
+    /// already computed (via <see cref="VatsimFlightCorroborationService"/>) as genuinely flown
+    /// online for at least <see cref="Core.Economy.VatsimOnlineBonusConfig.MinimumOnlineFraction"/>
+    /// of its tracked block time - never from a CID being merely configured.</summary>
+    public static void PostVatsimOnlineBonus(Airline airline, EconomyConfig config)
+    {
+        airline.ReputationScore = ReputationCalculator.AdvanceForVatsimOnlineBonus(
+            airline.ReputationScore, config.Reputation.Alpha, config.VatsimOnlineBonus.ReputationAlphaMultiplier);
+    }
 }

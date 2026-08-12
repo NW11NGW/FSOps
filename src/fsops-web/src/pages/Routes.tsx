@@ -239,21 +239,27 @@ export function RoutesPage() {
   // as the next step it is rather than as a refusal - see RouteRangeAssessor.
   const rangeAdvice = preview.data?.validation.range ?? null
   const blockedByRange = Boolean(rangeAdvice?.blocking)
+  // Same guidance-vs-block distinction, for runway length AND surface - see RunwaySuitabilityAssessor.
+  const runwayAdvice = preview.data?.validation.runway ?? null
+  const blockedByRunway = Boolean(runwayAdvice?.blocking)
+  const blocked = blockedByRange || blockedByRunway
 
   const dangerMessage = sameAirport
     ? 'Departure and arrival are the same airport — pick two different airports to build a route.'
     : blockedByRange
       ? (rangeAdvice?.message ?? 'This route is beyond the range of every aircraft in your fleet.')
-      : null
+      : blockedByRunway
+        ? (runwayAdvice?.message ?? 'No aircraft in your fleet can physically use these runways.')
+        : null
 
   const advisoryWarnings = (preview.data?.validation.warnings ?? []).filter((warning) => {
     if (sameAirport && /same airport/i.test(warning)) return false
-    // Never show the same sentence twice - the blocking range message is already the danger banner.
+    // Never show the same sentence twice - the blocking message is already the danger banner.
     if (warning === dangerMessage) return false
     return true
   })
 
-  const canCreate = Boolean(departure && arrival && preview.data && !sameAirport && !blockedByRange && !creating)
+  const canCreate = Boolean(departure && arrival && preview.data && !sameAirport && !blocked && !creating)
   const routePath = preview.data?.greatCirclePath ?? []
 
   if (airlineSummary.status === 'loading') {

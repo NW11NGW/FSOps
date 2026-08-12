@@ -120,6 +120,34 @@ public class Flight
     /// </summary>
     public string? UnflyableReason { get; set; }
 
+    /// <summary>
+    /// Whether this sector was corroborated as flown on the VATSIM network. <b>Null means never
+    /// checked</b> - no CID configured, the feature switched off, or the feed unreachable for the
+    /// whole flight - and is deliberately distinct from <c>false</c>, which means FSOps did look and
+    /// never matched. Collapsing the two would let "we could not tell" read as "you were not online",
+    /// which is a claim FSOps has no evidence for.
+    /// <para>
+    /// This is <b>corroboration, never a second source of truth</b>: FSOps' own SimConnect telemetry
+    /// remains authoritative for position, timing and landing quality. Being seen on the network can
+    /// add to what a sector earned; it can never override what was actually flown.
+    /// </para>
+    /// </summary>
+    public bool? VatsimOnline { get; set; }
+
+    /// <summary>The callsign the CID was flying under when last matched. Null when never matched.</summary>
+    public string? VatsimCallsign { get; set; }
+
+    /// <summary>
+    /// How much of the flight was corroborated online, 0-1, as a fraction of the checks made. A
+    /// player who connects late or drops out mid-sector is a normal occurrence rather than an
+    /// error, so this is recorded as a degree rather than forced into a yes or no.
+    /// </summary>
+    public double? VatsimOnlineFraction { get; set; }
+
+    /// <summary>ATC callsigns seen covering departure or arrival while this flight was corroborated
+    /// online, comma-separated. Null when never matched.</summary>
+    public string? VatsimControllersWorked { get; set; }
+
     public DateTimeOffset CreatedUtc { get; set; }
 
     public DateTimeOffset? DeletedUtc { get; set; }

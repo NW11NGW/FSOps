@@ -85,6 +85,10 @@ function flight(overrides: Partial<Flight> = {}): Flight {
     revenue: 5000,
     totalCost: 1800,
     createdUtc: '2026-08-11T10:00:00Z',
+    vatsimOnline: null,
+    vatsimCallsign: null,
+    vatsimOnlineFraction: null,
+    vatsimControllersWorked: null,
     ...overrides,
   }
 }

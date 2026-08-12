@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// docs/PLAN.md "Progression - reputation and pilot skill", wired through
+/// Reputation and pilot skill progression, wired through
 /// <see cref="VirtualFlightResolverService"/> - the same isolated-database harness as
 /// VirtualFlightResolverServiceTests and MaintenanceScheduleSuspensionTests. Covers the properties
 /// those files don't already exercise: a maintenance-Suspended occurrence never touches reputation,

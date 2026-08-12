@@ -60,6 +60,12 @@ public static class SettingsEndpoints
         settings.Theme = string.IsNullOrWhiteSpace(request.Theme) ? settings.Theme : request.Theme.Trim();
         settings.CommunityFolderPath = request.CommunityFolderPath;
         settings.SimBriefPilotId = request.SimBriefPilotId;
+        // Stored and validated exactly like SimBriefPilotId above - a non-numeric or blank value
+        // just means "not set" (trimmed to null), never a 400. VATSIM CIDs are plain digits; a
+        // stricter check isn't worth it since an invalid value simply never matches anyone on the
+        // feed and G8/G9 quietly find nothing, the same fail-soft posture as every other VATSIM path.
+        var trimmedCid = request.VatsimCid?.Trim();
+        settings.VatsimCid = string.IsNullOrEmpty(trimmedCid) ? null : trimmedCid;
 
         await db.SaveChangesAsync(ct);
         return Results.Ok(settings);
@@ -103,7 +109,8 @@ public record UpdateSettingsRequest(
     bool Use24HourClock,
     string? Theme,
     string? CommunityFolderPath,
-    string? SimBriefPilotId);
+    string? SimBriefPilotId,
+    string? VatsimCid);
 
 public record CurrencyResponse(
     string Code,

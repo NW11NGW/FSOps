@@ -95,7 +95,7 @@ public class MaintenanceTriggerTests
         Assert.False(option.IsFlyable);
         // The route-level reason is only set when NO aircraft is present at the departure airport
         // at all - with the fleet's one aircraft physically there but grounded, the reason lives
-        // per-aircraft under aircraftOptions (see docs/PLAN.md "2b"/"3a" - the Fly screen now lists
+        // per-aircraft under aircraftOptions (the Fly screen lists
         // every aircraft present, never just one, each with its own reason).
         var aircraftOption = Assert.Single(option.AircraftOptions);
         Assert.False(aircraftOption.IsFlyable);
@@ -230,7 +230,7 @@ public class MaintenanceTriggerTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

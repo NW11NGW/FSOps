@@ -14,9 +14,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// docs/PLAN.md's explicit, permanent invariant: "Maintenance never interrupts a flight in
-/// progress... Keep this invariant and test it - a flight that crosses a check threshold must
-/// complete normally and only then trigger the check." <see cref="MaintenancePoster.PostFlightHours"/>
+/// The explicit, permanent invariant: maintenance never interrupts a flight in
+/// progress. A flight that crosses a check threshold must
+/// complete normally and only then trigger the check. <see cref="MaintenancePoster.PostFlightHours"/>
 /// is only ever called at flight completion; this asserts the aircraft stays untouched (Active,
 /// no MaintenanceEvent, hours-since-check unchanged) for the entire time a flight that will
 /// eventually trigger a check is InProgress, and only grounds once that flight is finalized. Also
@@ -140,7 +140,7 @@ public class MaintenanceMidFlightInvariantTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

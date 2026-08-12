@@ -19,6 +19,8 @@ export const LEDGER_CATEGORIES = [
   'ParkingFees',
   'PassengerCharges',
   'TurnaroundFees',
+  'CancellationFee',
+  'VatsimOnlineBonus',
   'LeasePayment',
   'LoanPayment',
   'AircraftPurchase',
@@ -40,6 +42,8 @@ const LABELS: Record<string, string> = {
   ParkingFees: 'Parking fees',
   PassengerCharges: 'Passenger charges',
   TurnaroundFees: 'Turnaround fees',
+  CancellationFee: 'Cancellation fee',
+  VatsimOnlineBonus: 'Online flying bonus',
   LeasePayment: 'Lease payment',
   LoanPayment: 'Loan payment',
   AircraftPurchase: 'Aircraft purchase/sale',
@@ -60,6 +64,13 @@ export function ledgerCategoryLabel(category: string): string {
  *  of the actual amount is what tells the real income/expense story on each row, this is just a
  *  quick visual grouping for the category chip itself. */
 export function ledgerCategoryBadgeVariant(category: string): NonNullable<BadgeProps['variant']> {
-  if (category === 'TicketRevenue' || category === 'StartingCapital' || category === 'LoanProceeds') return 'success'
+  if (
+    category === 'TicketRevenue' ||
+    category === 'StartingCapital' ||
+    category === 'LoanProceeds' ||
+    category === 'VatsimOnlineBonus'
+  ) {
+    return 'success'
+  }
   return 'muted'
 }

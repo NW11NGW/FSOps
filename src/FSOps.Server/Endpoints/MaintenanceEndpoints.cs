@@ -286,8 +286,8 @@ public static class MaintenanceEndpoints
         }
 
         var chargesByCategory = ledgerLines
-            .GroupBy(t => t.Category)
-            .Select(g => new LedgerCategoryTotal(g.Key.ToString(), g.Sum(t => t.Amount), g.Count()))
+            .GroupBy(t => DisplayCategoryFor(t))
+            .Select(g => new LedgerCategoryTotal(g.Key, g.Sum(t => t.Amount), g.Count()))
             .OrderBy(c => c.Amount)
             .ToList();
 
@@ -339,6 +339,25 @@ public static class MaintenanceEndpoints
             maintenanceSummaries,
             unresolved));
     }
+
+    /// <summary>
+    /// The <see cref="LedgerCategoryTotal.Category"/> a ledger line is grouped under for the
+    /// away-summary's "Charges by category" breakdown. Almost always just the raw
+    /// <see cref="LedgerTransaction.Category"/> name, EXCEPT a lease deposit: it is posted under the
+    /// same <see cref="LedgerCategory.LeasePayment"/> category as the ordinary recurring monthly
+    /// charge (see <see cref="AirlineEndpoints.CreateAsync"/> and
+    /// <see cref="FleetEndpoints.LeaseAsync"/>, both of which post it with a description starting
+    /// "Lease deposit"), but it is not a charge that happened WHILE the player was away in the sense
+    /// this summary means - it is a one-off, self-inflicted by adding an aircraft, that would
+    /// otherwise be misread as "you were billed a lease payment you didn't expect" if lumped in with
+    /// the recurring line. Same description-prefix technique <see cref="FinanceEndpoints.CostsAsync"/>
+    /// already uses to split early-termination fees out of the same category there.
+    /// </summary>
+    private static string DisplayCategoryFor(LedgerTransaction transaction) =>
+        transaction.Category == LedgerCategory.LeasePayment &&
+        transaction.Description.StartsWith("Lease deposit", StringComparison.Ordinal)
+            ? "LeaseDeposit"
+            : transaction.Category.ToString();
 
     /// <summary>Marks the away-summary window as seen - moves <see cref="EconomyState.AwaySummaryLastViewedUtc"/>
     /// forward to now. The only endpoint that ever advances that cursor - see <see cref="AwaySummaryAsync"/>'s

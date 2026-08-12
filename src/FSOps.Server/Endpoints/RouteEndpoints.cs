@@ -52,7 +52,9 @@ public static class RouteEndpoints
             }
             else
             {
-                departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == departureIcao, ct);
+                // Include(Runways) - RunwaySuitabilityAssessor needs the actual runway rows (length,
+                // surface, closed) to assess this airport, not just its stamped LongestRunwayFt.
+                departure = await db.Airports.Include(a => a.Runways).FirstOrDefaultAsync(a => a.Icao == departureIcao, ct);
                 if (departure is null)
                 {
                     warnings.Add($"Departure airport '{departureIcao}' was not found.");
@@ -66,7 +68,7 @@ public static class RouteEndpoints
             }
             else
             {
-                arrival = await db.Airports.FirstOrDefaultAsync(a => a.Icao == arrivalIcao, ct);
+                arrival = await db.Airports.Include(a => a.Runways).FirstOrDefaultAsync(a => a.Icao == arrivalIcao, ct);
                 if (arrival is null)
                 {
                     warnings.Add($"Arrival airport '{arrivalIcao}' was not found.");
@@ -87,15 +89,18 @@ public static class RouteEndpoints
                 return Results.Ok(EmptyPreview(departureIcao, arrivalIcao, warnings));
             }
 
-            // The range verdict is about the whole fleet, never about the one type these figures were
-            // planned with - see RouteRangeAssessor. An airline that is not created yet has no fleet
-            // to assess, and gets no range verdict at all rather than a made-up one.
-            var rangeCandidates = airline is null
-                ? Array.Empty<RangeCandidateAircraft>()
-                : await LoadRangeCandidatesAsync(db, airline.Id, ct);
+            // The range and runway verdicts are about the whole fleet, never about the one type these
+            // figures were planned with - see RouteRangeAssessor/RunwaySuitabilityAssessor. An
+            // airline that is not created yet has no fleet to assess, and gets no verdict at all
+            // rather than a made-up one.
+            var fleetWithTypes = airline is null
+                ? Array.Empty<(FleetAircraft Aircraft, AircraftType Type)>()
+                : await LoadFleetWithTypesAsync(db, airline.Id, ct);
+            var rangeCandidates = ToRangeCandidates(fleetWithTypes);
+            var runwayCandidates = ToRunwayCandidates(fleetWithTypes);
 
             var result = RoutePreviewCalculator.Calculate(
-                economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile, rangeCandidates);
+                economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile, rangeCandidates, runwayCandidates);
             warnings.AddRange(result.Validation.Warnings);
 
             // Fuel price must be visible before departure so tankering is an informed decision -
@@ -188,11 +193,10 @@ public static class RouteEndpoints
                 validation = new
                 {
                     withinRange = result.Validation.WithinRange,
-                    departureRunwayAdequate = result.Validation.DepartureRunwayAdequate,
-                    arrivalRunwayAdequate = result.Validation.ArrivalRunwayAdequate,
                     sameAirport = result.Validation.SameAirport,
                     warnings,
                     range = RangeDto(result.Validation.Range),
+                    runway = RunwayDto(result.Validation.Runway),
                 },
             });
         }
@@ -203,19 +207,21 @@ public static class RouteEndpoints
     }
 
     /// <summary>
-    /// The whole fleet in the shape <see cref="RouteRangeAssessor"/> needs. Includes every aircraft
-    /// the airline owns regardless of where it is, what it is doing or whether it is reserved -
-    /// "could this airline ever fly this sector" is a question about capability, not about today's
-    /// availability, and a route is a permanent thing being planned rather than a flight being
-    /// started right now.
+    /// Every aircraft the airline owns, paired with its resolved <see cref="AircraftType"/> -
+    /// regardless of where it is, what it is doing or whether it is reserved, since "could this
+    /// airline ever fly this sector" is a question about capability, not about today's availability,
+    /// and a route is a permanent thing being planned rather than a flight being started right now.
+    /// Loaded once and shared by <see cref="ToRangeCandidates"/> and <see cref="ToRunwayCandidates"/>
+    /// so a caller that needs both verdicts (every one that does) pays for the fleet/type query only
+    /// once.
     /// </summary>
-    private static async Task<IReadOnlyList<RangeCandidateAircraft>> LoadRangeCandidatesAsync(
+    private static async Task<IReadOnlyList<(FleetAircraft Aircraft, AircraftType Type)>> LoadFleetWithTypesAsync(
         FsOpsDbContext db, Guid airlineId, CancellationToken ct)
     {
         var fleet = await db.FleetAircraft.Where(f => f.AirlineId == airlineId).ToListAsync(ct);
         if (fleet.Count == 0)
         {
-            return Array.Empty<RangeCandidateAircraft>();
+            return Array.Empty<(FleetAircraft, AircraftType)>();
         }
 
         var typeIds = fleet.Select(f => f.AircraftTypeId).Distinct().ToList();
@@ -223,10 +229,15 @@ public static class RouteEndpoints
 
         return fleet
             .Where(f => typesById.ContainsKey(f.AircraftTypeId))
-            .Select(f => new RangeCandidateAircraft(
-                f.Registration, typesById[f.AircraftTypeId].Name, typesById[f.AircraftTypeId].RangeNm, f.ReservedForPlayer))
+            .Select(f => (f, typesById[f.AircraftTypeId]))
             .ToList();
     }
+
+    private static IReadOnlyList<RangeCandidateAircraft> ToRangeCandidates(IReadOnlyList<(FleetAircraft Aircraft, AircraftType Type)> fleet) =>
+        fleet.Select(x => new RangeCandidateAircraft(x.Aircraft.Registration, x.Type.Name, x.Type.RangeNm, x.Aircraft.ReservedForPlayer)).ToList();
+
+    private static IReadOnlyList<RunwayCandidateAircraft> ToRunwayCandidates(IReadOnlyList<(FleetAircraft Aircraft, AircraftType Type)> fleet) =>
+        fleet.Select(x => new RunwayCandidateAircraft(x.Aircraft.Registration, x.Type.Name, x.Type.MinRunwayFt, x.Type.MtowTonnes, x.Aircraft.ReservedForPlayer)).ToList();
 
     private static object RangeDto(RouteRangeAssessment assessment) => new
     {
@@ -236,6 +247,15 @@ public static class RouteEndpoints
         aircraftRegistration = assessment.AircraftRegistration,
         aircraftTypeName = assessment.AircraftTypeName,
         operationalRangeNm = assessment.OperationalRangeNm is double nm ? Math.Round(nm, 0) : (double?)null,
+    };
+
+    private static object RunwayDto(RunwaySuitabilityAssessment assessment) => new
+    {
+        verdict = assessment.Verdict.ToString(),
+        blocking = assessment.Blocking,
+        message = assessment.Message,
+        aircraftRegistration = assessment.AircraftRegistration,
+        aircraftTypeName = assessment.AircraftTypeName,
     };
 
     private static object EmptyPreview(string departureIcao, string arrivalIcao, List<string> warnings) => new
@@ -256,13 +276,12 @@ public static class RouteEndpoints
         validation = new
         {
             withinRange = false,
-            departureRunwayAdequate = false,
-            arrivalRunwayAdequate = false,
             sameAirport = departureIcao.Length > 0 && departureIcao == arrivalIcao,
             warnings,
-            // Nothing was computed, so there is no range verdict to give - and specifically nothing
-            // blocking, so an incomplete airport pick is never reported as an out-of-range route.
+            // Nothing was computed, so there is no verdict to give - and specifically nothing
+            // blocking, so an incomplete airport pick is never reported as out of range or unsuitable.
             range = RangeDto(RouteRangeAssessment.NotAssessed),
+            runway = RunwayDto(RunwaySuitabilityAssessment.NotAssessed),
         },
     };
 
@@ -438,13 +457,14 @@ public static class RouteEndpoints
             return (null, Results.BadRequest(new { error = "Departure and arrival airports must be different." }));
         }
 
-        var departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == departureIcao, ct);
+        // Include(Runways) - the runway-suitability block below needs the actual runway rows.
+        var departure = await db.Airports.Include(a => a.Runways).FirstOrDefaultAsync(a => a.Icao == departureIcao, ct);
         if (departure is null)
         {
             return (null, Results.BadRequest(new { error = $"Departure airport '{departureIcao}' was not found." }));
         }
 
-        var arrival = await db.Airports.FirstOrDefaultAsync(a => a.Icao == arrivalIcao, ct);
+        var arrival = await db.Airports.Include(a => a.Runways).FirstOrDefaultAsync(a => a.Icao == arrivalIcao, ct);
         if (arrival is null)
         {
             return (null, Results.BadRequest(new { error = $"Arrival airport '{arrivalIcao}' was not found." }));
@@ -477,16 +497,24 @@ public static class RouteEndpoints
             var fleetAircraftTypes = await db.AircraftTypes.Where(t => fleetTypeIds.Contains(t.Id)).ToListAsync(ct);
             aircraftType ??= fleetAircraftTypes.FirstOrDefault();
 
-            // Creating a route is guidance, not a gate, and only ONE range answer is a genuine
-            // block: nothing the airline owns can fly it. "Nothing you have reserved can fly it, but
-            // that 787 over there can" is a route worth having - it just needs the aircraft
-            // reserved, or a virtual pilot rostered onto it - and refusing to create it made that a
-            // dead end. See RouteRangeAssessor.
+            // Creating a route is guidance, not a gate, and only ONE answer on either question is a
+            // genuine block: nothing the airline owns can fly it, or nothing the airline owns can
+            // physically use these runways. "Nothing you have reserved can fly it, but that 787 over
+            // there can" is a route worth having - it just needs the aircraft reserved, or a virtual
+            // pilot rostered onto it - and refusing to create it made that a dead end. See
+            // RouteRangeAssessor and RunwaySuitabilityAssessor - one mental model for both.
             var distanceNm = GreatCircle.DistanceNm(departure.Latitude, departure.Longitude, arrival.Latitude, arrival.Longitude);
-            var rangeAssessment = RouteRangeAssessor.Assess(distanceNm, await LoadRangeCandidatesAsync(db, airline.Id, ct));
+            var fleetWithTypes = await LoadFleetWithTypesAsync(db, airline.Id, ct);
+            var rangeAssessment = RouteRangeAssessor.Assess(distanceNm, ToRangeCandidates(fleetWithTypes));
             if (rangeAssessment.Blocking)
             {
                 return (null, Results.BadRequest(new { error = rangeAssessment.Message }));
+            }
+
+            var runwayAssessment = RunwaySuitabilityAssessor.Assess(departure, arrival, ToRunwayCandidates(fleetWithTypes));
+            if (runwayAssessment.Blocking)
+            {
+                return (null, Results.BadRequest(new { error = runwayAssessment.Message }));
             }
         }
 

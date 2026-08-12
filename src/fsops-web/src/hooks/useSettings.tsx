@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   communityFolderPath: null,
   simBriefPilotId: null,
+  vatsimCid: null,
 }
 
 /**

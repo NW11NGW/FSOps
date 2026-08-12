@@ -61,7 +61,7 @@ public class FlightManualCompletionAndAbandonTests
         await ctx.Db.SaveChangesAsync();
 
         var economyConfigCatalog = EconomyConfigCatalog.Default();
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null, null!);
         var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
@@ -130,7 +130,7 @@ public class FlightManualCompletionAndAbandonTests
         var economyConfigCatalog = EconomyConfigCatalog.Default();
         // ctx.Airline defaults to AirlinePlaystyle.Casual (never set explicitly by RouteTestContext).
         var economyConfig = economyConfigCatalog.Get(AirlinePlaystyle.Casual);
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null, null!);
         var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
@@ -209,7 +209,7 @@ public class FlightManualCompletionAndAbandonTests
     }
 
     /// <summary>
-    /// Replaces the removed on-time-derived test - see docs/PLAN.md and
+    /// Replaces the removed on-time-derived test - see
     /// ReputationConfig.ManualCompletionAlphaMultiplier's own doc for why deriving anything from
     /// the wall clock on this path was wrong. Runs the SAME scenario (a flight 25 minutes "late" by
     /// the old formula's reckoning) and a completely different one (a flight completed within
@@ -223,7 +223,7 @@ public class FlightManualCompletionAndAbandonTests
         var (lateCtx, lateFlight, lateCatalog) = await SeedInProgressManualCompletionCandidateAsync(lateStart);
         using (lateCtx)
         {
-            var lifecycle = new FlightLifecycleService(null!, null!, null!, lateCatalog, null!);
+            var lifecycle = new FlightLifecycleService(null!, null!, null!, lateCatalog, null, null!);
             var result = await FlightEndpoints.CompleteManualAsync(lateFlight.Id, lateCtx.Db, lateCtx.CurrentUser, lifecycle, lateCatalog, CancellationToken.None);
             Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -238,7 +238,7 @@ public class FlightManualCompletionAndAbandonTests
         var (immediateCtx, immediateFlight, immediateCatalog) = await SeedInProgressManualCompletionCandidateAsync(immediateStart);
         using (immediateCtx)
         {
-            var lifecycle = new FlightLifecycleService(null!, null!, null!, immediateCatalog, null!);
+            var lifecycle = new FlightLifecycleService(null!, null!, null!, immediateCatalog, null, null!);
             var result = await FlightEndpoints.CompleteManualAsync(immediateFlight.Id, immediateCtx.Db, immediateCtx.CurrentUser, lifecycle, immediateCatalog, CancellationToken.None);
             Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -271,7 +271,7 @@ public class FlightManualCompletionAndAbandonTests
         {
             Assert.Equal(50.0, ctx.Airline.ReputationScore); // the starting baseline, before this sector
 
-            var lifecycle = new FlightLifecycleService(null!, null!, null!, catalog, null!);
+            var lifecycle = new FlightLifecycleService(null!, null!, null!, catalog, null, null!);
             var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, catalog, CancellationToken.None);
             Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
@@ -310,7 +310,7 @@ public class FlightManualCompletionAndAbandonTests
         // A bare service with no active tracking for this flight - GetActiveSnapshot returns null,
         // exactly as if the sim never sent a single sample before the user gave up and abandoned.
         var economyConfigCatalog = EconomyConfigCatalog.Default();
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null, null!);
         var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
@@ -359,7 +359,7 @@ public class FlightManualCompletionAndAbandonTests
         Assert.Equal(50.0, ctx.Airline.ReputationScore);
 
         var economyConfigCatalog = EconomyConfigCatalog.Default();
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null, null!);
         var result = await FlightEndpoints.AbandonAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 

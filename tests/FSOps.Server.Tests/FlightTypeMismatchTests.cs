@@ -13,7 +13,7 @@ namespace FSOps.Server.Tests;
 
 /// <summary>
 /// Regression coverage for the defect where "no sim connected" was reported as "wrong aircraft".
-/// Aircraft type matching is family-level and purely informational (docs/PLAN.md) - a genuine
+/// Aircraft type matching is family-level and purely informational, never a financial penalty - a genuine
 /// mismatch must still be flagged, but an absent TITLE/ATC MODEL (sim not connected, or no aircraft
 /// loaded yet) must produce <c>Flight.TypeMismatch == null</c> (unknown), never <c>true</c>.
 /// Drives <c>FlightEndpoints.StartAsync</c> for real, exactly like FlightLedgerPostingTests, using
@@ -123,7 +123,7 @@ public class FlightTypeMismatchTests
         var telemetry = new SimTelemetryService(simSource, new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

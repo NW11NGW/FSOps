@@ -16,7 +16,7 @@ using Route = FSOps.Core.Entities.Route;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Fuel as a persisted asset (docs/PLAN.md "Persistent fuel state and tankering", Chunk E1). The
+/// Fuel as a persisted asset on the aircraft, not a per-flight expense (Chunk E1). The
 /// headline property: an aircraft that lands with fuel remaining starts its next flight on that
 /// fuel, so a return leg flown on it costs nothing further - proved end to end through the real
 /// path a player uses (<c>FlightEndpoints.StartAsync</c>'s reconciliation and
@@ -157,7 +157,8 @@ public class FuelPersistenceTests
         await ctx.Db.SaveChangesAsync();
 
         // The sim reports MORE than that - fuel changed while FSOps wasn't watching (a menu fuel
-        // set, a sim restart, an untracked flight) - see docs/PLAN.md's reconciliation rule.
+        // set, a sim restart, an untracked flight) - reconciliation treats an unexplained
+        // increase as an uplift at the current airport's price.
         // Real UtcNow so StartAsync's recency window trusts this sample.
         var departure = await ctx.Db.Airports.SingleAsync(a => a.Icao == "EGGD");
         telemetry.SetLastSampleForTests(MakeSample(DateTimeOffset.UtcNow, departure.Latitude, departure.Longitude, totalFuelKg: 4000, onGround: true));
@@ -190,7 +191,7 @@ public class FuelPersistenceTests
 
         var departure = await ctx.Db.Airports.SingleAsync(a => a.Icao == "EGGD");
         // The sim now reports LESS - defuelled, or consumed by an untracked flight. Policy
-        // (docs/PLAN.md, decided this chunk): a decrease is treated as consumed, never a credit.
+        // (decided this chunk): a decrease is treated as consumed, never a credit.
         // Real UtcNow so StartAsync's recency window trusts this sample.
         telemetry.SetLastSampleForTests(MakeSample(DateTimeOffset.UtcNow, departure.Latitude, departure.Longitude, totalFuelKg: 2000, onGround: true));
 
@@ -353,7 +354,7 @@ public class FuelPersistenceTests
         (await ctx.Db.LedgerTransactions.Where(t => t.AirlineId == ctx.Airline.Id).ToListAsync()).Sum(t => t.Amount);
 
     /// <summary>Seeds both directions of an EGGD&lt;-&gt;EGPH round trip (routes are always
-    /// bidirectional pairs - see docs/PLAN.md) plus the pilot FlightEndpoints.StartAsync requires.</summary>
+    /// bidirectional pairs) plus the pilot FlightEndpoints.StartAsync requires.</summary>
     private static async Task<(Route Outbound, Route Return)> SeedRoundTripRoutesAsync(RouteTestContext ctx)
     {
         var outbound = new Route
@@ -412,7 +413,7 @@ public class FuelPersistenceTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

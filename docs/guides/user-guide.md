@@ -169,8 +169,8 @@ The plan panel shows, live, as soon as both airports are picked:
 
 Two kinds of message can appear under the stat tiles:
 
-- **Blocking (red)** — same departure and arrival airport, or the route is beyond the range of **every aircraft in your fleet**. Either of these disables route creation until you change your airport picks or add a longer-legged aircraft.
-- **Advisory (amber)** — nothing you have reserved can fly this far but something else in your fleet can (see [Range](#range) below), a runway at either airport may be too short for the aircraft, or the route doesn't match your airline's strategy (an international route on a Domestic strategy, or a short domestic hop on an International strategy). These are shown for your attention but **do not block creating the route** — you can create it anyway if you're confident it'll work.
+- **Blocking (red)** — same departure and arrival airport, the route is beyond the range of **every aircraft in your fleet**, or no aircraft in your fleet can physically use one of the two runways (see [Runway suitability](#runway-suitability) below). Any of these disables route creation until you change your airport picks or add a suitable aircraft.
+- **Advisory (amber)** — nothing you have reserved can fly this far or use these runways but something else in your fleet can (see [Range](#range) and [Runway suitability](#runway-suitability) below), or the route doesn't match your airline's strategy (an international route on a Domestic strategy, or a short domestic hop on an International strategy). These are shown for your attention but **do not block creating the route** — you can create it anyway if you're confident it'll work.
 
 ### Range
 
@@ -184,8 +184,23 @@ The route planner gives one of three answers:
 
 Elsewhere, range is a hard limit on a specific airframe rather than guidance:
 
-- On the **Fly** screen, an aircraft parked at the departure airport that can't reach the destination is still listed — never silently dropped — but shown as unflyable with the reason (*"G-DMRO (Airbus A320) can't reach KJFK — 2912 nm is beyond its practical range of about 2805 nm."*). It's reported ahead of "not reserved to you", because reserving it wouldn't help.
+- On the **Fly** screen, an aircraft parked at the departure airport that can't reach the destination is still listed — never silently dropped — but shown as unflyable with the reason (*"G-DMRO (Airbus A320) can't reach KJFK — 2,912 nm is beyond its practical range of about 2,805 nm."*). It's reported ahead of "not reserved to you", because reserving it wouldn't help.
 - In the **schedule builder**, a route beyond the duty day's aircraft is offered as an unavailable leg with the same kind of reason, and saving a schedule containing one is refused. An A320 is never rostered onto a sector it cannot reach.
+
+### Runway suitability
+
+Runway suitability checks two separate things about a route's two airports: is a runway **long enough**, and — for a heavy aircraft — is it **paved**. Length mirrors range exactly: guidance everywhere nothing in your fleet can use it at all, a hard refusal only when nothing can. Surface is a straightforward physical fact rather than guidance to be weighed — no length of grass makes a widebody's departure possible, so a heavy aircraft (roughly airliner-widebody weight and up) is refused on a grass, gravel, dirt, or water runway regardless of how long it is. This is a physical limit of the airframe, not a judgement about the aircraft *type* — the same "family-level type matching is never financially penalised" rule you'll see elsewhere in FSOps is untouched by it.
+
+The route planner gives the same three answers range does:
+
+- **An aircraft reserved to you can use both runways.** Nothing is said at all.
+- **Nothing reserved to you can use them, but something in your fleet can.** An amber advisory names the aircraft and offers to reserve it, the same way a range advisory does.
+- **Nothing in your fleet can use them.** A red blocking message names the most runway-tolerant aircraft you own and explains why — too short, or too soft for its weight — and points you at the Fleet page. This is the only case where runway suitability stops a route being created.
+
+Elsewhere, it's a hard limit on a specific airframe, exactly like range:
+
+- On the **Fly** screen, an aircraft that can't use the departure or arrival runway is listed but shown as unflyable with the reason, and starting a flight with it is refused even if requested directly.
+- In the **schedule builder**, a leg neither runway fits is offered as an unavailable option with the same kind of reason, and saving a schedule containing one is refused.
 
 ### Creating a route with a fare override
 
@@ -540,9 +555,25 @@ The same map shows who's actually controlling the airspace you fly in — no set
 
 **What isn't shown, and why.** Approach TRACONs that aren't named after an airport have no published boundary data available, so FSOps shows nothing rather than inventing a shape — a wrong boundary on a map reads as authoritative. There are **no altitude limits** in this data either, so a sector polygon says nothing about which levels are being worked, and top-down coverage is never inferred. An empty area means "FSOps can't say", not necessarily "nobody is there".
 
-**Other pilots' traffic is deliberately left off entirely** — this is about airspace coverage, not a multiplayer traffic display. If VATSIM's feed is temporarily unreachable the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. Nothing about your flight or the economy depends on any of this.
+**Other VATSIM traffic near your network is shown too**, off the same feed and toggleable. A small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm) — never your own aircraft, and never anyone's if the feed is unreachable. Toggle it from the button above the map; it's on by default there, and doesn't exist on the in-game panel at all, which has no map to draw it on.
+
+If VATSIM's feed is temporarily unreachable the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. Nothing about your flight or the economy depends on any of this.
 
 FIR boundaries © VAT-Spy Data Project, CC BY-SA 4.0.
+
+### Your VATSIM CID
+
+Settings, next to your SimBrief Pilot ID, has a field for your VATSIM CID. It's entirely optional and only ever read by FSOps' own server — **nothing about you is sent to VATSIM**, and leaving it blank changes nothing else: the ATC layer and the traffic above both work with no CID at all.
+
+Setting it unlocks two things. First, **while a flight is tracked**, FSOps checks the public feed for your CID's reported position against its own telemetry every so often — never presence alone, always corroborated against where FSOps independently knows you to be. A flight found genuinely online earns a **"Flown online"** badge on its report card. Second, the Dashboard gets a **Flown online** card listing which of your flights were corroborated this way.
+
+That card is built **entirely from FSOps' own records**, never a pull from VATSIM's own history — VATSIM's history API needs a key FSOps doesn't have, so it isn't called at all. If a flight you flew online isn't listed, it means FSOps couldn't corroborate it at the time, not that VATSIM has forgotten it.
+
+### The online-flying bonus
+
+A qualifying flight — corroborated online for at least half its tracked block time — earns a modest reward: a **3% uplift on that sector's own ticket revenue**, posted as its own ledger line so you can see it separately from the fare, plus a small reputation nudge of about **+0.1** from a baseline of 50. That's a fraction of what an ordinary well-flown sector already earns on its own.
+
+It's meant to reward the extra effort of flying online **without making offline flying feel like the lesser choice** — FSOps stays fully rewarding with no VATSIM account at all. The bonus applies only to a sector that was payable anyway: a flight voided for slewing or a position jump earns no bonus, exactly as it earns no ticket revenue.
 
 ## Statistics dashboards
 

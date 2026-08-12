@@ -1,5 +1,6 @@
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
+using FSOps.Core.Money;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using FSOps.Server.Endpoints;
@@ -85,6 +86,15 @@ public sealed class AirlineCreationLoanCapTests : IDisposable
 
     private static object BodyOf(IResult result) => Assert.IsAssignableFrom<IValueHttpResult>(result).Value!;
 
+    // Every RequestWithLoan below passes CurrencyCode: "GBP" - the refusal message formats both
+    // figures through MoneyFormatter for display (see AirlineEndpoints.CreateAsync's own comment on
+    // why it reads `currency` from the REQUEST rather than saved settings: no airline/UserSettings
+    // row exists yet at this point). GBP is the base currency (DisplayRate 1.00), so the formatted
+    // figure differs from the raw decimal only in the £ symbol and thousands separator - asserting
+    // against MoneyFormatter's own output, not a hand-built string, means this test can't silently
+    // drift from whatever MoneyFormatter actually produces.
+    private static readonly Currency Gbp = CurrencyCatalogue.TryGet("GBP")!;
+
     private CreateAirlineRequest RequestWithLoan(string playstyle, string icaoCode, decimal amount, int termMonths = 60) =>
         new(
             Name: "Loan Cap Test Airline",
@@ -115,8 +125,12 @@ public sealed class AirlineCreationLoanCapTests : IDisposable
 
         Assert.Equal(casualCap + 1m, requestedAmount);
         Assert.Equal(casualCap, maxStartingLoanPrincipal);
-        Assert.Contains(casualCap.ToString("F2"), error);
-        Assert.Contains((casualCap + 1m).ToString("F2"), error);
+        // Asserted against MoneyFormatter's own formatted output (e.g. "£250,000.00"), not a raw
+        // decimal ToString - a fragment like "250" would still pass on a regression back to
+        // unformatted output and prove nothing.
+        Assert.Contains(MoneyFormatter.Format(casualCap, Gbp), error);
+        Assert.Contains(MoneyFormatter.Format(casualCap + 1m, Gbp), error);
+        Assert.Contains("Casual airline", error);
     }
 
     [Fact]
@@ -172,6 +186,14 @@ public sealed class AirlineCreationLoanCapTests : IDisposable
             RequestWithLoan("TrueLife", "LCD", trueLifeCap + 1m), secondDb, secondUser, _catalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(aboveTrueLifeCapResult));
+
+        // The refusal must read "True-life", never the raw enum name "TrueLife" - and the maximum
+        // it names must be True-life's own (much larger) cap, not Casual's.
+        var error = (string)BodyOf(aboveTrueLifeCapResult).GetType().GetProperty("error")!.GetValue(BodyOf(aboveTrueLifeCapResult))!;
+        Assert.Contains("True-life airline", error);
+        Assert.DoesNotContain("TrueLife airline", error);
+        Assert.Contains(MoneyFormatter.Format(trueLifeCap, Gbp), error);
+        Assert.Contains(MoneyFormatter.Format(trueLifeCap + 1m, Gbp), error);
     }
 
     public void Dispose()

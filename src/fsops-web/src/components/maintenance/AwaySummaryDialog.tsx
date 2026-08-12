@@ -41,6 +41,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   PassengerCharges: 'Passenger charges',
   TurnaroundFees: 'Turnaround fees',
   LeasePayment: 'Lease payment',
+  LeaseDeposit: 'Lease deposit',
   LoanPayment: 'Loan payment',
   AircraftPurchase: 'Aircraft purchase/sale',
   Insurance: 'Insurance',

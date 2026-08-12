@@ -541,6 +541,40 @@ public class WorldDataRefreshNonDestructiveTests : IDisposable
     // The version stamp
     // -------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// J28 - a closed runway must never count towards an airport's LongestRunwayFt: it isn't ground
+    /// a player can actually use, and RunwaySuitabilityAssessor's length check (and every message
+    /// that quotes this figure) trusts it as "the longest runway you could actually land on".
+    /// EGGD's only long runway here is closed; its one open runway is much shorter, so a defect that
+    /// ignored the closed flag would stamp the closed runway's length instead of the open one's.
+    /// </summary>
+    [Fact]
+    public async Task AClosedRunway_NeverCountsTowardsAnAirportsLongestRunway()
+    {
+        await MigrateAsync();
+        WorldDataFixtures.WriteBundle(
+            SeedDirectory,
+            new[] { new AirportRow("EGGD", "medium_airport", "Bristol Airport", 51.382702, -2.71909, 622, "GB", "Bristol", "yes", IataCode: "BRS") },
+            new[]
+            {
+                // Closed and much longer than the open runway - a defect that ignores IsClosed
+                // would stamp 9999, not 2000.
+                new RunwayRow("EGGD", 9999, 148, "ASP", true, Closed: true, "09", "27"),
+                new RunwayRow("EGGD", 2000, 100, "ASP", true, Closed: false, "13", "31"),
+            });
+
+        await RunAsync();
+
+        await using var db = new FsOpsDbContext(Options);
+        var bristol = await db.Airports.AsNoTracking().SingleAsync(a => a.Icao == "EGGD");
+        Assert.Equal(2000, bristol.LongestRunwayFt);
+
+        var runways = await db.Runways.AsNoTracking().Where(r => r.AirportIcao == "EGGD").ToListAsync();
+        Assert.Equal(4, runways.Count); // 2 directional rows per physical runway
+        Assert.Contains(runways, r => r.LengthFt == 9999 && r.IsClosed);
+        Assert.Contains(runways, r => r.LengthFt == 2000 && !r.IsClosed);
+    }
+
     [Fact]
     public async Task AnUnchangedBundle_IsNotReimportedOnTheNextLaunch()
     {

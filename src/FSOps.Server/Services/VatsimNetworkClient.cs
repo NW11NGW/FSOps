@@ -22,12 +22,37 @@ public sealed record VatsimController(
     DateTimeOffset LogonTimeUtc);
 
 /// <summary>
+/// One pilot currently connected to VATSIM, trimmed down to what the two pilot-facing features need
+/// it for: G8 (VatsimFlightCorroborationService, matching a tracked flight's own CID against its
+/// reported position) and G11 (other VATSIM traffic on the live operations map). Unlike
+/// <see cref="VatsimController"/>, this WAS the data VatsimNetworkClient's class doc used to say
+/// "pilot entries are never read at all" - that changed the moment corroborating a flight against
+/// the network became a feature, not a hypothetical. Still trimmed hard: nothing beyond this shape
+/// is retained, and nothing about it is ever sent anywhere but back to the FSOps user who is already
+/// looking at their own dashboard or report card.
+/// </summary>
+public sealed record VatsimPilot(
+    string Callsign,
+    int Cid,
+    string Name,
+    double LatitudeDeg,
+    double LongitudeDeg,
+    double AltitudeFt,
+    double GroundSpeedKt,
+    double HeadingDeg,
+    string? DepartureIcao,
+    string? ArrivalIcao,
+    DateTimeOffset LogonTimeUtc,
+    DateTimeOffset LastUpdatedUtc);
+
+/// <summary>
 /// Result of the most recent attempt to read the VATSIM feed. <see cref="Available"/> is false
 /// when the last fetch failed (network error, timeout, non-success status, or a payload that
 /// didn't parse) - callers must treat that as an ordinary, expected outcome and degrade the ATC
 /// layer to "unavailable" rather than letting an exception reach the endpoint.
 /// </summary>
-public sealed record VatsimSnapshot(bool Available, DateTimeOffset? FetchedAtUtc, IReadOnlyList<VatsimController> Controllers);
+public sealed record VatsimSnapshot(
+    bool Available, DateTimeOffset? FetchedAtUtc, IReadOnlyList<VatsimController> Controllers, IReadOnlyList<VatsimPilot> Pilots);
 
 public interface IVatsimNetworkClient
 {
@@ -131,7 +156,27 @@ public sealed class VatsimNetworkClient : IVatsimNetworkClient
                     c.LogonTime))
                 .ToList();
 
-            return new VatsimSnapshot(true, attemptedAt, controllers);
+            // last_updated falls back to the fetch time itself for a payload that omits it (an
+            // older/different feed shape) - "just seen" is a safer default than treating a missing
+            // timestamp as infinitely stale, which would silently fail every corroboration check.
+            var pilots = (feed?.Pilots ?? new List<VatsimFeedPilot>())
+                .Where(p => !string.IsNullOrWhiteSpace(p.Callsign))
+                .Select(p => new VatsimPilot(
+                    p.Callsign,
+                    p.Cid,
+                    p.Name ?? string.Empty,
+                    p.Latitude,
+                    p.Longitude,
+                    p.Altitude,
+                    p.GroundSpeed,
+                    p.Heading,
+                    NormaliseIcao(p.FlightPlan?.Departure),
+                    NormaliseIcao(p.FlightPlan?.Arrival),
+                    p.LogonTime,
+                    p.LastUpdated ?? attemptedAt))
+                .ToList();
+
+            return new VatsimSnapshot(true, attemptedAt, controllers, pilots);
         }
         // Only swallow a cancellation that this method caused itself (the request timeout above);
         // a cancellation the caller asked for must propagate like any other cancelled request.
@@ -139,12 +184,17 @@ public sealed class VatsimNetworkClient : IVatsimNetworkClient
             or TaskCanceledException or OperationCanceledException) && !ct.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "VATSIM feed fetch failed - showing the ATC layer as unavailable");
-            return new VatsimSnapshot(false, attemptedAt, Array.Empty<VatsimController>());
+            return new VatsimSnapshot(false, attemptedAt, Array.Empty<VatsimController>(), Array.Empty<VatsimPilot>());
         }
     }
 
+    /// <summary>Blank filed-plan fields ("", whitespace) read as "not filed" rather than an empty
+    /// ICAO, which would otherwise falsely match a candidate-ICAO lookup for an empty string.</summary>
+    private static string? NormaliseIcao(string? icao) => string.IsNullOrWhiteSpace(icao) ? null : icao;
+
     private sealed record VatsimFeedRoot(
-        [property: JsonPropertyName("controllers")] List<VatsimFeedController>? Controllers);
+        [property: JsonPropertyName("controllers")] List<VatsimFeedController>? Controllers,
+        [property: JsonPropertyName("pilots")] List<VatsimFeedPilot>? Pilots);
 
     private sealed record VatsimFeedController(
         [property: JsonPropertyName("cid")] int Cid,
@@ -154,4 +204,21 @@ public sealed class VatsimNetworkClient : IVatsimNetworkClient
         [property: JsonPropertyName("facility")] int Facility,
         [property: JsonPropertyName("visual_range")] double? VisualRange,
         [property: JsonPropertyName("logon_time")] DateTimeOffset LogonTime);
+
+    private sealed record VatsimFeedPilot(
+        [property: JsonPropertyName("cid")] int Cid,
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("callsign")] string Callsign,
+        [property: JsonPropertyName("latitude")] double Latitude,
+        [property: JsonPropertyName("longitude")] double Longitude,
+        [property: JsonPropertyName("altitude")] double Altitude,
+        [property: JsonPropertyName("groundspeed")] double GroundSpeed,
+        [property: JsonPropertyName("heading")] double Heading,
+        [property: JsonPropertyName("logon_time")] DateTimeOffset LogonTime,
+        [property: JsonPropertyName("last_updated")] DateTimeOffset? LastUpdated,
+        [property: JsonPropertyName("flight_plan")] VatsimFeedFlightPlan? FlightPlan);
+
+    private sealed record VatsimFeedFlightPlan(
+        [property: JsonPropertyName("departure")] string? Departure,
+        [property: JsonPropertyName("arrival")] string? Arrival);
 }

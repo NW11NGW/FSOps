@@ -1,3 +1,5 @@
+using FSOps.Core.Entities;
+using FSOps.Core.Planning;
 using FSOps.Data;
 using FSOps.Server.Auth;
 using FSOps.Server.Services;
@@ -7,13 +9,29 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Endpoints;
 
 /// <summary>
-/// Backs the dashboard's ATC layer - online VATSIM controllers plotted alongside the player's own
-/// aircraft on the live operations map, answering "is anyone controlling where I am flying right
-/// now". Deliberately narrower than the fuller VATSIM integration originally envisaged - which
-/// also covered other people's live traffic on the map, verifying a tracked flight was genuinely
-/// flown online against the player's own CID, and pre-filling the Fly screen from a filed plan.
-/// This shows controllers only, never other pilots, and only controllers
-/// relevant to the player - not a global VATSIM controller list.
+/// Backs the dashboard's VATSIM-facing views: the ATC layer (<c>GET /operations/atc</c>), other
+/// pilots' live traffic near the player's own network (<c>GET /vatsim/traffic</c>, G11), and
+/// FSOps' own record of which of the player's flights were corroborated as genuinely flown online
+/// (<c>GET /vatsim/history</c>, G9 - built entirely from <see cref="Flight.VatsimOnline"/>, not a
+/// second call to VATSIM; see that endpoint's own doc for why). Pre-filling the Fly screen from a
+/// filed plan was considered and declined - SimBrief already does that hand-off.
+///
+/// <para><b>ATC coverage - two kinds, drawn differently on purpose, because they are different
+/// claims.</b></para>
+///
+/// <para><i>Terminal</i> (<c>CoverageKind == "terminal"</c>) - tower, ground, delivery and
+/// airport-named approach. These genuinely are airport-local, so the position is the airport,
+/// resolved locally against FSOps' own Airports table by matching the callsign's leading
+/// ICAO-shaped segment (EGLL_TWR -&gt; EGLL). The client draws the feed's own <c>visual_range</c>
+/// as a circle around it. That circle is an approximation and is labelled as one: it is the range
+/// the controller's client is set to see, not the shape of anything they control.</para>
+///
+/// <para><i>Sector</i> (<c>CoverageKind == "sector"</c>) - CTR and FSS. These have no airport and
+/// never did, which is why FSOps used to drop every one of them. They now carry real published FIR
+/// and UIR geometry from the bundled VAT-Spy data (see <see cref="IAtcBoundarySource"/>), so
+/// en-route control can be shown at all for the first time. A sector controller has no latitude or
+/// longitude and no marker - a polygon has no meaningful centre, and inventing one would put a pin
+/// where nobody is.</para>
 ///
 /// <para><b>Two kinds of coverage, drawn differently on purpose, because they are different
 /// claims.</b></para>
@@ -67,9 +85,23 @@ public static class VatsimEndpoints
     internal const string TerminalCoverage = "terminal";
     internal const string SectorCoverage = "sector";
 
+    /// <summary>Other pilots' traffic within this many nm of a network airport or the sampled
+    /// great-circle path of an active route - "near the user's airports and along the active
+    /// route" per G11's brief. Generous enough to give a sense of nearby activity without pulling
+    /// in a whole FIR's worth of unrelated traffic; this is deliberately a coarse "is anyone near
+    /// what I'm doing" signal, not a precise proximity claim.</summary>
+    private const double TrafficRadiusNm = 150.0;
+
+    /// <summary>Points sampled along each active route's great-circle path for the traffic
+    /// proximity check - enough to catch traffic near the middle of a long sector, not just its
+    /// two endpoints.</summary>
+    private const int TrafficRouteSampleCount = 20;
+
     public static void MapVatsimEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapGet("/operations/atc", GetAtcAsync);
+        group.MapGet("/vatsim/traffic", GetTrafficAsync);
+        group.MapGet("/vatsim/history", GetHistoryAsync);
     }
 
     /// <param name="geometry">Opt-in: boundary polygons are only serialised when a client actually
@@ -208,6 +240,155 @@ public static class VatsimEndpoints
     private static IResult Empty(string status, DateTimeOffset? fetchedAtUtc) =>
         Results.Ok(new VatsimAtcResponse(status, fetchedAtUtc, Array.Empty<VatsimAtcController>(), null));
 
+    /// <summary>
+    /// G11 - other VATSIM pilots' traffic near the player's own network, for the live operations
+    /// map. Deliberately bounded to <see cref="TrafficRadiusNm"/> of a network airport or an active
+    /// route's sampled path (see <see cref="TrafficRouteSampleCount"/>) rather than every pilot on
+    /// the network worldwide - VATSIM can have several thousand pilots online at peak, and a
+    /// dashboard map has no use for traffic nowhere near what the player is doing. The player's own
+    /// aircraft (matched by their configured CID, if any) is excluded - it is already drawn
+    /// separately, with full weight, by <c>OperationsEndpoints</c>; this is only ever "other
+    /// people's" traffic. Toggling this off client-side (and its off-by-default state on the
+    /// in-game panel, which has no map to draw it on at all) is a client concern - see
+    /// <c>LiveOpsMap.tsx</c>.
+    /// </summary>
+    internal static async Task<IResult> GetTrafficAsync(
+        [FromServices] IVatsimNetworkClient vatsim, [FromServices] FsOpsDbContext db, [FromServices] ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.Ok(new VatsimTrafficResponse("ok", null, Array.Empty<VatsimTrafficPilot>()));
+        }
+
+        var activeRoutes = await db.Routes
+            .Where(r => r.AirlineId == airline.Id && r.IsActive)
+            .Select(r => new { r.DepartureIcao, r.ArrivalIcao })
+            .ToListAsync(ct);
+        var networkIcaos = activeRoutes.SelectMany(r => new[] { r.DepartureIcao, r.ArrivalIcao }).Distinct().ToList();
+        if (networkIcaos.Count == 0)
+        {
+            // Same "nothing to show, skip the fetch entirely" rule as GetAtcAsync - see
+            // VatsimNetworkClient's class doc on backing off when nothing is listening.
+            return Results.Ok(new VatsimTrafficResponse("ok", null, Array.Empty<VatsimTrafficPilot>()));
+        }
+
+        var networkAirports = await db.Airports
+            .Where(a => networkIcaos.Contains(a.Icao))
+            .Select(a => new { a.Icao, a.Latitude, a.Longitude })
+            .ToListAsync(ct);
+        if (networkAirports.Count == 0)
+        {
+            return Results.Ok(new VatsimTrafficResponse("ok", null, Array.Empty<VatsimTrafficPilot>()));
+        }
+
+        var airportsByIcao = networkAirports.ToDictionary(a => a.Icao, StringComparer.Ordinal);
+
+        // The proximity net: every network airport's own position, plus points sampled along each
+        // active route's great-circle path - covers "near the user's airports" and "along the
+        // active route" from one flat list of candidate points.
+        var proximityPoints = networkAirports.Select(a => (a.Latitude, a.Longitude)).ToList();
+        foreach (var route in activeRoutes)
+        {
+            if (airportsByIcao.TryGetValue(route.DepartureIcao, out var dep) && airportsByIcao.TryGetValue(route.ArrivalIcao, out var arr))
+            {
+                var sampled = GreatCircle.SamplePath(dep.Latitude, dep.Longitude, arr.Latitude, arr.Longitude, TrafficRouteSampleCount);
+                proximityPoints.AddRange(sampled.Select(p => (p.Lat, p.Lon)));
+            }
+        }
+
+        var snapshot = await vatsim.GetSnapshotAsync(ct);
+        if (!snapshot.Available)
+        {
+            return Results.Ok(new VatsimTrafficResponse("unavailable", snapshot.FetchedAtUtc, Array.Empty<VatsimTrafficPilot>()));
+        }
+
+        var settings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == currentUser.UserId, ct);
+        var ownCid = int.TryParse(settings?.VatsimCid, out var parsedCid) && parsedCid > 0 ? parsedCid : (int?)null;
+
+        var pilots = snapshot.Pilots
+            .Where(p => ownCid is null || p.Cid != ownCid)
+            .Where(p => proximityPoints.Any(pt => GreatCircle.DistanceNm(pt.Item1, pt.Item2, p.LatitudeDeg, p.LongitudeDeg) <= TrafficRadiusNm))
+            .Select(p => new VatsimTrafficPilot(
+                p.Callsign, p.LatitudeDeg, p.LongitudeDeg, p.AltitudeFt, p.GroundSpeedKt, p.HeadingDeg, p.DepartureIcao, p.ArrivalIcao))
+            .OrderBy(p => p.Callsign, StringComparer.Ordinal)
+            .ToList();
+
+        return Results.Ok(new VatsimTrafficResponse("ok", snapshot.FetchedAtUtc, pilots));
+    }
+
+    /// <summary>
+    /// G9 - "VATSIM flight history by CID". Built ENTIRELY from FSOps' own records
+    /// (<see cref="Flight.VatsimOnline"/> and its sibling fields, set by
+    /// <see cref="VatsimFlightCorroborationService"/> via <c>FlightLifecycleService</c> - G8), never
+    /// from a second call to VATSIM. VATSIM's own history is not reachable this way: the public
+    /// snapshot feed (<c>VatsimNetworkClient</c>) has no history at all, and the Core API's
+    /// <c>GET /v2/members/{cid}/history</c> is key-gated (reading any CID's past sessions is a real
+    /// privacy surface VATSIM does not hand out keylessly) - FSOps has no such key, and a
+    /// best-effort call that can never succeed would be an outbound request on every use for
+    /// nothing, in an app whose whole posture is making as few external calls as possible and
+    /// working fully offline. If a genuine "your real VATSIM network history" feature is ever
+    /// wanted, that is a new decision requiring an API key, not something to half-build here.
+    /// <para>
+    /// This answers a related but different, and arguably more useful, question: "which of MY
+    /// flights (in FSOps) were flown online?" - joined to the player's own sectors, routes and
+    /// aircraft, which a raw VATSIM session list could never be. The client must present this
+    /// plainly as FSOps' own record, not as VATSIM's - see <c>VatsimHistoryCard.tsx</c>.
+    /// </para>
+    /// </summary>
+    internal static async Task<IResult> GetHistoryAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.Ok(new VatsimHistoryResponse(false, Array.Empty<VatsimHistoryEntry>()));
+        }
+
+        var settings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == currentUser.UserId, ct);
+        var cidConfigured = !string.IsNullOrWhiteSpace(settings?.VatsimCid);
+
+        // Materialise before ordering by DateTimeOffset - SQLite can't translate that (project
+        // EF/SQLite trap). VatsimOnline != null is exactly "a corroboration check ran for this
+        // flight at least once" - see Flight.VatsimOnline's own doc for why null (never checked)
+        // must never be conflated with false (checked, not online).
+        var flights = (await db.Flights
+                .Where(f => f.AirlineId == airline.Id && f.VatsimOnline != null && f.DeletedUtc == null)
+                .ToListAsync(ct))
+            .OrderByDescending(f => f.InUtc ?? f.CreatedUtc)
+            .Take(50)
+            .ToList();
+
+        if (flights.Count == 0)
+        {
+            return Results.Ok(new VatsimHistoryResponse(cidConfigured, Array.Empty<VatsimHistoryEntry>()));
+        }
+
+        var routeIds = flights.Select(f => f.RouteId).Distinct().ToList();
+        var routesById = await db.Routes.Where(r => routeIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
+
+        var entries = flights.Select(f =>
+        {
+            routesById.TryGetValue(f.RouteId, out var route);
+            var controllers = string.IsNullOrWhiteSpace(f.VatsimControllersWorked)
+                ? Array.Empty<string>()
+                : f.VatsimControllersWorked.Split(", ", StringSplitOptions.RemoveEmptyEntries);
+
+            return new VatsimHistoryEntry(
+                f.Id,
+                f.RouteId,
+                route?.DepartureIcao,
+                route?.ArrivalIcao,
+                route?.FlightNumber,
+                f.InUtc ?? f.CreatedUtc,
+                f.VatsimOnline == true,
+                f.VatsimOnlineFraction,
+                f.VatsimCallsign,
+                controllers);
+        }).ToList();
+
+        return Results.Ok(new VatsimHistoryResponse(cidConfigured, entries));
+    }
+
     /// <summary>Airport-local positions: the airport's own position plus the feed's visual range,
     /// which the client draws as an explicitly approximate circle.</summary>
     private static ResolvedController? ResolveTerminal(
@@ -282,15 +463,12 @@ public static class VatsimEndpoints
             boundary);
     }
 
-    /// <summary>The callsign segment before the first underscore, when it looks like an ICAO code
-    /// (exactly four letters). TRACON callsigns ("NY_APP") don't match and correctly resolve to no
+    /// <summary>The callsign segment before the first underscore, when it looks like an ICAO code -
+    /// see <see cref="VatsimCallsigns.AirportIcaoFromCallsign"/>, shared with
+    /// <see cref="VatsimFlightCorroborationService"/> so both agree on what counts as
+    /// airport-local. TRACON callsigns ("NY_APP") don't match and correctly resolve to no
     /// position - see the class doc.</summary>
-    private static string? AirportIcaoFromCallsign(string callsign)
-    {
-        var separator = callsign.IndexOf('_');
-        var candidate = separator < 0 ? callsign : callsign[..separator];
-        return candidate.Length == 4 && candidate.All(char.IsAsciiLetterUpper) ? candidate : null;
-    }
+    private static string? AirportIcaoFromCallsign(string callsign) => VatsimCallsigns.AirportIcaoFromCallsign(callsign);
 
     private static string FacilityLabel(int facilityId) => facilityId switch
     {
@@ -340,3 +518,46 @@ public sealed record VatsimAtcController(
     string? BoundaryId,
     string? BoundaryName,
     bool InNetwork);
+
+/// <summary>GET /vatsim/traffic response - G11. <see cref="Status"/> distinguishes "the feed
+/// answered but nobody relevant is online" ('ok' with an empty list) from "the feed itself could
+/// not be read" ('unavailable'), same convention as <see cref="VatsimAtcResponse"/>.</summary>
+public sealed record VatsimTrafficResponse(string Status, DateTimeOffset? FetchedAtUtc, IReadOnlyList<VatsimTrafficPilot> Pilots);
+
+/// <summary>One other pilot's live position near the player's network - deliberately thin (no CID,
+/// no name): this is "other people's traffic" for a map marker, not a profile. See
+/// <see cref="VatsimEndpoints.GetTrafficAsync"/>'s own doc for the proximity rule.</summary>
+public sealed record VatsimTrafficPilot(
+    string Callsign,
+    double LatitudeDeg,
+    double LongitudeDeg,
+    double AltitudeFt,
+    double GroundSpeedKt,
+    double HeadingDeg,
+    string? DepartureIcao,
+    string? ArrivalIcao);
+
+/// <summary>GET /vatsim/history response - G9. <see cref="CidConfigured"/> lets the client tell
+/// "no CID set, nothing has ever been checked" apart from "a CID is set but nothing in the window
+/// has been corroborated yet" - both currently render as an empty <see cref="Flights"/> list, and
+/// the client needs to say something different for each. Built entirely from FSOps' own records -
+/// see <see cref="VatsimEndpoints.GetHistoryAsync"/>'s own doc for why this is not, and cannot
+/// honestly be, a second call to VATSIM.</summary>
+public sealed record VatsimHistoryResponse(bool CidConfigured, IReadOnlyList<VatsimHistoryEntry> Flights);
+
+/// <summary>One of the player's own flights that FSOps corroborated (checked at least once) against
+/// VATSIM. <see cref="Online"/> mirrors <see cref="Flight.VatsimOnline"/> == true; a flight is only
+/// ever included here at all once <see cref="Flight.VatsimOnline"/> is non-null (see
+/// <see cref="VatsimEndpoints.GetHistoryAsync"/>'s own filter), so every entry represents a real
+/// checked outcome, never an unchecked one presented as "not online".</summary>
+public sealed record VatsimHistoryEntry(
+    Guid FlightId,
+    Guid RouteId,
+    string? DepartureIcao,
+    string? ArrivalIcao,
+    string? FlightNumber,
+    DateTimeOffset CompletedUtc,
+    bool Online,
+    double? OnlineFraction,
+    string? Callsign,
+    IReadOnlyList<string> ControllersWorked);

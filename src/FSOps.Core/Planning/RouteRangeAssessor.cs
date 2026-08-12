@@ -4,9 +4,9 @@ namespace FSOps.Core.Planning;
 /// One airframe as far as range is concerned: what it is, how far it goes, and whether it is
 /// currently reserved to the player. Deliberately not <see cref="Entities.FleetAircraft"/> - this
 /// keeps <see cref="RouteRangeAssessor"/> a pure function over plain data the caller has already
-/// loaded, and keeps the range question free of anything to do with type MATCHING (see
-/// docs/PLAN.md: family-level type matching is informational and never penalised - range is a
-/// physical limit of a specific airframe and must never become a back-door type penalty).
+/// loaded, and keeps the range question free of anything to do with type MATCHING (family-level
+/// type matching is informational and never penalised - range is a physical limit of a specific
+/// airframe and must never become a back-door type penalty).
 /// </summary>
 public sealed record RangeCandidateAircraft(string Registration, string TypeName, int RangeNm, bool ReservedForPlayer);
 
@@ -58,9 +58,9 @@ public sealed record RouteRangeAssessment(
 /// fleet, and only genuinely blocking when NOTHING in the fleet can do it.
 /// </para>
 /// <para>
-/// Reservation is reused as the gate rather than reinvented (docs/PLAN.md "3a": reservation is the
-/// sole two-way gate on who may fly what), so the three answers line up exactly with the three
-/// things a player can actually do next: nothing, reserve, or acquire.
+/// Reservation is reused as the gate rather than reinvented (reservation is the sole two-way gate
+/// on who may fly what), so the three answers line up exactly with the three things a player can
+/// actually do next: nothing, reserve, or acquire.
 /// </para>
 /// Pure and deterministic - no I/O, no clock, no randomness - so every branch is unit-testable with
 /// exact expected strings.
@@ -124,7 +124,11 @@ public static class RouteRangeAssessor
         var longestLegged = ordered[0];
         return new RouteRangeAssessment(
             RouteRangeVerdict.BeyondFleet, Blocking: true,
-            $"This route is {distanceNm:F0} nm, beyond every aircraft in your fleet. Your longest-legged is " +
+            // N0 (thousands separator), not F0 - this is the one BLOCKING range message, shown
+            // directly under a stat tile that already formats the same distance as "2,912 nm"; the
+            // raw F0 figure used to read "2912 nm" right next to it, which looks like a typo rather
+            // than the same number.
+            $"This route is {distanceNm:N0} nm, beyond every aircraft in your fleet. Your longest-legged is " +
             $"{longestLegged.Registration} ({longestLegged.TypeName}) at about {OperationalRangeNm(longestLegged.RangeNm):F0} nm " +
             "once reserves are accounted for - add an aircraft with the range from the Fleet page to fly this route.",
             longestLegged.Registration, longestLegged.TypeName, OperationalRangeNm(longestLegged.RangeNm));

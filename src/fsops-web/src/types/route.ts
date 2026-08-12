@@ -57,17 +57,33 @@ export interface RoutePreviewRange {
   operationalRangeNm: number | null
 }
 
+/**
+ * The runway mirror of RoutePreviewRange - whether the airline as a whole can physically use both
+ * airports' runways (length AND surface), never a statement about the single aircraft type the
+ * preview figures happen to be planned with. Only `blocking` may ever stop a route being created.
+ */
+export interface RoutePreviewRunway {
+  verdict: 'NotAssessed' | 'ReservedCanUse' | 'RequiresReservation' | 'BeyondFleet'
+  /** True only when NOTHING in the fleet can physically use both runways. */
+  blocking: boolean
+  /** The sentence to show, already written by the backend. Null when there is nothing to say. */
+  message: string | null
+  /** The aircraft the message names - to reserve, or the most runway-tolerant one you have. */
+  aircraftRegistration: string | null
+  aircraftTypeName: string | null
+}
+
 export interface RoutePreviewValidation {
   /**
    * Whether the aircraft type these figures were planned with can reach that far - a statement
    * about ONE type, kept for display. Never block on it: `range` is the airline-wide verdict.
    */
   withinRange: boolean
-  departureRunwayAdequate: boolean
-  arrivalRunwayAdequate: boolean
   sameAirport: boolean
   warnings: string[]
   range: RoutePreviewRange
+  /** The airline-wide verdict for runway length AND surface - see RoutePreviewRunway. */
+  runway: RoutePreviewRunway
 }
 
 /** Longitude/latitude pair, matching the backend's [lon, lat] point order (not [lat, lon]). */

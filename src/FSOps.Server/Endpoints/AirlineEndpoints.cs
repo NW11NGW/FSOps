@@ -155,10 +155,16 @@ public static class AirlineEndpoints
             // refusal below, not quietly handed a smaller loan than they requested.
             if (loanRequest.Amount > economyConfig.Loan.MaxStartingLoanPrincipal)
             {
+                // No airline (and so no UserSettings row) exists yet at this point in onboarding -
+                // there is nothing saved to read a display currency from. `currency` above is
+                // resolved from THIS request's own currencyCode instead, which is exactly the
+                // currency the review step showed the player, so the figures quoted back here can
+                // never disagree with what they just chose.
+                var playstyleDisplayName = playstyle == AirlinePlaystyle.TrueLife ? "True-life" : playstyle.ToString();
                 return Results.BadRequest(new
                 {
-                    error = $"A starting loan of {loanRequest.Amount:F2} exceeds the maximum {economyConfig.Loan.MaxStartingLoanPrincipal:F2} " +
-                             $"allowed for a new {playstyle} airline. Try a smaller amount, or grow your airline first and borrow again " +
+                    error = $"A starting loan of {MoneyFormatter.Format(loanRequest.Amount, currency)} exceeds the maximum {MoneyFormatter.Format(economyConfig.Loan.MaxStartingLoanPrincipal, currency)} " +
+                             $"allowed for a new {playstyleDisplayName} airline. Try a smaller amount, or grow your airline first and borrow again " +
                              "once it has a trading history.",
                     requestedAmount = loanRequest.Amount,
                     maxStartingLoanPrincipal = economyConfig.Loan.MaxStartingLoanPrincipal,

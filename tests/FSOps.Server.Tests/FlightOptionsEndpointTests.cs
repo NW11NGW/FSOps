@@ -11,7 +11,7 @@ namespace FSOps.Server.Tests;
 
 /// <summary>
 /// GET /flights/options and POST /flights/start under the redesigned reservation invariant
-/// (docs/PLAN.md "3a") - the player may only fly a RESERVED aircraft, and every aircraft physically
+/// (reservation is now a hard, two-way gate) - the player may only fly a RESERVED aircraft, and every aircraft physically
 /// at the departure airport is listed (never silently dropped), each with its own eligibility and
 /// reason. Regression coverage for the 2026-08-09 real-use defect: an EGLL->EGPH route offering
 /// only one of four airframes actually parked at EGLL, because the old endpoint picked a single
@@ -24,7 +24,7 @@ public class FlightOptionsEndpointTests
     private static (FlightLifecycleService Lifecycle, SimTelemetryService Telemetry) CreateLifecycleAndTelemetry()
     {
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
-        var lifecycle = new FlightLifecycleService(null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), NullLogger<FlightLifecycleService>.Instance);
+        var lifecycle = new FlightLifecycleService(null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 

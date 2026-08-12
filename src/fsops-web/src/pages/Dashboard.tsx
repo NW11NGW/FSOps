@@ -4,17 +4,20 @@ import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, RadioTower, Route, Shie
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatTile } from '@/components/shared/StatTile'
 import { WorldDataStatusBanner } from '@/components/shared/WorldDataStatusBanner'
 import { useLiveOperations } from '@/hooks/useLiveOperations'
 import { useVatsimAtc } from '@/hooks/useVatsimAtc'
+import { useVatsimTraffic } from '@/hooks/useVatsimTraffic'
 import { useReputationSummary } from '@/hooks/useReputationSummary'
 import { useServerClock } from '@/hooks/useServerClock'
 import { useSettings } from '@/hooks/useSettings'
 import { useWorldDataStatus } from '@/hooks/useWorldDataStatus'
 import { AtcControllerList, AtcCountBadge } from '@/components/map/AtcControllerList'
+import { VatsimHistoryCard } from '@/components/map/VatsimHistoryCard'
 import type { MapBounds } from '@/components/map/atcVisibility'
 import { reputationDemandLabel, reputationDrivers, reputationTrendLabel } from '@/lib/reputation'
 import type { LiveContext } from '@/types/live-context'
@@ -62,6 +65,11 @@ export function Dashboard() {
   // Null until the lazy-loaded map mounts and reports its first view, which correctly leaves the
   // list showing the server's own network scoping in the meantime rather than nothing.
   const [atcViewport, setAtcViewport] = useState<MapBounds | null>(null)
+  // G11 - other VATSIM traffic, on by default on the dashboard. There is no equivalent state on
+  // the in-game panel because it never mounts LiveOpsMap at all (see Panel.tsx) - "off by default
+  // on the panel" is therefore structural, not a second flag to keep in sync with this one.
+  const [showVatsimTraffic, setShowVatsimTraffic] = useState(true)
+  const traffic = useVatsimTraffic(showVatsimTraffic)
   const reputation = useReputationSummary()
   const { fmt } = useSettings()
 
@@ -266,11 +274,25 @@ export function Dashboard() {
             <Radar className="size-4" />
             Live operations
           </CardTitle>
-          {liveOps.status === 'ready' && liveOps.data && liveOps.data.aircraft.length > 0 && (
-            <Badge variant="success">
-              {liveOps.data.aircraft.length} airborne
-            </Badge>
-          )}
+          <div className="flex items-center gap-2">
+            {liveOps.status === 'ready' && liveOps.data && liveOps.data.aircraft.length > 0 && (
+              <Badge variant="success">
+                {liveOps.data.aircraft.length} airborne
+              </Badge>
+            )}
+            {/* G11: other people's traffic, toggleable and on by default on the dashboard. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-pressed={showVatsimTraffic}
+              onClick={() => setShowVatsimTraffic((v) => !v)}
+              className="h-7 px-2 text-xs"
+            >
+              <RadioTower className="size-3.5" />
+              {showVatsimTraffic ? 'Hide VATSIM traffic' : 'Show VATSIM traffic'}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {liveOps.status === 'loading' && <Skeleton className="h-[360px] w-full rounded-lg" />}
@@ -287,6 +309,7 @@ export function Dashboard() {
                 atcControllers={atc.status === 'ready' && atc.data?.status === 'ok' ? atc.data.controllers : []}
                 atcBoundaries={atc.data?.boundaries ?? null}
                 atcUnavailable={atc.status === 'error' || atc.data?.status === 'unavailable'}
+                vatsimTraffic={showVatsimTraffic && traffic.status === 'ready' && traffic.data?.status === 'ok' ? traffic.data.pilots : []}
                 onViewportChange={setAtcViewport}
                 className="h-[360px]"
               />
@@ -294,6 +317,8 @@ export function Dashboard() {
           )}
         </CardContent>
       </Card>
+
+      <VatsimHistoryCard />
 
       <Card className="mt-4">
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">

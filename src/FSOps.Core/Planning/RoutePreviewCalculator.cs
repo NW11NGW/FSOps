@@ -9,11 +9,14 @@ public record RoutePreviewValidation(
     // airline can fly the route: that is <see cref="Range"/>, and it is the only one a caller should
     // ever block on.
     bool WithinRange,
-    bool DepartureRunwayAdequate,
-    bool ArrivalRunwayAdequate,
     bool SameAirport,
     IReadOnlyList<string> Warnings,
-    RouteRangeAssessment Range);
+    RouteRangeAssessment Range,
+    // The runway counterpart to Range - see RunwaySuitabilityAssessor. Replaced the old single-type
+    // DepartureRunwayAdequate/ArrivalRunwayAdequate booleans for the same reason Range replaced a
+    // single-type range check: a verdict about the whole fleet, not about whichever type these
+    // figures happened to be planned with.
+    RunwaySuitabilityAssessment Runway);
 
 public record RoutePreviewResult(
     double DistanceNm,
@@ -52,9 +55,13 @@ public static class RoutePreviewCalculator
     /// <see cref="RouteRangeAssessor"/>). Null means "don't assess" and is right for the callers
     /// that only want block time or fuel out of this - they never surface the warnings.
     /// </param>
+    /// <param name="runwayFleet">
+    /// The runway counterpart to <paramref name="fleet"/> - see <see cref="RunwaySuitabilityAssessor"/>.
+    /// Null means "don't assess" for exactly the same callers and the same reason.
+    /// </param>
     public static RoutePreviewResult Calculate(
         EconomyConfig economyConfig, Airport departure, Airport arrival, AircraftType aircraftType, AirlineStrategyProfile? strategy,
-        IReadOnlyList<RangeCandidateAircraft>? fleet = null)
+        IReadOnlyList<RangeCandidateAircraft>? fleet = null, IReadOnlyList<RunwayCandidateAircraft>? runwayFleet = null)
     {
         var warnings = new List<string>();
         var sameAirport = string.Equals(departure.Icao, arrival.Icao, StringComparison.OrdinalIgnoreCase);
@@ -86,8 +93,6 @@ public static class RoutePreviewCalculator
 
         var operationalRangeNm = aircraftType.RangeNm * OperationalRangeFactor;
         var withinRange = distanceNm <= operationalRangeNm;
-        var departureRunwayAdequate = departure.LongestRunwayFt >= aircraftType.MinRunwayFt;
-        var arrivalRunwayAdequate = arrival.LongestRunwayFt >= aircraftType.MinRunwayFt;
 
         if (sameAirport)
         {
@@ -116,18 +121,26 @@ public static class RoutePreviewCalculator
                 $"{aircraftType.Name}, which plans to about {operationalRangeNm:F0} nm once reserves are accounted for.");
         }
 
-        if (!departureRunwayAdequate)
-        {
-            warnings.Add(
-                $"{departure.Icao}'s longest runway ({departure.LongestRunwayFt} ft) may be too short for the " +
-                $"{aircraftType.Name} (needs {aircraftType.MinRunwayFt} ft).");
-        }
+        // Same shape as the range verdict just above, for the same reason: a whole-fleet question,
+        // never a statement about the single type these figures happened to be planned with. Length
+        // and surface are both folded into this one assessment - see RunwaySuitabilityAssessor.
+        var runwayAssessment = runwayFleet is null ? RunwaySuitabilityAssessment.NotAssessed : RunwaySuitabilityAssessor.Assess(departure, arrival, runwayFleet);
 
-        if (!arrivalRunwayAdequate)
+        if (!sameAirport && runwayAssessment.Message is { } runwayMessage)
         {
+            warnings.Add(runwayMessage);
+        }
+        else if (!sameAirport && runwayFleet is { Count: 0 } &&
+                 RunwaySuitabilityAssessor.AssessRoute(departure, arrival, aircraftType.MinRunwayFt, aircraftType.MtowTonnes, out _) != RunwaySuitabilityProblem.None)
+        {
+            // Same "no fleet to assess yet" fallback as range above, and the same guard range uses
+            // (!withinRange) - only worth saying anything when the figures' own type would actually
+            // have a problem here. Say what the planning figures assume, plainly as an assumption
+            // rather than a limit of the airline's, and never block.
             warnings.Add(
-                $"{arrival.Icao}'s longest runway ({arrival.LongestRunwayFt} ft) may be too short for the " +
-                $"{aircraftType.Name} (needs {aircraftType.MinRunwayFt} ft).");
+                $"You have no aircraft yet. These figures assume a {aircraftType.Name}, which needs at least " +
+                $"{aircraftType.MinRunwayFt:N0} ft of runway" +
+                (RunwaySuitabilityAssessor.IsHeavy(aircraftType.MtowTonnes) ? " and a paved surface (it is too heavy for grass, gravel, dirt or water)." : "."));
         }
 
         if (strategy is { } strategyProfile && !sameAirport)
@@ -145,7 +158,7 @@ public static class RoutePreviewCalculator
         }
 
         var validation = new RoutePreviewValidation(
-            withinRange, departureRunwayAdequate, arrivalRunwayAdequate, sameAirport, warnings, rangeAssessment);
+            withinRange, sameAirport, warnings, rangeAssessment, runwayAssessment);
 
         return new RoutePreviewResult(distanceNm, bearingDeg, blockTime, cruiseAltitudeFt, fuel, fare, path, validation);
     }

@@ -101,6 +101,16 @@ public static class FlightEndpoints
             return Results.NotFound(new { error = "Route not found." });
         }
 
+        // Loaded here (rather than just before the plan is built, as before) because the auto-pick
+        // branch below needs the actual runway rows too - Include(Runways) is what
+        // RunwaySuitabilityAssessor needs beyond the stamped LongestRunwayFt.
+        var departure = await db.Airports.Include(a => a.Runways).FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
+        var arrival = await db.Airports.Include(a => a.Runways).FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct);
+        if (departure is null || arrival is null)
+        {
+            return Results.Problem("This route's airports could not be found.", statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
         // Reservation is the sole gate on both sides (decided 2026-08-09): the
         // player may ONLY fly an aircraft reserved to them. This is enforced here as well as by
         // OptionsAsync only ever OFFERING reserved airframes - never trust the client to have
@@ -136,26 +146,36 @@ public static class FlightEndpoints
                             f.ReservedForPlayer && f.LocationIcao == route.DepartureIcao)
                 .ToListAsync(ct);
 
-            // Only ever auto-pick an aircraft that can actually reach the destination - otherwise
-            // "start a flight on this route" would pick the oldest airframe and then refuse it on
-            // range grounds below while a perfectly capable one sat on the same apron.
+            // Only ever auto-pick an aircraft that can actually reach the destination AND physically
+            // use both runways - otherwise "start a flight on this route" would pick the oldest
+            // airframe and then refuse it on range or runway grounds below while a perfectly capable
+            // one sat on the same apron.
             var candidateTypeIds = candidates.Select(f => f.AircraftTypeId).Distinct().ToList();
             var candidateTypesById = await db.AircraftTypes.Where(t => candidateTypeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, ct);
 
+            bool CandidateFits(FleetAircraft f) =>
+                !candidateTypesById.TryGetValue(f.AircraftTypeId, out var t) ||
+                (RouteRangeAssessor.CanReach(t.RangeNm, route.DistanceNm) &&
+                 RunwaySuitabilityAssessor.AssessRoute(departure, arrival, t.MinRunwayFt, t.MtowTonnes, out _) == RunwaySuitabilityProblem.None);
+
             fleetAircraft = candidates
-                .Where(f => !candidateTypesById.TryGetValue(f.AircraftTypeId, out var t) || RouteRangeAssessor.CanReach(t.RangeNm, route.DistanceNm))
+                .Where(CandidateFits)
                 .OrderBy(f => f.CreatedUtc)
                 .FirstOrDefault();
 
             // "Nothing is available here" would be actively misleading when aircraft ARE parked here
-            // and reserved to you - they just can't make the distance. Say which problem it is.
+            // and reserved to you - they just can't do this leg. Say which problem it is: range if
+            // NOTHING there can reach the destination at all, runway suitability otherwise (some
+            // parked aircraft can reach it, but none of those can use these runways).
             if (fleetAircraft is null && candidates.Count > 0)
             {
-                return Results.BadRequest(new
-                {
-                    error = $"Nothing reserved to you at {route.DepartureIcao} can reach {route.ArrivalIcao} - " +
-                            $"{route.DistanceNm:F0} nm is beyond the range of every aircraft you have there.",
-                });
+                var canReachAny = candidates.Any(f => !candidateTypesById.TryGetValue(f.AircraftTypeId, out var t) || RouteRangeAssessor.CanReach(t.RangeNm, route.DistanceNm));
+                var error = canReachAny
+                    ? $"Nothing reserved to you at {route.DepartureIcao} can use {route.DepartureIcao} and {route.ArrivalIcao}'s runways - " +
+                      "every aircraft you have there that can reach it needs a longer or more solid runway than one end has."
+                    : $"Nothing reserved to you at {route.DepartureIcao} can reach {route.ArrivalIcao} - " +
+                      $"{route.DistanceNm:F0} nm is beyond the range of every aircraft you have there.";
+                return Results.BadRequest(new { error });
             }
         }
 
@@ -184,11 +204,18 @@ public static class FlightEndpoints
             });
         }
 
-        var departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
-        var arrival = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.ArrivalIcao, ct);
-        if (departure is null || arrival is null)
+        // Runway suitability mirrors range exactly: guidance at route planning, a hard refusal here.
+        // Length and surface are both physical facts about this specific airframe and this specific
+        // piece of ground - never a type-matching penalty (see RunwaySuitabilityAssessor's class doc).
+        var runwayProblem = RunwaySuitabilityAssessor.AssessRoute(departure, arrival, aircraftType.MinRunwayFt, aircraftType.MtowTonnes, out var blockingAirport);
+        if (runwayProblem != RunwaySuitabilityProblem.None)
         {
-            return Results.Problem("This route's airports could not be found.", statusCode: StatusCodes.Status503ServiceUnavailable);
+            var runwayError = runwayProblem == RunwaySuitabilityProblem.TooShort
+                ? $"{fleetAircraft.Registration} ({aircraftType.Name}) can't use {blockingAirport.Icao} - its longest runway is " +
+                  $"{blockingAirport.LongestRunwayFt:N0} ft, short of the {aircraftType.MinRunwayFt:N0} ft it needs."
+                : $"{fleetAircraft.Registration} ({aircraftType.Name}) is too heavy for {blockingAirport.Icao}'s runways - none of them " +
+                  "are paved, and a heavy aircraft can't use grass, gravel, dirt or water regardless of length.";
+            return Results.BadRequest(new { error = runwayError });
         }
 
         var pilot = await db.Pilots.FirstOrDefaultAsync(p => p.AirlineId == airline.Id && p.IsPlayer, ct)
@@ -612,7 +639,8 @@ public static class FlightEndpoints
             ?? await db.AircraftTypes.OrderBy(t => t.IcaoType).FirstOrDefaultAsync(ct);
 
         var icaos = routes.SelectMany(r => new[] { r.DepartureIcao, r.ArrivalIcao }).Distinct().ToList();
-        var airportsByIcao = await db.Airports.Where(a => icaos.Contains(a.Icao)).ToDictionaryAsync(a => a.Icao, ct);
+        // Include(Runways) - the runway-suitability reason below needs the actual runway rows.
+        var airportsByIcao = await db.Airports.Include(a => a.Runways).Where(a => icaos.Contains(a.Icao)).ToDictionaryAsync(a => a.Icao, ct);
 
         // Starting a flight is blocked airline-wide while one is already in progress (see
         // StartAsync above), regardless of which aircraft or route would otherwise be used.
@@ -673,6 +701,18 @@ public static class FlightEndpoints
                         $"{aircraft.Registration} ({aircraftType.Name}) can't reach {route.ArrivalIcao} - " +
                         $"{route.DistanceNm:F0} nm is beyond its practical range of about " +
                         $"{RouteRangeAssessor.OperationalRangeNm(aircraftType.RangeNm):F0} nm.";
+                }
+                else if (aircraftType is not null &&
+                         RunwaySuitabilityAssessor.AssessRoute(departure, arrival, aircraftType.MinRunwayFt, aircraftType.MtowTonnes, out var blockingAirport) is var runwayProblem &&
+                         runwayProblem != RunwaySuitabilityProblem.None)
+                {
+                    // Also permanent, same reason range is checked first: nothing the player does to
+                    // this airframe changes whether it can physically use this ground.
+                    reason = runwayProblem == RunwaySuitabilityProblem.TooShort
+                        ? $"{aircraft.Registration} ({aircraftType.Name}) can't use {blockingAirport.Icao} - its longest runway is " +
+                          $"{blockingAirport.LongestRunwayFt:N0} ft, short of the {aircraftType.MinRunwayFt:N0} ft it needs."
+                        : $"{aircraft.Registration} ({aircraftType.Name}) is too heavy for {blockingAirport.Icao}'s runways - none of " +
+                          "them are paved, and a heavy aircraft can't use grass, gravel, dirt or water regardless of length.";
                 }
                 else if (aircraft.Status == FleetAircraftStatus.InMaintenance)
                 {

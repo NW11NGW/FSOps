@@ -13,6 +13,11 @@ export interface AppSettings {
   theme: string
   communityFolderPath: string | null
   simBriefPilotId: string | null
+  /** VATSIM CID (Certificate/Community ID) - stored locally like any other setting, read only
+   *  server-side (see VatsimFlightCorroborationService). Never sent anywhere but back to FSOps'
+   *  own API; the SPA never talks to VATSIM directly. Null disables G8/G9/G11's CID-specific
+   *  behaviour entirely - the ATC layer and other-traffic layer still work with no CID at all. */
+  vatsimCid: string | null
 }
 
 export interface CurrencyInfo {

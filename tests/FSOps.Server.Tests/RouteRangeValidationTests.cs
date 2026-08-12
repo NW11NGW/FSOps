@@ -290,7 +290,7 @@ public class RouteRangeValidationTests
 
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
-            null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), NullLogger<FlightLifecycleService>.Instance);
+            null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), null, NullLogger<FlightLifecycleService>.Instance);
 
         var result = await FlightEndpoints.StartAsync(
             new StartFlightRequest(route.Id, aircraft.Id), ctx.Db, ctx.CurrentUser, lifecycle, telemetry,
@@ -404,7 +404,7 @@ public class RouteRangeValidationTests
 
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
-            null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), NullLogger<FlightLifecycleService>.Instance);
+            null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), null, NullLogger<FlightLifecycleService>.Instance);
 
         var result = await FlightEndpoints.StartAsync(
             new StartFlightRequest(route.Id, null), ctx.Db, ctx.CurrentUser, lifecycle, telemetry,

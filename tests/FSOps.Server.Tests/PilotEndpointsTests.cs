@@ -9,8 +9,8 @@ namespace FSOps.Server.Tests;
 
 /// <summary>
 /// Chunk E3's own stated verification for the redesigned pilot/schedule endpoints - aircraft
-/// assigned per pilot per DUTY DAY (docs/PLAN.md "2a"/"2c"), not per leg, plus the hard
-/// reservation invariant (docs/PLAN.md "3a"). Drives PilotEndpoints' handlers directly against an
+/// assigned per pilot per DUTY DAY, not per leg, plus the hard
+/// reservation invariant that a reserved aircraft can never be scheduled to a virtual pilot. Drives PilotEndpoints' handlers directly against an
 /// isolated in-memory RouteTestContext - same convention as FleetEndpointsTests/MaintenanceTriggerTests.
 /// </summary>
 public class PilotEndpointsTests

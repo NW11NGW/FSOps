@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Backs the Finances page - docs/PLAN.md "What the Finances page must contain". Covers the loan
+/// Backs the Finances page. Covers the loan
 /// early-settlement exploit close, the fixed/variable cost split (including the new
 /// CrewCost/ParkingFees/PassengerCharges/TurnaroundFees categories and the legacy-data notice), and
 /// that per-pilot/per-route money is read from posted LedgerTransaction rows. Drives

@@ -12,7 +12,7 @@ namespace FSOps.Server.Tests;
 /// exception - no Pilot ID, an unknown Pilot ID, a timeout, a network failure, malformed XML, and
 /// an OFP filed for a different city pair - plus the happy path's field extraction and unit
 /// conversion. Always against FakeHttpMessageHandler; the real simbrief.com is never contacted
-/// from this suite (docs/PLAN.md's etiquette rule toward third-party infrastructure, mirrored from
+/// from this suite (the project's own etiquette rule toward third-party infrastructure, mirrored from
 /// VatsimNetworkClientTests).
 /// </summary>
 public class SimBriefFlightPlanProviderTests

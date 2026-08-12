@@ -54,10 +54,24 @@ public sealed class FlightLifecycleService : IHostedService
     private const double ResumeDistanceNm = 5.0;
     private const int WriteBatchSize = 50;
 
+    // Matches VatsimNetworkClient's own ~20s cache refresh, so this never polls faster than the
+    // shared snapshot actually changes - a check inside the cache window costs nothing extra (see
+    // VatsimFlightCorroborationService's class doc), but there is no reason to ask more often than
+    // the answer can change either.
+    private static readonly TimeSpan VatsimCheckInterval = TimeSpan.FromSeconds(20);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SimTelemetryService _telemetry;
     private readonly IHubContext<LiveHub> _hub;
     private readonly EconomyConfigCatalog _economyConfigCatalog;
+
+    /// <summary>Nullable rather than a `null!` convenience at every test call site that doesn't
+    /// exercise G8 - a stated "online detection may be unavailable" contract in the type, not an
+    /// unstated fact a future test author would have to rediscover the hard way (a
+    /// NullReferenceException from deep inside the tracker) the first time they seed a VATSIM CID
+    /// without also wiring this up. Every use below checks it explicitly.</summary>
+    private readonly VatsimFlightCorroborationService? _vatsimCorroboration;
+
     private readonly ILogger<FlightLifecycleService> _logger;
 
     private readonly Channel<FlightEvent> _eventQueue = Channel.CreateBounded<FlightEvent>(
@@ -71,12 +85,14 @@ public sealed class FlightLifecycleService : IHostedService
 
     public FlightLifecycleService(
         IServiceScopeFactory scopeFactory, SimTelemetryService telemetry, IHubContext<LiveHub> hub,
-        EconomyConfigCatalog economyConfigCatalog, ILogger<FlightLifecycleService> logger)
+        EconomyConfigCatalog economyConfigCatalog, VatsimFlightCorroborationService? vatsimCorroboration,
+        ILogger<FlightLifecycleService> logger)
     {
         _scopeFactory = scopeFactory;
         _telemetry = telemetry;
         _hub = hub;
         _economyConfigCatalog = economyConfigCatalog;
+        _vatsimCorroboration = vatsimCorroboration;
         _logger = logger;
     }
 
@@ -137,6 +153,38 @@ public sealed class FlightLifecycleService : IHostedService
         {
             _active = tracker;
         }
+    }
+
+    /// <summary>
+    /// Resolves the flight's departure airport and the player's configured VATSIM CID (G8) from the
+    /// database - purely so <see cref="BeginTracking"/>'s own signature, and every call site that
+    /// calls it (including <c>FlightEndpoints.StartAsync</c>), never needed to change to pass them
+    /// in. Deliberately NOT fired eagerly from <see cref="BeginTracking"/> itself: every other
+    /// background database task in this class (<see cref="HandleGroundFuelChangeAsync"/>, the
+    /// broadcast/finalize work) is gated behind <see cref="ProcessSample"/>'s own cadence, driven by
+    /// the SAMPLE's timestamp rather than the real wall clock - see <see cref="RunVatsimCycleAsync"/>,
+    /// which is the only caller. An eager fire-and-forget the instant tracking begins has no such
+    /// gate and no join point a test (or a very short real flight) can ever wait on, which is
+    /// exactly the shape of bug that raced a shared SQLite connection against test teardown when
+    /// this was tried that way first - see the git history if this comment outlives its usefulness.
+    /// Internal (rather than private) so tests can await it directly instead of racing a
+    /// fire-and-forget background task.
+    /// </summary>
+    internal async Task ResolveVatsimContextAsync(ActiveFlightTracker tracker)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<FsOpsDbContext>();
+
+        var flight = await db.Flights.FirstOrDefaultAsync(f => f.Id == tracker.FlightId);
+        var route = flight is not null ? await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId) : null;
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == tracker.AirlineId);
+        var settings = airline is not null ? await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == airline.OwnerUserId) : null;
+
+        tracker.DepartureIcao = route?.DepartureIcao;
+        // A blank/non-numeric CID (never set, or a typo) simply disables corroboration for this
+        // flight - the same "opt-in, fail soft" rule as an unreachable feed, never a validation
+        // error surfaced mid-flight.
+        tracker.VatsimCid = int.TryParse(settings?.VatsimCid, out var cid) && cid > 0 ? cid : null;
     }
 
     /// <summary>Detaches live tracking without touching the Flight row - the caller (abandon/complete-manual) owns that.</summary>
@@ -256,6 +304,23 @@ public sealed class FlightLifecycleService : IHostedService
                 phase = result.Phase.ToString(),
             });
             Enqueue(tracker.FlightId, now, FlightEventType.PositionSnapshot, payload);
+        }
+
+        // G8: VATSIM online corroboration. Gated on the SAMPLE's own timestamp (not the real wall
+        // clock) at VatsimCheckInterval, same cadence discipline as PositionSnapshotInterval above -
+        // never faster than the shared feed cache actually changes (see
+        // VatsimFlightCorroborationService's class doc), and, just as importantly, never fired
+        // eagerly the instant tracking begins - see RunVatsimCycleAsync's own doc for why that
+        // distinction matters. Runs off the hot path via FireAndForget, exactly like the
+        // ground-fuel-change and broadcast work above, so a slow/unavailable feed can never stall
+        // telemetry processing itself. Fires regardless of whether a CID is already known -
+        // RunVatsimCycleAsync resolves that (once) on its own first run.
+        if (_vatsimCorroboration is not null && now - tracker.VatsimLastCheckUtc >= VatsimCheckInterval)
+        {
+            tracker.VatsimLastCheckUtc = now;
+            FireAndForget(
+                () => RunVatsimCycleAsync(tracker, sample.LatitudeDeg, sample.LongitudeDeg),
+                $"VATSIM cycle for flight {tracker.FlightId}");
         }
 
         UpdateLiveSnapshot(tracker, sample, result.Phase);
@@ -378,6 +443,58 @@ public sealed class FlightLifecycleService : IHostedService
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// One VATSIM cycle for a tracked flight (G8) - gated by <see cref="ProcessSample"/>'s own
+    /// sample-timestamp cadence, never fired eagerly. On its first run for a flight, resolves
+    /// <see cref="ActiveFlightTracker.DepartureIcao"/>/<see cref="ActiveFlightTracker.VatsimCid"/>
+    /// (see <see cref="ResolveVatsimContextAsync"/>); every run after that skips straight to the
+    /// corroboration check (or does nothing further at all, once resolution found no CID - there is
+    /// nothing to keep asking about for the rest of this flight). Internal so tests can await it
+    /// directly, same pattern as <see cref="HandleGroundFuelChangeAsync"/> and
+    /// <see cref="FinalizeFlightAsync"/>. Purely an in-memory accumulation onto the tracker -
+    /// nothing is written to the Flight row itself until <see cref="FinalizeFlightAsync"/> records
+    /// the final tallies.
+    /// </summary>
+    internal async Task RunVatsimCycleAsync(ActiveFlightTracker tracker, double latitudeDeg, double longitudeDeg)
+    {
+        if (_vatsimCorroboration is null)
+        {
+            // Defensive only - every call site already gates on this being non-null (see
+            // ProcessSample). Kept as an explicit early return, rather than the null-forgiving
+            // operator, so this stays correct even if a future caller forgets that gate.
+            return;
+        }
+
+        if (!tracker.VatsimContextResolved)
+        {
+            await ResolveVatsimContextAsync(tracker);
+            tracker.VatsimContextResolved = true;
+        }
+
+        if (tracker.VatsimCid is not { } cid)
+        {
+            // No CID configured (or the flight's route/airline couldn't be resolved) - nothing
+            // further to check for the rest of this flight. VatsimLastCheckUtc still advances (set
+            // by the caller before this ran), so this doesn't retry every single sample either.
+            return;
+        }
+
+        var result = await _vatsimCorroboration.CheckAsync(
+            cid, latitudeDeg, longitudeDeg, tracker.DepartureIcao, tracker.ArrivalIcao, CancellationToken.None);
+
+        tracker.VatsimChecksTotal++;
+        if (result.Matched)
+        {
+            tracker.VatsimChecksMatched++;
+            tracker.VatsimLastCallsign = result.Callsign;
+        }
+
+        foreach (var controller in result.RelevantControllers)
+        {
+            tracker.VatsimControllersWorked.Add(controller);
+        }
+    }
+
     private async Task RehydrateInProgressFlightAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -394,6 +511,8 @@ public sealed class FlightLifecycleService : IHostedService
         var machine = FlightPhaseStateMachine.RestoreFrom(events);
 
         var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
+        var settings = airline is not null ? await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == airline.OwnerUserId, ct) : null;
         var lastKnown = events
             .Where(e => e.Type is FlightEventType.PositionSnapshot or FlightEventType.Touchdown)
             .OrderByDescending(e => e.Utc)
@@ -410,6 +529,9 @@ public sealed class FlightLifecycleService : IHostedService
             Machine = machine,
             PendingReconnect = true,
             LastKnownPosition = lastKnown,
+            DepartureIcao = route?.DepartureIcao,
+            VatsimCid = int.TryParse(settings?.VatsimCid, out var rehydratedCid) && rehydratedCid > 0 ? rehydratedCid : null,
+            VatsimContextResolved = true,
         };
 
         lock (_lock)
@@ -498,6 +620,22 @@ public sealed class FlightLifecycleService : IHostedService
         flight.MaxSimulationRateObserved = tracker.IntegrityMonitor.MaxSimulationRateObserved;
         flight.SlewDetected = tracker.IntegrityMonitor.SlewDetected;
         flight.PositionJumpDetected = tracker.IntegrityMonitor.PositionJumpDetected;
+
+        // G8: record what the VATSIM corroboration checks (if any ran) found. Left as null on every
+        // field when VatsimCid was never resolved (no CID configured, or the flight completed
+        // before ResolveVatsimContextAsync's background lookup finished) or when it resolved but no
+        // check ever actually ran (an extremely short flight) - "we never checked" must never be
+        // recorded as "we checked and it was offline", which is what a bare false would silently claim
+        // for every flight ever flown before this feature existed too (see the migration's own note).
+        if (tracker.VatsimCid is not null && tracker.VatsimChecksTotal > 0)
+        {
+            flight.VatsimOnline = tracker.VatsimChecksMatched > 0;
+            flight.VatsimOnlineFraction = (double)tracker.VatsimChecksMatched / tracker.VatsimChecksTotal;
+            flight.VatsimCallsign = tracker.VatsimChecksMatched > 0 ? tracker.VatsimLastCallsign : null;
+            flight.VatsimControllersWorked = tracker.VatsimControllersWorked.Count > 0
+                ? string.Join(", ", tracker.VatsimControllersWorked.OrderBy(c => c, StringComparer.Ordinal))
+                : null;
+        }
 
         flight.Status = FlightStatus.Completed;
 
@@ -588,8 +726,29 @@ public sealed class FlightLifecycleService : IHostedService
             if (route is not null && airline is not null && arrivalAirport is not null && aircraftType is not null)
             {
                 var economyConfig = _economyConfigCatalog.Get(airline.Playstyle);
-                await FlightEconomicsPoster.PostCompletionAsync(
+                var economicsResult = await FlightEconomicsPoster.PostCompletionAsync(
                     db, flight, airline, route, aircraftType, arrivalAirport, economyConfig, flightHours, completionUtc, CancellationToken.None);
+
+                // G12: the modest online-flying bonus. Only for a sector that actually got priced
+                // above (a slew/position-jump flight, or one PostCompletionAsync otherwise declined
+                // to post revenue for, returns null and earns no bonus - there is nothing to be
+                // "extra" on top of), and only once corroborated online for at least the configured
+                // minimum fraction of the flight - a CID merely being configured, or briefly logging
+                // on, is never enough. Computed and posted entirely server-side from what
+                // FlightLifecycleService itself recorded above; nothing here trusts a client-supplied
+                // claim of having flown online.
+                if (economicsResult is not null && flight.VatsimOnline == true &&
+                    flight.VatsimOnlineFraction is { } onlineFraction &&
+                    onlineFraction >= economyConfig.VatsimOnlineBonus.MinimumOnlineFraction)
+                {
+                    var bonus = FlightEconomicsPoster.PostVatsimOnlineBonus(
+                        db, flight, economyConfig, economicsResult.TicketRevenue, completionUtc);
+                    if (bonus > 0)
+                    {
+                        flight.Revenue += bonus;
+                        ReputationPoster.PostVatsimOnlineBonus(airline, economyConfig);
+                    }
+                }
             }
 
             if (landing.Decision == LandingAirportDecision.Diverted)
@@ -755,5 +914,37 @@ public sealed class FlightLifecycleService : IHostedService
         public DateTimeOffset? PendingReconnectSinceUtc { get; set; }
 
         public (double Lat, double Lon)? LastKnownPosition { get; set; }
+
+        // --- G8: VATSIM online corroboration - see VatsimFlightCorroborationService ---
+
+        /// <summary>Resolved after construction (see <see cref="ResolveVatsimContextAsync"/> and
+        /// the rehydrate path) rather than passed in, so <see cref="BeginTracking"/>'s signature -
+        /// and every call site that calls it - never needed to change. Null until resolved, or if
+        /// this flight's route couldn't be found.</summary>
+        public string? DepartureIcao { get; set; }
+
+        /// <summary>Whether <see cref="DepartureIcao"/>/<see cref="VatsimCid"/> have been resolved
+        /// (attempted) at least once - see <see cref="FlightLifecycleService.RunVatsimCycleAsync"/>.
+        /// True immediately for a rehydrated flight (resolved synchronously during rehydrate, which
+        /// already has a DB scope open) - see <see cref="RehydrateInProgressFlightAsync"/>.</summary>
+        public bool VatsimContextResolved { get; set; }
+
+        /// <summary>The player's configured VATSIM CID, or null if none is set - see
+        /// <see cref="ResolveVatsimContextAsync"/>. Null disables corroboration entirely for this
+        /// flight: <see cref="FlightLifecycleService.ProcessSample"/> never even attempts a check
+        /// without this.</summary>
+        public int? VatsimCid { get; set; }
+
+        public int VatsimChecksTotal { get; set; }
+
+        public int VatsimChecksMatched { get; set; }
+
+        /// <summary>The callsign last seen for this CID on a MATCHED check - not merely "seen", so a
+        /// stale callsign from a miss (CID online, elsewhere) never gets recorded as this flight's own.</summary>
+        public string? VatsimLastCallsign { get; set; }
+
+        public HashSet<string> VatsimControllersWorked { get; } = new(StringComparer.Ordinal);
+
+        public DateTimeOffset VatsimLastCheckUtc { get; set; } = DateTimeOffset.MinValue;
     }
 }

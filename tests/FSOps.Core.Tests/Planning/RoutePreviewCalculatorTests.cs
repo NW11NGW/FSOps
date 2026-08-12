@@ -163,6 +163,93 @@ public class RoutePreviewCalculatorTests
         Assert.DoesNotContain(result.Validation.Warnings, w => w.Contains("range", StringComparison.OrdinalIgnoreCase));
     }
 
+    // ---- J28: runway suitability (the runway mirror of the range tests above) -----------------
+
+    // A short strip - long enough for nothing in the fleets below that specify a bigger minimum,
+    // and with no Runways rows populated, so AssessAirport falls back to LongestRunwayFt (the same
+    // fallback a caller that didn't Include(Runways) would hit).
+    private static readonly Airport ShortStrip = new()
+    {
+        Icao = "EGXS", Name = "Short Strip", Country = "GB", Latitude = 51.0, Longitude = -2.0, LongestRunwayFt = 3000,
+    };
+
+    [Fact]
+    public void Calculate_EveryProfile_StillRaisesRunwayWarning_WhenBeyondEveryFleetAircraftsMinimum()
+    {
+        // Runway warnings are a physical limit, not a strategy preference - must fire for every
+        // profile, Balanced included.
+        var fleet = new[] { new RunwayCandidateAircraft("G-TINY", A320.Name, A320.MinRunwayFt, A320.MtowTonnes, ReservedForPlayer: true) };
+
+        foreach (var profile in Enum.GetValues<AirlineStrategyProfile>())
+        {
+            var result = RoutePreviewCalculator.Calculate(Config, Bristol, ShortStrip, A320, profile, runwayFleet: fleet);
+            Assert.Equal(RunwaySuitabilityVerdict.BeyondFleet, result.Validation.Runway.Verdict);
+            Assert.True(result.Validation.Runway.Blocking);
+            Assert.Contains(result.Validation.Warnings, w => w.Contains("too short for anything in your fleet", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public void Calculate_WithNoRunwayFleetPassed_SaysNothingAboutRunway()
+    {
+        var result = RoutePreviewCalculator.Calculate(Config, Bristol, ShortStrip, A320, AirlineStrategyProfile.Balanced);
+
+        Assert.Equal(RunwaySuitabilityVerdict.NotAssessed, result.Validation.Runway.Verdict);
+        Assert.False(result.Validation.Runway.Blocking);
+        Assert.DoesNotContain(result.Validation.Warnings, w => w.Contains("runway", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Calculate_WithAnEmptyRunwayFleet_SaysWhatTheFiguresAssume_AndDoesNotBlock()
+    {
+        var result = RoutePreviewCalculator.Calculate(
+            Config, Bristol, ShortStrip, A320, AirlineStrategyProfile.Balanced, runwayFleet: Array.Empty<RunwayCandidateAircraft>());
+
+        Assert.False(result.Validation.Runway.Blocking);
+        Assert.Contains(result.Validation.Warnings, w => w.Contains("you have no aircraft yet", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Calculate_WhenAReservedAircraftCanUseTheRunways_WarnsAboutNothing()
+    {
+        var fleet = new[]
+        {
+            new RunwayCandidateAircraft("G-SHRT", "Short-field test type", MinRunwayFt: 5000, MtowTonnes: 78, ReservedForPlayer: false),
+            new RunwayCandidateAircraft("G-LONG", "Turboprop test type", MinRunwayFt: 2500, MtowTonnes: 20, ReservedForPlayer: true),
+        };
+
+        var result = RoutePreviewCalculator.Calculate(Config, Bristol, ShortStrip, A320, AirlineStrategyProfile.Balanced, runwayFleet: fleet);
+
+        Assert.Equal(RunwaySuitabilityVerdict.ReservedCanUse, result.Validation.Runway.Verdict);
+        Assert.DoesNotContain(result.Validation.Warnings, w => w.Contains("runway", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Calculate_HeavyAircraftOnAGrassRunway_Blocks_RegardlessOfLength()
+    {
+        // A very long grass strip - the length check alone would wrongly pass this, which is
+        // exactly the defect the surface rule exists to close.
+        var grassField = new Airport
+        {
+            Icao = "EGXG", Name = "Grass Field", Country = "GB", Latitude = 51.5, Longitude = -2.5,
+            LongestRunwayFt = 10000,
+            Runways = new List<Runway> { new() { Id = Guid.NewGuid(), Designator = "09/27", LengthFt = 10000, Surface = "GRASS" } },
+        };
+        var heavyType = new AircraftType
+        {
+            Id = Guid.NewGuid(), IcaoType = "TEST", Family = "TEST", Name = "Heavy test type",
+            RangeNm = 5000, CruiseTasKts = 480, FuelBurnKgPerHour = 8000,
+            MinRunwayFt = 6000, MtowTonnes = 250, ServiceCeilingFt = 41000,
+        };
+        var fleet = new[] { new RunwayCandidateAircraft("G-HVY", heavyType.Name, heavyType.MinRunwayFt, heavyType.MtowTonnes, ReservedForPlayer: true) };
+
+        var result = RoutePreviewCalculator.Calculate(Config, Bristol, grassField, heavyType, AirlineStrategyProfile.Balanced, runwayFleet: fleet);
+
+        Assert.Equal(RunwaySuitabilityVerdict.BeyondFleet, result.Validation.Runway.Verdict);
+        Assert.True(result.Validation.Runway.Blocking);
+        Assert.Contains(result.Validation.Warnings, w => w.Contains("too soft", StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>
     /// The invariant this class exists to pin down permanently: the fare a player is offered at
     /// route creation (<c>RoutePreviewResult.SuggestedFare</c>, what <c>RouteEndpoints.BuildRouteAsync</c>

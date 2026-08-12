@@ -7,7 +7,7 @@ namespace FSOps.Server.Tests;
 
 /// <summary>
 /// Exercises VatsimNetworkClient entirely against a stub HttpMessageHandler - the real VATSIM
-/// feed is never hit from a test (see docs/PLAN.md's etiquette rule and the project's own ban on
+/// feed is never hit from a test (the project's own etiquette rule and its ban on
 /// polling third-party infrastructure from CI). Covers the caching/backoff contract as well as
 /// every failure shape the endpoint must degrade gracefully from: bad status, malformed body, and
 /// a fetch that throws outright.

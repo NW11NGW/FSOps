@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// docs/PLAN.md "'While you were away' - the app must explain catch-up": on startup after a real
+/// "While you were away" - the app must explain catch-up: on startup after a real
 /// gap, the player should be told what happened (charges by category, what virtual pilots flew and
 /// earned, maintenance that fell due, anything skipped/cancelled/suspended and why) rather than
 /// opening to a changed balance with no explanation. Drives MaintenanceEndpoints' away-summary
@@ -241,7 +241,7 @@ public class AwaySummaryEndpointTests
         await ctx.Db.SaveChangesAsync();
     }
 
-    private static async Task AddLedgerLineAsync(RouteTestContext ctx, DateTimeOffset utc, LedgerCategory category, decimal amount)
+    private static async Task AddLedgerLineAsync(RouteTestContext ctx, DateTimeOffset utc, LedgerCategory category, decimal amount, string description = "Test line")
     {
         ctx.Db.LedgerTransactions.Add(new LedgerTransaction
         {
@@ -250,8 +250,42 @@ public class AwaySummaryEndpointTests
             Utc = utc,
             Category = category,
             Amount = amount,
-            Description = "Test line",
+            Description = description,
         });
         await ctx.Db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task LongGap_WithLeaseDepositAndOrdinaryLeasePayment_ReportsThemUnderSeparateCategories()
+    {
+        // A lease deposit (paid when adding an aircraft - AirlineEndpoints.CreateAsync/
+        // FleetEndpoints.LeaseAsync) is posted under the same LedgerCategory.LeasePayment as the
+        // ordinary recurring monthly charge EconomyClockService bills. Lumped together in the
+        // away-summary's "Charges by category" breakdown, a deposit paid because the player added an
+        // aircraft would misleadingly read as a lease payment charged while they were away - a
+        // reporting-window attribution bug, not a double-charge (cash itself was always correct).
+        using var ctx = await RouteTestContext.CreateAsync();
+        var lastViewed = Base;
+        await SeedEconomyStateAsync(ctx, lastViewed);
+
+        var withinWindow = lastViewed.AddDays(3);
+        await AddLedgerLineAsync(ctx, withinWindow, LedgerCategory.LeasePayment, -5000m, "Lease deposit (1 months): Test Type (G-TEST)");
+        await AddLedgerLineAsync(ctx, withinWindow, LedgerCategory.LeasePayment, -1200m, "Monthly lease: G-TEST");
+
+        var now = lastViewed.AddDays(7);
+        var clock = new FakeClock(now);
+
+        var result = await MaintenanceEndpoints.AwaySummaryAsync(ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var summary = ValueOf<AwaySummaryResponse>(result);
+
+        Assert.True(summary.HasSummary);
+
+        var deposit = Assert.Single(summary.ChargesByCategory, c => c.Category == "LeaseDeposit");
+        Assert.Equal(-5000m, deposit.Amount);
+        Assert.Equal(1, deposit.Count);
+
+        var ordinaryPayment = Assert.Single(summary.ChargesByCategory, c => c.Category == "LeasePayment");
+        Assert.Equal(-1200m, ordinaryPayment.Amount);
+        Assert.Equal(1, ordinaryPayment.Count);
     }
 }

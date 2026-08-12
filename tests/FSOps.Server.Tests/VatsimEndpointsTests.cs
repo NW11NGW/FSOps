@@ -131,7 +131,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGPH_TWR", 1, "Alice", "118.700", TowerFacility, 40, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.KnowsNothing());
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -162,7 +162,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGPF_TWR", 1, "Alice", "118.800", TowerFacility, 40, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.KnowsNothing());
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -181,7 +181,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGXX_GND", 3, "Carl", "121.900", GroundFacility, 20, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.KnowsNothing());
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -201,7 +201,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("NY_APP", 1, "Dana", "127.400", ApproachFacility, 150, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())));
@@ -225,7 +225,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("LON_CTR", 2, "Bob", "127.100", CenterFacility, 300, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.Unavailable());
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -244,7 +244,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("ZZZZ_CTR", 2, "Bob", "127.100", CenterFacility, 300, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())));
@@ -261,7 +261,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("SCO_CTR", 2, "Bob", "129.225", CenterFacility, 300, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())));
@@ -288,7 +288,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("SCO_FSS", 2, "Bob", "127.650", FssFacility, 600, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())));
@@ -309,7 +309,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGGX_CTR", 2, "Bob", "127.100", CenterFacility, 600, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("EGGX", OceanicBox())));
@@ -332,7 +332,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("SCO_CTR", 2, "Bob", "129.225", CenterFacility, 300, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
         var boundaries = FakeAtcBoundarySource.With(("SCO", ScottishBox()));
 
         var withoutGeometry = ValueOf<VatsimAtcResponse>(
@@ -369,7 +369,7 @@ public class VatsimEndpointsTests
         {
             new VatsimController("SCO_N_CTR", 1, "A", "129.225", CenterFacility, 300, Base),
             new VatsimController("SCO_S_CTR", 2, "B", "128.500", CenterFacility, 300, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())), geometry: true);
@@ -388,7 +388,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGPH_TWR", 1, "Alice", "118.700", TowerFacility, 40, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())), geometry: true);
@@ -411,7 +411,7 @@ public class VatsimEndpointsTests
         var client = new FakeVatsimNetworkClient(new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGGD_TWR", 1, "Alice", "118.300", TowerFacility, 40, Base),
-        }));
+        }, Array.Empty<VatsimPilot>()));
 
         var result = await InvokeAsync(ctx, client, FakeAtcBoundarySource.With(("SCO", ScottishBox())), geometry: true);
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -427,7 +427,7 @@ public class VatsimEndpointsTests
     {
         using var ctx = await RouteTestContext.CreateAsync();
         await AddActiveRouteAsync(ctx);
-        var client = new FakeVatsimNetworkClient(new VatsimSnapshot(false, Base, Array.Empty<VatsimController>()));
+        var client = new FakeVatsimNetworkClient(new VatsimSnapshot(false, Base, Array.Empty<VatsimController>(), Array.Empty<VatsimPilot>()));
 
         var result = await InvokeAsync(ctx, client, FakeAtcBoundarySource.With(("SCO", ScottishBox())), geometry: true);
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -444,7 +444,7 @@ public class VatsimEndpointsTests
         // the network's airports right now. The frontend must tell these two states apart.
         using var ctx = await RouteTestContext.CreateAsync();
         await AddActiveRouteAsync(ctx);
-        var client = new FakeVatsimNetworkClient(new VatsimSnapshot(true, Base, Array.Empty<VatsimController>()));
+        var client = new FakeVatsimNetworkClient(new VatsimSnapshot(true, Base, Array.Empty<VatsimController>(), Array.Empty<VatsimPilot>()));
 
         var result = await InvokeAsync(ctx, client, FakeAtcBoundarySource.With(("SCO", ScottishBox())));
         var response = ValueOf<VatsimAtcResponse>(result);
@@ -469,7 +469,7 @@ public class VatsimEndpointsTests
         {
             new VatsimController("EGPF_TWR", 1, "A", "118.800", TowerFacility, 40, Base),
             new VatsimController("EGPH_TWR", 2, "B", "118.700", TowerFacility, 40, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.KnowsNothing(), scope: "all");
@@ -491,7 +491,7 @@ public class VatsimEndpointsTests
         var snapshot = new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGGX_CTR", 1, "A", "127.100", CenterFacility, 600, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx,
@@ -519,7 +519,7 @@ public class VatsimEndpointsTests
             new VatsimController("NY_APP", 1, "A", "127.400", ApproachFacility, 150, Base),
             new VatsimController("ZZZZ_CTR", 2, "B", "127.100", CenterFacility, 300, Base),
             new VatsimController("EGXX_GND", 3, "C", "121.900", GroundFacility, 20, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx, new FakeVatsimNetworkClient(snapshot), FakeAtcBoundarySource.With(("SCO", ScottishBox())), scope: "all");
@@ -539,7 +539,7 @@ public class VatsimEndpointsTests
         {
             new VatsimController("EGPF_TWR", 1, "A", "118.800", TowerFacility, 40, Base),
             new VatsimController("EGPH_TWR", 2, "B", "118.700", TowerFacility, 40, Base),
-        });
+        }, Array.Empty<VatsimPilot>());
 
         foreach (var scope in new string?[] { null, "network", "nonsense" })
         {
@@ -562,7 +562,7 @@ public class VatsimEndpointsTests
         var client = new FakeVatsimNetworkClient(new VatsimSnapshot(true, Base, new[]
         {
             new VatsimController("EGPF_TWR", 1, "A", "118.800", TowerFacility, 40, Base),
-        }));
+        }, Array.Empty<VatsimPilot>()));
 
         var response = ValueOf<VatsimAtcResponse>(
             await InvokeAsync(ctx, client, FakeAtcBoundarySource.KnowsNothing(), geometry: true, scope: "all"));
@@ -582,7 +582,7 @@ public class VatsimEndpointsTests
             new VatsimController("EGGD_DEL", 2, "B", "121.925", DeliveryFacility, 10, Base),
             new VatsimController("EGPF_TWR", 3, "C", "118.800", TowerFacility, 40, Base), // not in network - dropped
             new VatsimController("EGGX_CTR", 4, "D", "127.100", CenterFacility, 600, Base), // misses the network - dropped
-        });
+        }, Array.Empty<VatsimPilot>());
 
         var result = await InvokeAsync(
             ctx,

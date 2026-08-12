@@ -9,8 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Getting rid of an aircraft - docs/PLAN.md "Getting rid of an aircraft - returning a lease and
-/// selling". The stated verification for this feature is the two exploit tests
+/// Getting rid of an aircraft - returning a lease and selling. The stated verification for this feature is the two exploit tests
 /// (<see cref="BuyThenSellImmediately_IsANetLoss"/>, <see cref="LeaseThenReturnImmediately_LeavesTheAirlineWorseOff_ThanNeverLeasing"/>)
 /// plus the disposal-blocking rules and the quote-drift guard
 /// (<see cref="LeaseTermination_ClockAdvancesBetweenQuoteAndCommit_RefusesTheStaleFigure"/>). Drives
@@ -77,7 +76,8 @@ public class FleetDisposalEndpointsTests
         var cashAfterSell = await CashBalanceAsync(ctx);
 
         // The whole round trip - buy new, sell without ever flying it - must leave the airline
-        // strictly worse off than never having bought it at all. docs/PLAN.md "Test the round trip".
+        // strictly worse off than never having bought it at all - the sale value is depreciated
+        // below purchase price, so buying and immediately selling cannot be a free round trip.
         Assert.True(cashAfterSell < cashBeforeBuy, $"Round trip should lose money: before={cashBeforeBuy}, after={cashAfterSell}");
 
         // FleetAircraft carries a global query filter (DeletedUtc == null) - a soft-deleted row is
@@ -222,8 +222,9 @@ public class FleetDisposalEndpointsTests
 
         var cashAfterReturn = await CashBalanceAsync(ctx);
 
-        // The core exploit test from docs/PLAN.md: lease, return immediately, airline must be worse
-        // off than if it had never leased the aircraft at all.
+        // The core exploit test: lease, return immediately, airline must be worse
+        // off than if it had never leased the aircraft at all - an early return carries a penalty
+        // so the monthly charge can never be dodged by timing the return around the billing tick.
         Assert.True(cashAfterReturn < cashBeforeLease, $"Lease-then-return should lose money: before={cashBeforeLease}, after={cashAfterReturn}");
 
         var stillThere = await ctx.Db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == leased.Id && f.DeletedUtc == null);

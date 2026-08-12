@@ -52,6 +52,22 @@ export interface Flight {
   revenue: number
   totalCost: number
   createdUtc: string
+  /** G8: whether FSOps corroborated this flight as genuinely flown online on VATSIM - callsign,
+   *  position and timing checked against FSOps' own telemetry, never merely "the CID was online
+   *  somewhere". Three-valued, same discipline as `typeMismatch`: null means never checked (no CID
+   *  configured, feature off, or the feed was unavailable the whole flight) - render that as
+   *  "nothing to show", never as "not online", which would be a false negative for every flight
+   *  flown before this feature existed too. */
+  vatsimOnline: boolean | null
+  /** The callsign the configured CID was flying under when last corroborated. Null unless
+   *  vatsimOnline is true. */
+  vatsimCallsign: string | null
+  /** Fraction (0-1) of this flight's corroboration checks that matched - "how much of the flight
+   *  was online". Null when vatsimOnline is null (never checked). */
+  vatsimOnlineFraction: number | null
+  /** Comma-separated ATC callsigns worked at departure/arrival while this flight was corroborated
+   *  online. Null/empty if none. */
+  vatsimControllersWorked: string | null
 }
 
 export interface FlightEvent {
@@ -79,6 +95,8 @@ export type LedgerCategory =
   | 'GsxServices'
   | 'StartingCapital'
   | 'LoanProceeds'
+  | 'CancellationFee'
+  | 'VatsimOnlineBonus'
   | 'Other'
 
 /** One posted LedgerTransaction for a flight - the itemised financial outcome the report card

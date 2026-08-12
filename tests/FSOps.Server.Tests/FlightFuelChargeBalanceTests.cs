@@ -17,9 +17,8 @@ namespace FSOps.Server.Tests;
 /// <summary>
 /// Proves the fuel-honesty fix end to end, through the real path the player uses - never a
 /// calculator called in isolation. <c>FlightEndpoints.StartAsync</c> posts the real fuel charge
-/// (now <see cref="FuelBreakdown.ChargedFuelKg"/>, not the full block figure - see
-/// docs/PLAN.md "Persistent fuel state and tankering" and "Status after the fuel-honesty fix"),
-/// and <c>FlightLifecycleService.FinalizeFlightAsync</c> posts everything else, exactly as a real
+/// (now <see cref="FuelBreakdown.ChargedFuelKg"/> - trip, taxi and contingency fuel only - rather
+/// than the full block figure), and <c>FlightLifecycleService.FinalizeFlightAsync</c> posts everything else, exactly as a real
 /// completed flight does. Every figure asserted here comes from the actual posted ledger rows.
 ///
 /// <para>Before the fix, <c>FlightEndpoints.StartAsync</c> charged the full
@@ -251,7 +250,7 @@ public class FlightFuelChargeBalanceTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

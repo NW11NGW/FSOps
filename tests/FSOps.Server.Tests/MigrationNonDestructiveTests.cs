@@ -13,8 +13,8 @@ namespace FSOps.Server.Tests;
 /// the previous migration, seeds realistic pre-E2 rows by hand (raw SQL against the OLD schema -
 /// using the current FsOpsDbContext to insert would fail, since its model already has the new
 /// columns/tables), migrates forward, then reads every field back through the current context and
-/// asserts nothing was lost or corrupted. This is the check docs/PLAN.md and the E2 brief both
-/// require before trusting a migration against the user's real flight history.
+/// asserts nothing was lost or corrupted. Proving a migration is non-destructive rather than
+/// assuming it is required before trusting it against the user's real flight history.
 /// <para>
 /// Also proves the hand-corrected <see cref="FleetAircraft.ReservedForPlayer"/> backfill actually
 /// runs: two pre-existing fleet aircraft are seeded (one at the airline's home base, one away), and

@@ -375,6 +375,18 @@ namespace FSOps.Data.Migrations
                     b.Property<string>("UnflyableReason")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("VatsimCallsign")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VatsimControllersWorked")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("VatsimOnline")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("VatsimOnlineFraction")
+                        .HasColumnType("REAL");
+
                     b.HasKey("Id");
 
                     b.HasIndex("AirlineId");
@@ -818,6 +830,9 @@ namespace FSOps.Data.Migrations
 
                     b.Property<bool>("Use24HourClock")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("VatsimCid")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("WeightUnit")
                         .IsRequired()

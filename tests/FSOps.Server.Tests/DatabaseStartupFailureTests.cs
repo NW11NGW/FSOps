@@ -9,8 +9,8 @@ namespace FSOps.Server.Tests;
 /// <summary>
 /// Two startup guarantees, both of which exist because of failures with no way back.
 ///
-/// <para><b>A copy before every migration.</b> docs/PLAN.md names a migration that quietly rewrites
-/// data as the one mistake with no recovery. The copy taken beforehand IS that recovery, so it has
+/// <para><b>A copy before every migration.</b> A migration that quietly rewrites the user's flight
+/// history is the one mistake with no recovery. The copy taken beforehand IS that recovery, so it has
 /// to be taken before the schema is touched, has to be verified rather than assumed, and has to
 /// stop the migration outright if it cannot be taken - proceeding without the safety net is exactly
 /// the trade that cannot be undone. It is taken only when something is actually pending, because

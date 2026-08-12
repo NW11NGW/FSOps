@@ -25,7 +25,7 @@ public class FlightPlanImportEndpointTests
     private static (FlightLifecycleService Lifecycle, SimTelemetryService Telemetry) CreateLifecycleAndTelemetry()
     {
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
-        var lifecycle = new FlightLifecycleService(null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), NullLogger<FlightLifecycleService>.Instance);
+        var lifecycle = new FlightLifecycleService(null!, telemetry, new NoOpHubContext(), EconomyConfigCatalog.Default(), null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 

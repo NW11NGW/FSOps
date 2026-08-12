@@ -8,7 +8,8 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// "Perform maintenance now" - docs/PLAN.md "A 'perform maintenance now' button on the Fleet page":
+/// "Perform maintenance now" - a button on the Fleet page letting the player trigger an A-check or
+/// C-check early, at a moment of their choosing:
 /// full cost, full downtime, forfeits remaining hours, blocked while airborne or already grounded,
 /// and shows the cost/downtime/affected schedules before the player commits. Drives
 /// MaintenanceEndpoints' handlers directly against an isolated in-memory RouteTestContext with a

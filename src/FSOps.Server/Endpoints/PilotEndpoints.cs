@@ -270,14 +270,14 @@ public static class PilotEndpoints
         var otherEntries = await LoadOtherPilotsEntriesAsync(db, airline.Id, excludingPilotId: pilot.Id, ct);
         var unionEntries = otherEntries.Concat(proposed).ToList();
 
-        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs) = await BuildValidationDataAsync(db, airline, economyConfig, unionEntries, ct);
+        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs, airportsByIcao) = await BuildValidationDataAsync(db, airline, economyConfig, unionEntries, ct);
 
         // requireWeekClosure: true - a SAVED week must genuinely repeat indefinitely, so Saturday's
         // last leg on an aircraft has to connect back to Sunday's first. Unlike the leg-options
         // endpoint below, which is deliberately
         // asking a narrower, per-leg question about a week still under construction. Never weaken
         // this.
-        var result = PilotScheduleValidator.Validate(unionEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
+        var result = PilotScheduleValidator.Validate(unionEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
         if (!result.IsValid)
         {
             return Results.BadRequest(new { error = "This schedule has conflicts.", conflicts = result.Conflicts });
@@ -505,10 +505,10 @@ public static class PilotEndpoints
 
         var candidates = routes.Select(route => new PilotScheduleEntryInput(pilot.Id, dayOfWeek, departureTime, route.Id, fleetAircraftId)).ToList();
         var allEntriesForValidation = baseline.Concat(candidates).ToList();
-        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs) = await BuildValidationDataAsync(db, airline, economyConfig, allEntriesForValidation, ct);
+        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs, airportsByIcao) = await BuildValidationDataAsync(db, airline, economyConfig, allEntriesForValidation, ct);
 
         var baselineConflicts = PilotScheduleValidator
-            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
+            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
             .Conflicts.ToHashSet();
 
         var legal = new List<object>();
@@ -520,7 +520,7 @@ public static class PilotEndpoints
 
             var withCandidate = baseline.Append(candidate).ToList();
             var candidateResult = PilotScheduleValidator.Validate(
-                withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+                withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
             var newConflicts = candidateResult.Conflicts.Where(c => !baselineConflicts.Contains(c)).ToList();
 
             if (newConflicts.Count == 0)
@@ -724,7 +724,8 @@ public static class PilotEndpoints
         Dictionary<Guid, FleetAircraft> FleetById,
         Dictionary<Guid, AircraftType> AircraftTypesById,
         Dictionary<(Guid RouteId, Guid FleetAircraftId), int> BlockMinutesByLeg,
-        HashSet<(string DepartureIcao, string ArrivalIcao)> ExistingRoutePairs)> BuildValidationDataAsync(
+        HashSet<(string DepartureIcao, string ArrivalIcao)> ExistingRoutePairs,
+        Dictionary<string, Airport> AirportsByIcao)> BuildValidationDataAsync(
         FsOpsDbContext db, Airline airline, EconomyConfig economyConfig, IReadOnlyList<PilotScheduleEntryInput> entries, CancellationToken ct)
     {
         var routeIds = entries.Select(e => e.RouteId).Distinct().ToList();
@@ -737,7 +738,9 @@ public static class PilotEndpoints
         var typesById = await db.AircraftTypes.Where(t => typeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, ct);
 
         var icaos = routesById.Values.SelectMany(r => new[] { r.DepartureIcao, r.ArrivalIcao }).Distinct().ToList();
-        var airportsByIcao = await db.Airports.Where(a => icaos.Contains(a.Icao)).ToDictionaryAsync(a => a.Icao, ct);
+        // Include(Runways) - PilotScheduleValidator's runway-suitability check needs the actual
+        // runway rows, not just the stamped LongestRunwayFt.
+        var airportsByIcao = await db.Airports.Include(a => a.Runways).Where(a => icaos.Contains(a.Icao)).ToDictionaryAsync(a => a.Icao, ct);
 
         var blockMinutesByLeg = new Dictionary<(Guid, Guid), int>();
         foreach (var entry in entries)
@@ -765,7 +768,7 @@ public static class PilotEndpoints
             .Select(r => (r.DepartureIcao.ToUpperInvariant(), r.ArrivalIcao.ToUpperInvariant()))
             .ToHashSet();
 
-        return (routesById, fleetById, typesById, blockMinutesByLeg, existingRoutePairSet);
+        return (routesById, fleetById, typesById, blockMinutesByLeg, existingRoutePairSet, airportsByIcao);
     }
 
     /// <summary>Groups a flat list of persisted entries into the duty-day-shaped response DTO - the

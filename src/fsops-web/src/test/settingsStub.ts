@@ -24,6 +24,7 @@ export const TEST_SETTINGS: AppSettings = {
   theme: 'dark',
   communityFolderPath: null,
   simBriefPilotId: null,
+  vatsimCid: null,
 }
 
 export const TEST_CURRENCIES: CurrencyInfo[] = [

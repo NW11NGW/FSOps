@@ -28,4 +28,12 @@ public class UserSettings
     public string? CommunityFolderPath { get; set; }
 
     public string? SimBriefPilotId { get; set; }
+
+    /// <summary>
+    /// The player's VATSIM certificate ID, used only to recognise their own flights on VATSIM's
+    /// public feed. Stored locally like every other setting and <b>never sent anywhere</b> - FSOps
+    /// reads the public feed and looks for this value in it, rather than telling VATSIM anything.
+    /// Null disables online detection entirely, and no request is made on its behalf.
+    /// </summary>
+    public string? VatsimCid { get; set; }
 }

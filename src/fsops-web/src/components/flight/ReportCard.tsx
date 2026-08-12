@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Banknote, Clock3, Fuel, Gauge, Info, Minus, Plus, RotateCw, Target } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Banknote, Clock3, Fuel, Gauge, Info, Minus, Plus, RadioTower, RotateCw, Target } from 'lucide-react'
 
 import { LandingGauge } from '@/components/flight/LandingGauge'
 import { PhaseTimeline } from '@/components/flight/PhaseTimeline'
@@ -121,6 +121,12 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
               {callsign && (
                 <Badge variant="outline" className="font-mono">
                   {callsign}
+                </Badge>
+              )}
+              {flight.vatsimOnline === true && (
+                <Badge variant="success">
+                  <RadioTower className="size-3" />
+                  Flown online{flight.vatsimCallsign ? ` as ${flight.vatsimCallsign}` : ''}
                 </Badge>
               )}
             </div>
@@ -254,6 +260,31 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
           </CardContent>
         )}
       </Card>
+
+      {flight.vatsimOnline === true && (
+        <Card className="border-success/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <RadioTower className="size-4 text-success" />
+              Flown online
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p className="text-muted-foreground">
+              FSOps corroborated this flight against the public VATSIM network — callsign, position and timing
+              checked against FSOps' own telemetry, which stayed authoritative throughout.
+              {flight.vatsimOnlineFraction !== null &&
+                ` Online for about ${Math.round(flight.vatsimOnlineFraction * 100)}% of the tracked flight.`}
+            </p>
+            {flight.vatsimControllersWorked && (
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">Controllers worked: </span>
+                {flight.vatsimControllersWorked}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {(flight.simRateElevated || flight.slewDetected || flight.positionJumpDetected) && (
         <Card className={flight.slewDetected || flight.positionJumpDetected ? 'border-warning/30' : undefined}>

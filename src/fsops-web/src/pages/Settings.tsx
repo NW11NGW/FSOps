@@ -4,6 +4,7 @@ import { DisplaySection } from '@/components/settings/DisplaySection'
 import { MsfsPanelSection } from '@/components/settings/MsfsPanelSection'
 import { SimBriefSection } from '@/components/settings/SimBriefSection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
+import { VatsimSection } from '@/components/settings/VatsimSection'
 import { PageHeader } from '@/components/shared/PageHeader'
 
 export function Settings() {
@@ -15,6 +16,7 @@ export function Settings() {
         <AirlineSection />
         <MsfsPanelSection />
         <SimBriefSection />
+        <VatsimSection />
         <DataSection />
         <UpdatesSection />
       </div>

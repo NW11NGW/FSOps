@@ -161,8 +161,8 @@ internal sealed class RouteTestContext : IDisposable
             LocationIcao = "EGGD",
             Status = FleetAircraftStatus.Active,
             // Matches production: AirlineEndpoints.CreateAsync reserves a brand-new single-aircraft
-            // fleet's sole airframe by default (docs/PLAN.md "3a" - "the single-aircraft case is
-            // unchanged: the player's explicit choice IS the reservation"). Reservation is now a
+            // fleet's sole airframe by default - with one airframe the player explicitly chooses
+            // reserve-it-or-schedule-it, and that choice IS the reservation. Reservation is now a
             // hard, enforced invariant on both the Fly screen and the schedule builder, so a fixture
             // that diverges from what founding an airline actually does produces false greens -
             // tests that need a SCHEDULABLE aircraft instead call ReleaseReservationAsync (or

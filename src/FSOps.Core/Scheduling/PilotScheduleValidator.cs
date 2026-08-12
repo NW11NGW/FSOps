@@ -64,6 +64,13 @@ public static class PilotScheduleValidator
         // discovered when the leg fails to resolve.
         IReadOnlyDictionary<Guid, AircraftType> aircraftTypesById,
         IReadOnlyDictionary<(Guid RouteId, Guid FleetAircraftId), int> blockMinutesByLeg,
+        // Keyed by ICAO, covering every airport any entry's route touches - runway suitability
+        // (length AND surface, see RunwaySuitabilityAssessor) is a hard refusal here for the same
+        // reason range is: an aircraft rostered onto a leg it cannot physically use is not a
+        // reservation problem, it is an impossible leg. An airport missing from this dictionary
+        // (e.g. world data drifted under an existing route) means "say nothing" rather than a crash -
+        // the same graceful-skip every other lookup in this method already uses.
+        IReadOnlyDictionary<string, Airport> airportsByIcao,
         SchedulingConfig config,
         // Every route the AIRLINE actually has, departure/arrival ICAO pairs, regardless of whether
         // any entry references it - NOT the same thing as routesById above, which only covers routes
@@ -128,6 +135,33 @@ public static class PilotScheduleValidator
                 if (!conflicts.Contains(rangeConflict))
                 {
                     conflicts.Add(rangeConflict);
+                }
+            }
+
+            // Runway suitability mirrors range exactly, for the same reason: length AND surface are
+            // both physical facts about this specific airframe and this specific piece of ground,
+            // never a type-matching penalty (see RunwaySuitabilityAssessor's class doc).
+            if (aircraftTypesById.TryGetValue(aircraft.AircraftTypeId, out var aircraftTypeForRunway) &&
+                airportsByIcao.TryGetValue(route.DepartureIcao, out var depAirport) &&
+                airportsByIcao.TryGetValue(route.ArrivalIcao, out var arrAirport))
+            {
+                var runwayProblem = RunwaySuitabilityAssessor.AssessRoute(
+                    depAirport, arrAirport, aircraftTypeForRunway.MinRunwayFt, aircraftTypeForRunway.MtowTonnes, out var blockingAirport);
+
+                if (runwayProblem != RunwaySuitabilityProblem.None)
+                {
+                    // Same one-conflict-per-(route, aircraft) de-duplication as range above.
+                    var runwayConflict = runwayProblem == RunwaySuitabilityProblem.TooShort
+                        ? $"{route.DepartureIcao} -> {route.ArrivalIcao}: {blockingAirport.Icao}'s longest runway " +
+                          $"({blockingAirport.LongestRunwayFt:N0} ft) is too short for {aircraft.Registration} ({aircraftTypeForRunway.Name}), " +
+                          $"which needs {aircraftTypeForRunway.MinRunwayFt:N0} ft - fly this leg with a shorter-field aircraft."
+                        : $"{route.DepartureIcao} -> {route.ArrivalIcao}: {blockingAirport.Icao}'s runways are too soft for " +
+                          $"{aircraft.Registration} ({aircraftTypeForRunway.Name}) at this weight - heavy aircraft need a paved runway " +
+                          "there regardless of length.";
+                    if (!conflicts.Contains(runwayConflict))
+                    {
+                        conflicts.Add(runwayConflict);
+                    }
                 }
             }
         }

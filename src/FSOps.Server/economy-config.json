@@ -377,6 +377,18 @@
     "maxDutyHoursPerDay": 13,
     "minTurnaroundMinutes": 45
   },
+  // The modest VATSIM online-flying bonus (G12) - a small revenue uplift plus a small reputation
+  // nudge for a sector FSOps itself corroborated as genuinely flown online (see
+  // VatsimFlightCorroborationService), never merely from a CID being configured. Shared across
+  // playstyles - see VatsimOnlineBonusConfig's own doc in EconomyConfig.cs for the derivation of
+  // each figure. 0.03 revenue / 0.15 reputation-alpha are deliberately small: offline flying stays
+  // fully rewarding with no VATSIM account at all, and this is a bonus on top of an already-earned
+  // ordinary sector, not a second economy.
+  "vatsimOnlineBonus": {
+    "revenueUpliftFraction": 0.03,
+    "reputationAlphaMultiplier": 0.15,
+    "minimumOnlineFraction": 0.5
+  },
   "strategyProfiles": [
     { "profile": "LowCost", "referenceFareMultiplier": 0.75, "baselineLoadFactor": 0.76, "elasticity": 1.60, "costMultiplier": 0.85 },
     { "profile": "Domestic", "referenceFareMultiplier": 1.00, "baselineLoadFactor": 0.78, "elasticity": 1.30, "costMultiplier": 1.00 },

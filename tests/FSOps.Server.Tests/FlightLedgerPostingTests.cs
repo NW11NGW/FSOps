@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// Chunk D's own stated verification (docs/PLAN.md "Economy design"/"Integrity"): a completed
+/// Chunk D's own stated verification: a completed
 /// flight's cash balance moves by exactly the sum of its posted ledger lines, ledger posting is
 /// idempotent, a slew-flagged flight never posts ticket revenue but keeps the fuel it already
 /// bought, and an abandoned flight nets strictly negative once a real cost has been incurred.
@@ -310,7 +310,7 @@ public class FlightLedgerPostingTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
         return (lifecycle, telemetry);
     }
 }

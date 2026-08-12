@@ -180,6 +180,7 @@ public class FlightCompletionAircraftLocationTests
             null!,
             new NoOpHubContext(),
             EconomyConfigCatalog.Default(),
+            null,
             NullLogger<FlightLifecycleService>.Instance));
     }
 }

@@ -16,7 +16,8 @@ namespace FSOps.Server.Tests;
 
 /// <summary>
 /// Regression coverage for the "Pilot.HoursFlown never accrues from a player flight" bug
-/// (docs/PLAN.md "Known gap - pilot hours never accrue from player flights", found 2026-08-08).
+/// (found 2026-08-08: E2 added accrual for virtual pilots inside VirtualFlightResolverService, but
+/// the player's own pilot record kept accruing nothing no matter how much they flew).
 /// <see cref="MaintenancePoster.PostFlightHours"/> is the one place airframe hours accrue for all
 /// three flight-completion paths - it now also accrues the flying pilot's
 /// <see cref="Pilot.HoursFlown"/> in the same call, so a fourth caller cannot reintroduce the split
@@ -65,7 +66,7 @@ public class PilotHoursAccrualTests
         var telemetry = new SimTelemetryService(new NoOpSimSource(), new NoOpHubContext(), NullLogger<SimTelemetryService>.Instance);
         var lifecycle = new FlightLifecycleService(
             provider.GetRequiredService<IServiceScopeFactory>(), telemetry, new NoOpHubContext(),
-            economyConfigCatalog, NullLogger<FlightLifecycleService>.Instance);
+            economyConfigCatalog, null, NullLogger<FlightLifecycleService>.Instance);
 
         // Same completed-flight shape as MaintenanceTriggerTests: Out at t=60s, In at t=5550s - a
         // block time of exactly 5490s = 1.525h.
@@ -120,7 +121,7 @@ public class PilotHoursAccrualTests
         await ctx.Db.SaveChangesAsync();
 
         var economyConfigCatalog = EconomyConfigCatalog.Default();
-        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null!);
+        var lifecycle = new FlightLifecycleService(null!, null!, null!, economyConfigCatalog, null, null!);
         var result = await FlightEndpoints.CompleteManualAsync(flight.Id, ctx.Db, ctx.CurrentUser, lifecycle, economyConfigCatalog, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, ((IStatusCodeHttpResult)result).StatusCode);

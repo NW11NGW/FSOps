@@ -493,7 +493,10 @@ public class WorldDataImporter
                 rowsRead++;
             }
 
-            if (lengthFt > 0 && (!longestByIcao.TryGetValue(icao, out var current) || lengthFt > current))
+            // A closed runway must never count towards an airport's longest - it isn't ground a
+            // player can actually use, and RunwaySuitabilityAssessor/StampLongestRunwaysAsync both
+            // rely on this figure being genuinely usable.
+            if (!isClosed && lengthFt > 0 && (!longestByIcao.TryGetValue(icao, out var current) || lengthFt > current))
             {
                 longestByIcao[icao] = lengthFt;
             }

@@ -96,6 +96,20 @@ public static class ReputationCalculator
     public static double AdvanceForUnverifiedManualCompletion(double currentScore, ReputationConfig config) =>
         Advance(currentScore, config.ManualCompletionTargetScore, config.Alpha * config.ManualCompletionAlphaMultiplier);
 
+    /// <summary>
+    /// Advances <paramref name="currentScore"/> for the modest VATSIM online-flying bonus (G12) - a
+    /// small EXTRA pull toward the maximum target (100), applied on top of (after) the sector's own
+    /// ordinary <see cref="AdvanceForCompletedFlight"/> step, and only for a flight FSOps itself
+    /// corroborated as genuinely flown online - see
+    /// <see cref="Server.Services.VatsimFlightCorroborationService"/>. Reuses the same
+    /// exponential-smoothing primitive as every other reputation effect (rather than a hand-picked
+    /// flat number) so its magnitude reads on the same scale as an ordinary sector's own step.
+    /// <paramref name="alphaMultiplier"/> comes from
+    /// <see cref="EconomyConfig.VatsimOnlineBonus"/>, deliberately small - see that config's own doc.
+    /// </summary>
+    public static double AdvanceForVatsimOnlineBonus(double currentScore, double baseAlpha, double alphaMultiplier) =>
+        Advance(currentScore, 100.0, baseAlpha * alphaMultiplier);
+
     private static double Advance(double currentScore, double target, double alpha) =>
         Math.Clamp(currentScore + alpha * (target - currentScore), 0, 100);
 

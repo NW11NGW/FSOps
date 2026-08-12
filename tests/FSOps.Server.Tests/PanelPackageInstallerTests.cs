@@ -4,8 +4,8 @@ using FSOps.Server.Services;
 namespace FSOps.Server.Tests;
 
 /// <summary>
-/// PanelPackageInstaller - see src/fsops-ingame-panel/README.md and docs/PLAN.md "The Community
-/// folder is captured at onboarding and reused to install the panel". Every test runs against a
+/// PanelPackageInstaller - see src/fsops-ingame-panel/README.md. The Community
+/// folder is captured at onboarding and reused to install the panel. Every test runs against a
 /// throwaway temp directory created and destroyed by the test itself - NEVER against a real
 /// Community folder or anywhere near %LOCALAPPDATA%\FSOps, per the project's data-safety rules.
 /// </summary>
