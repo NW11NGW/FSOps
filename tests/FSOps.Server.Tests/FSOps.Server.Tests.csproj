@@ -27,4 +27,16 @@
     <ProjectReference Include="..\..\src\FSOps.Server\FSOps.Server.csproj" />
   </ItemGroup>
 
+  <!-- The VAT-Spy boundary files, so VatSpyBoundarySourceTests can assert against the bytes that
+       actually ship rather than only against fixtures. Worth the ~700 kB in the test output: a
+       truncated download or a changed upstream format parses to zero boundaries, and zero
+       boundaries is indistinguishable on screen from "no controllers online". The airports CSVs
+       next door are deliberately NOT copied - nothing here reads them. -->
+  <ItemGroup>
+    <None Include="..\..\data\vatspy\*.gz">
+      <Link>data\vatspy\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

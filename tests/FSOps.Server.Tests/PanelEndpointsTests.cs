@@ -83,12 +83,11 @@ public sealed class PanelEndpointsTests
         var before = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None));
         Assert.False(before.Installed);
 
-        var templateDirectory = Path.Combine(temp.Path, "template");
-        Directory.CreateDirectory(Path.Combine(templateDirectory, "html_ui", "InGamePanels", "FSOpsPanel"));
-        File.WriteAllText(Path.Combine(templateDirectory, "manifest.json"), "{\"package_version\":\"1.0.0\"}");
-        File.WriteAllText(Path.Combine(templateDirectory, "html_ui", "InGamePanels", "FSOpsPanel", "FSOpsPanel.config.js"), "window.FSOPS_PANEL_PORT = 5977;");
-
-        PanelPackageInstaller.InstallOrRepair(community, templateDirectory, "5977");
+        // Installed from the shipped template, because that is what the endpoint measures the result
+        // against - see ShippedTemplate. The before/after pair is what gives this test its teeth:
+        // the same saved path reads as not-installed and then installed, so an endpoint that
+        // consulted some other folder could not produce both answers.
+        PanelPackageInstaller.InstallOrRepair(community, ShippedTemplate, "5977");
 
         var after = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None));
         Assert.True(after.Installed);
@@ -114,15 +113,19 @@ public sealed class PanelEndpointsTests
         });
         await ctx.Db.SaveChangesAsync();
 
-        PanelPackageInstaller.InstallOrRepair(other, CreateTemplate(temp.Path), "5977");
+        PanelPackageInstaller.InstallOrRepair(other, ShippedTemplate, "5977");
 
         // Saved folder has nothing; the explicitly-named one does. This is exactly the question
         // Settings needs answered before it offers to move an install off an old folder.
         var savedStatus = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, path: null, CancellationToken.None));
         var otherStatus = ValueOf<PanelOperationResult>(await PanelEndpoints.GetStatusAsync(ctx.Db, ctx.CurrentUser, other, CancellationToken.None));
 
+        // The two folders stay deliberately far apart - one has a complete package, the other has no
+        // package at all - so the test still fails if the endpoint ever consults the wrong one.
         Assert.False(savedStatus.Installed);
+        Assert.Empty(savedStatus.MissingFiles);
         Assert.True(otherStatus.Installed);
+        Assert.Empty(otherStatus.MissingFiles);
     }
 
     [Fact]
@@ -167,6 +170,20 @@ public sealed class PanelEndpointsTests
         File.WriteAllText(Path.Combine(panelDir, "FSOpsPanel.config.js"), "window.FSOPS_PANEL_PORT = 5977;");
         return templateDirectory;
     }
+
+    /// <summary>
+    /// The very template the endpoints themselves install from and measure against - the same
+    /// PanelTemplate folder that ships beside the server and is copied into the test output.
+    ///
+    /// <para>
+    /// A test that wants the endpoint to see a COMPLETE install has to use this rather than
+    /// CreateTemplate's stub. GetStatus reports an install as complete only when every file the
+    /// shipped template would write is present, so installing a two-file stub and then asking the
+    /// endpoint about it produces a genuinely incomplete package - a disagreement that cannot arise
+    /// in the real app, where both sides read this one directory.
+    /// </para>
+    /// </summary>
+    private static string ShippedTemplate => Path.Combine(AppContext.BaseDirectory, "PanelTemplate");
 
     [Fact]
     public void Install_ReturnsBadRequest_WhenThePathIsInvalid()

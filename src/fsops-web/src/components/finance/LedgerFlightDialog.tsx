@@ -14,8 +14,8 @@ interface LedgerFlightDialogProps {
 }
 
 /**
- * docs/PLAN.md "The ledger itemised and filterable by category, drillable to the flight that
- * produced a line." Reuses GET /flights/{id} (already used by the Fly page's report card) through
+ * The ledger is itemised, filterable by category, and drillable to the flight that produced a
+ * line. Reuses GET /flights/{id} (already used by the Fly page's report card) through
  * its own on-demand hook - see useFlightDetailOnDemand's doc comment for why the fetch is deferred
  * until a row is actually opened.
  */

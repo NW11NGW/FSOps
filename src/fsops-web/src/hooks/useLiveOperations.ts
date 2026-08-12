@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError, get } from '@/lib/api'
 import type { LiveOperationsResponse } from '@/types/operations'
 
-/** Interpolated (virtual) traffic only needs to move about once a minute - see docs/PLAN.md
- *  "Live operations map". The player's own aircraft, if any, is driven separately by
+/** Interpolated (virtual) traffic only needs to move about once a minute - its position is
+ *  computed from the schedule and the clock, so polling faster buys nothing.
+ *  The player's own aircraft, if any, is driven separately by
  *  useFlightLive's SignalR stream elsewhere in the app; this poll is for the dashboard overview. */
 const POLL_INTERVAL_MS = 60_000
 const ERROR_RETRY_MS = 15_000

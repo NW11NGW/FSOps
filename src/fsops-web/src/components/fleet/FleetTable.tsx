@@ -17,14 +17,14 @@ interface FleetTableProps {
   status: FleetStatusState
   emptyAction?: ReactNode
   onRename?: (aircraft: FleetAircraftSummary) => void
-  /** Toggle PUT /fleet/{id}/reservation - see docs/PLAN.md "Let the player release the reserved
-   *  aircraft". Omitted entirely hides the reservation column, same optional-prop convention as onRename. */
+  /** Toggle PUT /fleet/{id}/reservation - the player can always release the aircraft held back for
+   *  them, including their first. Omitted entirely hides the reservation column, same optional-prop convention as onRename. */
   onToggleReservation?: (aircraft: FleetAircraftSummary) => void
   /** Opens the sell/end-lease dialog appropriate to this aircraft's ownership - see
-   *  docs/PLAN.md "Getting rid of an aircraft". Omitted entirely hides the action column. */
+   *  FleetDisposalEndpoints. Omitted entirely hides the action column. */
   onDispose?: (aircraft: FleetAircraftSummary) => void
-  /** Opens PerformMaintenanceDialog for this aircraft - see docs/PLAN.md "A 'perform maintenance
-   *  now' button on the Fleet page". Omitted entirely hides the button; shares the actions column
+  /** Opens PerformMaintenanceDialog for this aircraft, so a check can be brought forward at a
+   *  moment of the player's choosing. Omitted entirely hides the button; shares the actions column
    *  with onDispose rather than adding a second column. */
   onPerformMaintenance?: (aircraft: FleetAircraftSummary) => void
 }

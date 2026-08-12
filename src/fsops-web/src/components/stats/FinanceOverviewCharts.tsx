@@ -28,7 +28,7 @@ function makeMoneyTooltip(fmtMoney: (amount: number) => string) {
 }
 
 /**
- * Revenue/cost charts - docs/PLAN.md dashboards brief. Deliberately renders figures this page does
+ * Revenue/cost charts for the statistics dashboard. Deliberately renders figures this page does
  * NOT compute: `costs` is FinanceEndpoints' own fixed/variable/revenue split
  * (`GET /finance/costs`) and `routes` is its per-route P&L (`GET /finance/routes`) - see
  * useStatsOverview's own doc for why reusing those, rather than re-deriving the same ledger sums a

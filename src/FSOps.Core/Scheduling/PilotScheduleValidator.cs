@@ -1,5 +1,6 @@
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
+using FSOps.Core.Planning;
 
 namespace FSOps.Core.Scheduling;
 
@@ -17,9 +18,9 @@ public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string
 }
 
 /// <summary>
-/// Pure validation for a weekly schedule - see docs/PLAN.md "Virtual pilot scheduling" for every
-/// rule this enforces: one aircraft per pilot per duty day (see
-/// <see cref="ValidateDutyDayAircraftConsistency"/> - the 2a/2c redesign's central invariant),
+/// Pure validation for a weekly schedule. Every rule it enforces: one aircraft per pilot per duty
+/// day (see <see cref="ValidateDutyDayAircraftConsistency"/> - the scheduler redesign's central
+/// invariant),
 /// geographic continuity, no double-booking/overlap of an aircraft (across pilots, not just within
 /// one), minimum turnaround, pilot rest between duty days, a maximum duty day, and the
 /// reserved-for-player aircraft never being assignable. No I/O, no EF - the caller (PilotEndpoints)
@@ -34,8 +35,9 @@ public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string
 /// <see cref="PilotScheduleEntryInput.PilotId"/> for the rest/duty checks (pilot-scoped).
 /// </para>
 /// <para>
-/// <b>The week wraps - but only when the caller asks for that.</b> "The week repeats indefinitely"
-/// (docs/PLAN.md) means Saturday's last leg on an aircraft must connect back to Sunday's first leg
+/// <b>The week wraps - but only when the caller asks for that.</b> The week repeats indefinitely -
+/// that is what makes a standing schedule continuous - which means Saturday's last leg on an
+/// aircraft must connect back to Sunday's first leg
 /// on that same aircraft, and a pilot's last duty day must get its rest before its first duty day
 /// comes back around - both checks treat the week as a 10,080-minute cycle rather than a flat
 /// Sunday-to-Saturday line, using <see cref="WeekMinutes"/>. <see cref="requireWeekClosure"/>
@@ -44,8 +46,9 @@ public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string
 /// week under construction is legitimately open - it has not been closed yet, and closing it is not
 /// this leg's job. With closure off, every INTERIOR pair (each entry against the one immediately
 /// after it, in departure order) is still fully checked - only the single pair that would close the
-/// loop back to the first entry is skipped. See docs/PLAN.md "a week under construction is
-/// legitimately open - that is not an error, it is an unfinished week" (2026-08-08 clarification).
+/// loop back to the first entry is skipped. A week under construction is legitimately open: that
+/// is not an error, it is an unfinished week, and reporting it as a conflict would make the
+/// builder unusable while a player is still filling it in (clarified 2026-08-08).
 /// </para>
 /// </summary>
 public static class PilotScheduleValidator
@@ -56,13 +59,17 @@ public static class PilotScheduleValidator
         IReadOnlyList<PilotScheduleEntryInput> entries,
         IReadOnlyDictionary<Guid, Route> routesById,
         IReadOnlyDictionary<Guid, FleetAircraft> fleetById,
+        // Keyed by AircraftTypeId, covering every type the entries' aircraft belong to - what makes
+        // "an A320 must never be scheduled beyond its range" checkable here rather than only being
+        // discovered when the leg fails to resolve.
+        IReadOnlyDictionary<Guid, AircraftType> aircraftTypesById,
         IReadOnlyDictionary<(Guid RouteId, Guid FleetAircraftId), int> blockMinutesByLeg,
         SchedulingConfig config,
         // Every route the AIRLINE actually has, departure/arrival ICAO pairs, regardless of whether
         // any entry references it - NOT the same thing as routesById above, which only covers routes
         // this particular entry set touches. This is what lets a broken chain distinguish "the
         // connecting route doesn't exist" from "it exists but nothing is scheduled on it" (see
-        // docs/PLAN.md "2b. The unavailable list must not be a wall of text", user feedback
+        // user feedback from real use,
         // 2026-08-08: the validator used to say "you'd need a EGPH -> EGLL route" even when the
         // player already had one in both directions - what was actually missing was a scheduled
         // repositioning leg, not the route).
@@ -90,7 +97,38 @@ public static class PilotScheduleValidator
 
             if (aircraft.ReservedForPlayer)
             {
-                conflicts.Add($"{aircraft.Registration} is reserved for the player and cannot be assigned to a virtual pilot's schedule - release it first from the Fleet page if you want it flown by a pilot instead.");
+                // One conflict per aircraft, not one per leg - for the same reason the range check
+                // below de-duplicates: a week that repeats the same reserved airframe five days
+                // running is ONE problem, and printing the identical sentence five times is exactly
+                // the wall of text the one-plain-reason rule exists to prevent.
+                var reservedConflict =
+                    $"{aircraft.Registration} is reserved for the player and cannot be assigned to a virtual pilot's schedule - release it first from the Fleet page if you want it flown by a pilot instead.";
+                if (!conflicts.Contains(reservedConflict))
+                {
+                    conflicts.Add(reservedConflict);
+                }
+            }
+
+            // Range is a hard physical refusal here, unlike on the Routes page where it is guidance:
+            // a route the airline cannot fly today is still worth having, but an A320 rostered onto a
+            // sector it cannot reach is simply an impossible leg. It joins the existing set of one
+            // plain reason per illegal leg (wrong airport, reserved aircraft, no rest room) rather
+            // than getting a mechanism of its own. Route.DistanceNm is the same great-circle figure
+            // the route was created with, so this needs no airports and stays pure.
+            if (aircraftTypesById.TryGetValue(aircraft.AircraftTypeId, out var aircraftType) &&
+                !RouteRangeAssessor.CanReach(aircraftType.RangeNm, route.DistanceNm))
+            {
+                // One conflict per (route, aircraft) pair, not one per leg - a week of fourteen
+                // identical legs is one problem, and repeating the same sentence fourteen times is
+                // the "wall of text" the unavailable-list rule exists to prevent.
+                var rangeConflict =
+                    $"{route.DepartureIcao} -> {route.ArrivalIcao} is {route.DistanceNm:F0} nm, beyond {aircraft.Registration}'s " +
+                    $"({aircraftType.Name}) practical range of about {RouteRangeAssessor.OperationalRangeNm(aircraftType.RangeNm):F0} nm " +
+                    "once reserves are accounted for - fly this leg with a longer-legged aircraft.";
+                if (!conflicts.Contains(rangeConflict))
+                {
+                    conflicts.Add(rangeConflict);
+                }
             }
         }
 
@@ -99,7 +137,7 @@ public static class PilotScheduleValidator
             return new ScheduleValidationResult(false, conflicts);
         }
 
-        // The aircraft-per-duty-day invariant (docs/PLAN.md "2a"/"2c") - see this method's own doc
+        // The aircraft-per-duty-day invariant - see this method's own doc
         // for why it has to run, and fail fast, BEFORE ValidateAircraftChains: that method groups by
         // FleetAircraftId, so two legs on two DIFFERENT aircraft in one pilot's day are never
         // compared to each other at all - each aircraft's own chain can look perfectly valid in
@@ -121,8 +159,11 @@ public static class PilotScheduleValidator
     }
 
     /// <summary>
-    /// Structural invariant from the aircraft-per-duty-day redesign (docs/PLAN.md "2a": "assign an
-    /// aircraft per pilot per DUTY DAY, not per leg"). Every entry belonging to the same
+    /// Structural invariant from the aircraft-per-duty-day redesign: an aircraft is assigned per
+    /// pilot per DUTY DAY, not per leg. With one airframe fixed for the day, "does the next leg
+    /// depart where the last one arrived" becomes a single check against one aircraft's position,
+    /// and a turnaround gap always means what it says. Per-leg aircraft selection is what made
+    /// continuity checkable-but-easily-skipped, and it let a real defect through. Every entry belonging to the same
     /// (<see cref="PilotScheduleEntryInput.PilotId"/>, <see cref="PilotScheduleEntryInput.DayOfWeek"/>)
     /// pair must reference the same <see cref="PilotScheduleEntryInput.FleetAircraftId"/> - the
     /// player picks the aircraft for a duty day once, then drops legs into it, so the API layer
@@ -219,8 +260,12 @@ public static class PilotScheduleValidator
                         ? $"schedule a {gapDeparture} -> {gapArrival} leg before this one to reposition it"
                         : $"you'd need to create a {gapDeparture} -> {gapArrival} route on the Routes page for this chain to work";
 
+                    // The time in "lands at X (...)" has to be the leg's ARRIVAL, not its departure -
+                    // quoting the departure time made the sentence say an aircraft leaving Monday
+                    // 08:00 also lands Monday 08:00, which reads as a broken clock next to the
+                    // double-booking message below that already prints the real arrival.
                     conflicts.Add(
-                        $"{aircraft.Registration} lands at {currentRoute.ArrivalIcao} ({FormatSlot(current.Entry.DayOfWeek, current.Entry.DepartureTimeUtc)}) " +
+                        $"{aircraft.Registration} lands at {currentRoute.ArrivalIcao} ({FormatArrival(current.Entry.DayOfWeek, current.Entry.DepartureTimeUtc, current.Block)}) " +
                         $"but {nextLeg} departs {nextRoute.DepartureIcao} ({FormatSlot(next.Entry.DayOfWeek, next.Entry.DepartureTimeUtc)}) - {fix}.");
                 }
 

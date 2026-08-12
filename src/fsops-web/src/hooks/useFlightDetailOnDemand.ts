@@ -16,8 +16,8 @@ interface UseFlightDetailOnDemandResult {
  * the ledger opens a flight only when a row is clicked, so eagerly loading detail for every line
  * would be wasted work. Kept separate from the Fly page's own hook deliberately - the two have
  * different lifetimes and the Finances view should not take a dependency on Fly-page internals.
- * Backs the ledger's "view flight" drill-down (docs/PLAN.md "drillable to the flight that
- * produced a line") - reads types/flight.ts only.
+ * Backs the ledger's "view flight" drill-down, so every line is traceable to the flight that
+ * produced it - reads types/flight.ts only.
  */
 export function useFlightDetailOnDemand(flightId: string | null): UseFlightDetailOnDemandResult {
   const [status, setStatus] = useState<FlightDetailOnDemandStatus>('idle')

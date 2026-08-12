@@ -17,8 +17,9 @@ public class EconomyState
     /// <para>
     /// Nullable rather than defaulted to a scaffolded value: a brand-new/pre-E2 database has no
     /// opinion on where virtual-flight resolution should start, and a wrong non-null default here
-    /// is exactly the kind of bug docs/PLAN.md warns never to let an EF-scaffolded default create
-    /// (like the sim-rate "0.0 would read as a frozen clock" example). Left null until
+    /// is exactly the class of bug an EF-scaffolded default has produced here twice before - the
+    /// sim-rate column defaulted to 0.0 would have made every historical flight read as a frozen
+    /// clock. Left null until
     /// VirtualFlightResolverService's first pass explicitly bootstraps it to "now" - the same
     /// never-back-charge principle EconomyClockService already uses when this whole row is first
     /// created.
@@ -31,8 +32,10 @@ public class EconomyState
     public int WorldSeed { get; set; }
 
     /// <summary>
-    /// Cursor for the "while you were away" catch-up summary (docs/PLAN.md "'While you were away' -
-    /// the app must explain catch-up") - independent of <see cref="LastProcessedUtc"/> and
+    /// Cursor for the "while you were away" catch-up summary. A returning player can otherwise open
+    /// the app to a materially different balance with no idea why: months of lease payments,
+    /// salaries and insurance arriving at once looks exactly like a bug unless it is explained.
+    /// Independent of <see cref="LastProcessedUtc"/> and
     /// <see cref="LastScheduleResolvedUtc"/>, which are billing/scheduling watermarks the resolver
     /// services own and advance continuously. This one instead marks "the player has been shown
     /// everything up to here" and only ever moves when the summary is explicitly acknowledged (see

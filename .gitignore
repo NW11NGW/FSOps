@@ -1,5 +1,4 @@
 # --- Local-only working files (never commit) ---
-docs/PLAN.md
 *.local.md
 settings.local.json
 

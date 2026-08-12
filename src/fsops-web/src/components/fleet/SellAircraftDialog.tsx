@@ -28,8 +28,8 @@ interface SellAircraftDialogProps {
 }
 
 /**
- * Selling an owned aircraft moves real money and can't be undone - docs/PLAN.md "Show the actual
- * figure ... before confirming, and post it as an itemised ledger line afterwards" plus the FSOps
+ * Selling an owned aircraft moves real money and can't be undone, so the actual figure is shown
+ * before confirming and posted as an itemised ledger line afterwards - plus the FSOps
  * project instruction that a disposal action needs an explicit confirmation naming the aircraft by
  * registration, never a bare "are you sure". GET /fleet/{id}/sale-quote is read-only and
  * side-effect-free so it's safe to poll on open; POST /fleet/{id}/sell re-validates everything the

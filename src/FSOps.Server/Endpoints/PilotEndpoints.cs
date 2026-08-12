@@ -11,8 +11,9 @@ using Route = FSOps.Core.Entities.Route;
 namespace FSOps.Server.Endpoints;
 
 /// <summary>
-/// Hiring virtual pilots and building their standing weekly schedule - see docs/PLAN.md "Virtual
-/// pilot scheduling - standing assignments and the schedule builder". The actual wall-clock
+/// Hiring virtual pilots and building their standing weekly schedule. Assignment is something you
+/// set once and leave - a repeating week, not one flight at a time, because the point of virtual
+/// pilots is that the airline keeps running while you are not flying. The actual wall-clock
 /// resolution of what a saved schedule produces happens in
 /// <see cref="FSOps.Server.Services.VirtualFlightResolverService"/>, not here - these endpoints
 /// only ever read/write the schedule template and validate it with
@@ -20,7 +21,7 @@ namespace FSOps.Server.Endpoints;
 /// pilot's rest both have to account for every OTHER pilot touching the same aircraft, not just
 /// the one being edited).
 /// <para>
-/// <b>Aircraft-per-duty-day (docs/PLAN.md "2a"/"2c").</b> The wire shape is deliberately
+/// <b>Aircraft-per-duty-day.</b> The wire shape is deliberately
 /// duty-day-first, not leg-first: <see cref="DutyDayRequest"/> carries ONE
 /// <see cref="DutyDayRequest.FleetAircraftId"/> for every leg inside it. This is what makes
 /// "continuity holds by construction" actually true at the API boundary, not just in the
@@ -74,8 +75,9 @@ public static class PilotEndpoints
             // time (see its own doc), so this always shows the true-right-now number rather than
             // whatever the last resolver tick happened to write. EarnedSkillRating is the same
             // pilot's hours-only figure with no idle decay applied, so the UI can show "earned X,
-            // currently Y" rather than a smaller number with no explanation - docs/PLAN.md
-            // "Idle decay must be visible and understandable before it bites".
+            // currently Y" rather than a smaller number with no explanation. Decay has to be
+            // visible and understandable before it bites, or it just reads as the app taking
+            // something away.
             var liveSkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, pilot.LastFlewUtc, now, economyConfig.PilotSkill);
             var earnedSkillRating = PilotSkillCalculator.ComputeEarnedSkill(pilot.HoursFlown, economyConfig.PilotSkill);
 
@@ -117,8 +119,10 @@ public static class PilotEndpoints
     }
 
     /// <summary>
-    /// Hires a virtual pilot at the playstyle's standard salary - see docs/PLAN.md "Virtual pilots
-    /// must be affordable early enough to matter": no upfront cost or cash-balance gate, only the
+    /// Hires a virtual pilot at the playstyle's standard salary. Hiring has to be affordable early
+    /// enough to matter - if the first pilot is out of reach, a casual player is stranded with
+    /// costs designed for utilisation they cannot reach alone. So there is no upfront cost and no
+    /// cash-balance gate, only the
     /// recurring monthly salary EconomyClockService already posts for every pilot on record, same
     /// as the founding pilot AirlineEndpoints.CreateAsync hires.
     /// </summary>
@@ -230,8 +234,8 @@ public static class PilotEndpoints
     }
 
     /// <summary>
-    /// Replaces this pilot's ENTIRE week in one call - see docs/PLAN.md "set once and leave", the
-    /// whole reason the builder is a week grid rather than one-flight-at-a-time administration.
+    /// Replaces this pilot's ENTIRE week in one call - the schedule is set once and left, which is
+    /// the whole reason the builder is a week grid rather than one-flight-at-a-time administration.
     /// Validated airline-wide: merges every OTHER pilot's existing entries with this pilot's
     /// proposed replacement set before calling <see cref="PilotScheduleValidator"/>, since an
     /// aircraft's chain and double-booking rules span every pilot that touches it, not just this one.
@@ -266,13 +270,14 @@ public static class PilotEndpoints
         var otherEntries = await LoadOtherPilotsEntriesAsync(db, airline.Id, excludingPilotId: pilot.Id, ct);
         var unionEntries = otherEntries.Concat(proposed).ToList();
 
-        var (routesById, fleetById, blockMinutesByLeg, existingRoutePairs) = await BuildValidationDataAsync(db, airline, economyConfig, unionEntries, ct);
+        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs) = await BuildValidationDataAsync(db, airline, economyConfig, unionEntries, ct);
 
-        // requireWeekClosure: true - a SAVED week must genuinely repeat (docs/PLAN.md "the week
-        // repeats indefinitely"), unlike the leg-options endpoint below, which is deliberately
+        // requireWeekClosure: true - a SAVED week must genuinely repeat indefinitely, so Saturday's
+        // last leg on an aircraft has to connect back to Sunday's first. Unlike the leg-options
+        // endpoint below, which is deliberately
         // asking a narrower, per-leg question about a week still under construction. Never weaken
         // this.
-        var result = PilotScheduleValidator.Validate(unionEntries, routesById, fleetById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
+        var result = PilotScheduleValidator.Validate(unionEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
         if (!result.IsValid)
         {
             return Results.BadRequest(new { error = "This schedule has conflicts.", conflicts = result.Conflicts });
@@ -291,8 +296,9 @@ public static class PilotEndpoints
             db.PilotScheduleEntries.RemoveRange(existingEntries);
         }
 
-        // Defaults true when omitted (docs/PLAN.md "suspend during maintenance and resume
-        // automatically" is the safe default) - an older client that has never heard of this field
+        // Defaults true when omitted: suspending during maintenance and resuming automatically is
+        // the safe default, since a cancellation fee is meant to punish a schedule the player built
+        // badly, never maintenance the simulation imposed. An older client that has never heard of this field
         // must never silently clear it to false, see SaveScheduleRequest's own remarks.
         schedule.AutoSuspendOnMaintenance = request.AutoSuspendOnMaintenance ?? true;
         schedule.UpdatedUtc = now;
@@ -319,10 +325,12 @@ public static class PilotEndpoints
     }
 
     /// <summary>
-    /// Step one of the redesigned two-step picker (docs/PLAN.md "2a"/"2b"): "pick the aircraft
-    /// first". Lists every fleet aircraft with a single eligibility verdict - reserved-for-player
-    /// aircraft are never assignable (docs/PLAN.md "3a" - shown once, quietly, never repeated per
-    /// route) and a currently-grounded aircraft is flagged with why and until when. This is
+    /// Step one of the redesigned two-step picker: pick the aircraft FIRST, then the leg. The
+    /// original builder listed every route x aircraft combination, which produced six near-
+    /// identical paragraphs for one slot and could not be scanned. Lists every fleet aircraft with
+    /// a single eligibility verdict - reserved-for-player aircraft are never assignable (said once,
+    /// quietly, never repeated against every route) and a currently-grounded aircraft is flagged
+    /// with why and until when. This is
     /// deliberately NOT a full validator run: with no legs chosen yet there is nothing to check
     /// continuity or turnaround against, so this step only ever screens on the aircraft's own
     /// state. Real conflicts (overlap, continuity, rest) surface once the player asks
@@ -373,8 +381,9 @@ public static class PilotEndpoints
             // Same priority rule as the Fly screen's OptionsAsync: a hard physical blocker (in
             // maintenance right now) is reported before reservation, because releasing a grounded
             // aircraft would not actually make it schedulable either - telling the player "release
-            // it" when that alone will not fix anything is the wrong reason to lead with (docs/PLAN.md
-            // "2b"). Only say "reserved for the player" when releasing genuinely is sufficient.
+            // it" when that alone will not fix anything is the wrong reason to lead with: every
+            // reason shown should end in an action that actually works. Only say "reserved for the
+            // player" when releasing genuinely is sufficient.
             string? reason = null;
             if (aircraft.Status == FleetAircraftStatus.InMaintenance)
             {
@@ -407,13 +416,14 @@ public static class PilotEndpoints
 
     /// <summary>
     /// Step two of the redesigned picker: with the aircraft already fixed, which routes can it fly
-    /// at this day/time - see docs/PLAN.md "2a"/"2b"/"2c". Answers "does this leg fit with what
+    /// at this day/time. Answers "does this leg fit with what
     /// you've built so far", not "is the whole week valid" - see the class-level remarks on
     /// aircraft-per-duty-day for why <c>requireWeekClosure: false</c> is correct here and must never
     /// be changed to true (a week under construction is legitimately open).
     /// <para>
-    /// A reserved aircraft can never reach this validator at all (docs/PLAN.md "3a" - "not offered
-    /// to the scheduler") - every route comes back illegal with the SAME single reason rather than
+    /// A reserved aircraft can never reach this validator at all - it is not offered to the
+    /// scheduler in the first place, so the conflict cannot be created. Every route comes back
+    /// illegal with the SAME single reason rather than
     /// running the full validator, which both matches "say it once, quietly" and avoids reporting a
     /// wall of near-identical per-route reasons for a setting the player already chose.
     /// </para>
@@ -495,10 +505,10 @@ public static class PilotEndpoints
 
         var candidates = routes.Select(route => new PilotScheduleEntryInput(pilot.Id, dayOfWeek, departureTime, route.Id, fleetAircraftId)).ToList();
         var allEntriesForValidation = baseline.Concat(candidates).ToList();
-        var (routesById, fleetById, blockMinutesByLeg, existingRoutePairs) = await BuildValidationDataAsync(db, airline, economyConfig, allEntriesForValidation, ct);
+        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs) = await BuildValidationDataAsync(db, airline, economyConfig, allEntriesForValidation, ct);
 
         var baselineConflicts = PilotScheduleValidator
-            .Validate(baseline, routesById, fleetById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
+            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
             .Conflicts.ToHashSet();
 
         var legal = new List<object>();
@@ -510,7 +520,7 @@ public static class PilotEndpoints
 
             var withCandidate = baseline.Append(candidate).ToList();
             var candidateResult = PilotScheduleValidator.Validate(
-                withCandidate, routesById, fleetById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+                withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
             var newConflicts = candidateResult.Conflicts.Where(c => !baselineConflicts.Contains(c)).ToList();
 
             if (newConflicts.Count == 0)
@@ -527,8 +537,10 @@ public static class PilotEndpoints
     }
 
     /// <summary>
-    /// Read-only, airline-wide - see docs/PLAN.md "2a": "every aircraft as a row, its legs across
-    /// the week, colour-coded by pilot" plus toggleable by-pilot/by-aircraft views of the same week.
+    /// Read-only, airline-wide: every aircraft as a row, its legs across the week, colour-coded by
+    /// pilot, plus toggleable by-pilot/by-aircraft views of the same week. This is what surfaces
+    /// idle aircraft, gaps and over-committed airframes at a glance - "is my fleet actually being
+    /// used" has no answer in the per-pilot views alone.
     /// Both shapes are returned together from one call since they are the same underlying data
     /// (every persisted <see cref="PilotScheduleEntry"/> for the airline), just grouped two ways -
     /// there is nothing to edit here, only to look at, so a single read covers both toggle states
@@ -704,10 +716,13 @@ public static class PilotEndpoints
     /// Also returns every active route the AIRLINE has, as departure/arrival ICAO pairs - deliberately
     /// NOT limited to routesById (which only covers routes these entries reference), because the
     /// validator needs to know whether a connecting route exists even when nothing is scheduled on
-    /// it yet (docs/PLAN.md "2b").</summary>
+    /// it yet. That distinction is what lets the builder say "you'd need to CREATE an EGPH -> EGLL
+    /// route" versus "the route exists - schedule an EGPH -> EGLL leg to reposition first",
+    /// instead of sending the player to the wrong screen to solve a problem they do not have.</summary>
     private static async Task<(
         Dictionary<Guid, Route> RoutesById,
         Dictionary<Guid, FleetAircraft> FleetById,
+        Dictionary<Guid, AircraftType> AircraftTypesById,
         Dictionary<(Guid RouteId, Guid FleetAircraftId), int> BlockMinutesByLeg,
         HashSet<(string DepartureIcao, string ArrivalIcao)> ExistingRoutePairs)> BuildValidationDataAsync(
         FsOpsDbContext db, Airline airline, EconomyConfig economyConfig, IReadOnlyList<PilotScheduleEntryInput> entries, CancellationToken ct)
@@ -750,7 +765,7 @@ public static class PilotEndpoints
             .Select(r => (r.DepartureIcao.ToUpperInvariant(), r.ArrivalIcao.ToUpperInvariant()))
             .ToHashSet();
 
-        return (routesById, fleetById, blockMinutesByLeg, existingRoutePairSet);
+        return (routesById, fleetById, typesById, blockMinutesByLeg, existingRoutePairSet);
     }
 
     /// <summary>Groups a flat list of persisted entries into the duty-day-shaped response DTO - the

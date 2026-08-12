@@ -5,8 +5,8 @@ public enum GroundFuelChangeKind
     /// <summary>No meaningful change - within <see cref="FuelUpliftDetector.NoiseFloorKg"/> of the previous reading.</summary>
     None,
 
-    /// <summary>A rise in total fuel while on the ground - a refuelling event. See docs/PLAN.md
-    /// "Persistent fuel state and tankering" - charged at the airport it happened at.</summary>
+    /// <summary>A rise in total fuel while on the ground - a refuelling event, charged at the
+    /// price of the airport it happened at, since that is where the fuel was actually bought.</summary>
     Uplift,
 
     /// <summary>

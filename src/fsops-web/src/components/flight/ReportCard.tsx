@@ -83,8 +83,8 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
 
   const netTotal = ledgerTransactions.reduce((sum, line) => sum + line.amount, 0)
 
-  // Fuel is charged on uplift, never on burn (see docs/PLAN.md "Persistent fuel state and
-  // tankering"), so this can legitimately be zero - a return leg flown on fuel already in the
+  // Fuel is charged on uplift, never on burn, so this can legitimately be zero - a return leg
+  // flown on fuel already in the
   // tank posts no Fuel ledger line at all, which is the headline property of that model made
   // visible right here.
   const fuelCostThisFlight = ledgerTransactions

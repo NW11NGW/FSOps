@@ -16,6 +16,7 @@ import { useRoutePreview } from '@/hooks/useRoutePreview'
 import { useRoutes } from '@/hooks/useRoutes'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError, del, get, post } from '@/lib/api'
+import { formatCallsign } from '@/lib/callsign'
 import { sampleGreatCirclePath } from '@/lib/geo'
 import type { AirportDetail, AirportSummary } from '@/types/airport'
 import type { LiveContext } from '@/types/live-context'
@@ -208,7 +209,15 @@ export function RoutesPage() {
         arrivalIcao: arrival.icao,
         ...(baseFare !== undefined ? { baseFare } : {}),
       })
-      const flightNumbers = [outbound.flightNumber, inbound.flightNumber].filter(Boolean).join(' / ')
+      // Flight numbers are stored bare and always shown prefixed with the airline's ICAO code -
+      // a lone "703" could belong to any carrier. Composed through the same helper every other
+      // surface uses so this toast can never drift from the routes table beside it.
+      const flightNumbers = [
+        formatCallsign(airlineIcaoCode, outbound.flightNumber),
+        formatCallsign(airlineIcaoCode, inbound.flightNumber),
+      ]
+        .filter(Boolean)
+        .join(' / ')
       toast.success(
         `Route created both ways: ${outbound.departureIcao} → ${outbound.arrivalIcao} and back` +
           (flightNumbers ? ` (${flightNumbers}).` : '.'),
@@ -225,22 +234,26 @@ export function RoutesPage() {
   }
 
   const sameAirport = Boolean(preview.data?.validation.sameAirport)
-  const outOfRange = Boolean(preview.data && !preview.data.validation.withinRange)
+  // Only "nothing in the fleet can fly this far" is a genuine block. "Nothing you have RESERVED can
+  // fly it, but G-XXXX can" is guidance and falls through to the advisory list below, where it reads
+  // as the next step it is rather than as a refusal - see RouteRangeAssessor.
+  const rangeAdvice = preview.data?.validation.range ?? null
+  const blockedByRange = Boolean(rangeAdvice?.blocking)
 
   const dangerMessage = sameAirport
     ? 'Departure and arrival are the same airport — pick two different airports to build a route.'
-    : outOfRange
-      ? (preview.data?.validation.warnings.find((warning) => /range/i.test(warning)) ??
-        "This route is beyond the aircraft's practical operating range.")
+    : blockedByRange
+      ? (rangeAdvice?.message ?? 'This route is beyond the range of every aircraft in your fleet.')
       : null
 
   const advisoryWarnings = (preview.data?.validation.warnings ?? []).filter((warning) => {
     if (sameAirport && /same airport/i.test(warning)) return false
-    if (outOfRange && /range/i.test(warning)) return false
+    // Never show the same sentence twice - the blocking range message is already the danger banner.
+    if (warning === dangerMessage) return false
     return true
   })
 
-  const canCreate = Boolean(departure && arrival && preview.data && !sameAirport && !outOfRange && !creating)
+  const canCreate = Boolean(departure && arrival && preview.data && !sameAirport && !blockedByRange && !creating)
   const routePath = preview.data?.greatCirclePath ?? []
 
   if (airlineSummary.status === 'loading') {

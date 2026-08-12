@@ -5,7 +5,7 @@ namespace FSOps.Core.Scheduling;
 /// <summary>
 /// Derives a pilot's current <see cref="Entities.Pilot.SkillRating"/> from career hours flown
 /// (diminishing-returns growth, capped below perfect) and idle time since they last flew (decay) -
-/// see docs/PLAN.md "Progression - reputation and pilot skill", point 3. Pure and fully RECOMPUTED
+/// so that keeping a pilot becomes an investment and hiring cheap juniors a real strategy. Pure and fully RECOMPUTED
 /// every call, never incremented: the same <c>(hoursFlown, lastFlewUtc, now)</c> always produces
 /// the same SkillRating, so calling this any number of times for the same inputs can never move a
 /// pilot's skill twice - the idempotency the wall-clock catch-up model needs, without relying on a
@@ -15,7 +15,7 @@ namespace FSOps.Core.Scheduling;
 /// i.e. "just landed") is what every completion path uses to update a pilot the moment they fly -
 /// see <see cref="Server.Services.MaintenancePoster"/>. Applies to every pilot, player included:
 /// growing this number is purely informational for a player pilot (their real flights are always
-/// judged by real telemetry, never by SkillRating - see docs/PLAN.md), so there is nothing to
+/// judged by real telemetry, never by SkillRating), so there is nothing to
 /// protect by excluding them, and it lets "hours flown" and "skill" grow together on the player's
 /// own record too.
 /// </para>
@@ -24,8 +24,9 @@ namespace FSOps.Core.Scheduling;
 /// <paramref name="lastFlewUtc"/> and <paramref name="now"/> - see
 /// <see cref="Server.Services.VirtualFlightResolverService"/>'s periodic pass, which is the ONLY
 /// caller that ever passes a nonzero idle gap, and which deliberately skips
-/// <see cref="Entities.Pilot.IsPlayer"/> pilots entirely - docs/PLAN.md's explicit "the player's
-/// own pilot record never decays" requirement. Decay is therefore driven purely by
+/// <see cref="Entities.Pilot.IsPlayer"/> pilots entirely: the player's own record never decays,
+/// because decaying it would punish them while changing nothing - their real flying is measured by
+/// real telemetry. Decay is therefore driven purely by
 /// <paramref name="lastFlewUtc"/>, which only ever advances when THAT pilot flies (player or
 /// virtual, via the growth path above) - never by how long the app itself has been open. A pilot
 /// on a standing schedule keeps flying on the wall clock while the app is closed, so their
@@ -79,8 +80,8 @@ public static class PilotSkillCalculator
     /// Public entry point onto <see cref="GrowthOnly"/> - what a pilot's hours alone have earned,
     /// with no idle decay applied. Exists so a UI can show "earned 68 from experience, currently 61"
     /// when a decayed pilot's <see cref="Compute"/> result sits below what their hours alone would
-    /// give them - decay must be visible and explained, not just a smaller number (docs/PLAN.md
-    /// "Progression - reputation and pilot skill", point 3).
+    /// give them. Decay has to be visible and explained rather than just a smaller number, or it
+    /// reads as the app quietly taking something away.
     /// </summary>
     public static double ComputeEarnedSkill(double hoursFlown, PilotSkillConfig config) => GrowthOnly(hoursFlown, config);
 }

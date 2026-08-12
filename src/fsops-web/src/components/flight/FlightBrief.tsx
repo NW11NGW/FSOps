@@ -20,7 +20,7 @@ import type { RoutePreviewResponse } from '@/types/route'
 
 interface FlightBriefProps {
   row: RouteRow
-  /** Every aircraft physically at the departure airport - flyable or not (docs/PLAN.md "2b": the
+  /** Every aircraft physically at the departure airport - flyable or not. (The
    *  2026-08-09 defect this fixes was a route offering only one of four aircraft actually parked
    *  there, and separately, hiding unflyable ones instead of showing why). */
   aircraftOptions: AircraftOptionRow[]
@@ -86,8 +86,9 @@ export function FlightBrief({
     selectedAircraft ? `Aircraft: ${selectedAircraft.registration} (${selectedAircraft.icaoType})` : null,
   ].filter((line): line is string => Boolean(line))
 
-  // Destination fuel is materially pricier than here - worth flagging before departure, per
-  // docs/PLAN.md "Persistent fuel state and tankering". Computed once rather than inline in JSX
+  // Destination fuel is materially pricier than here - worth flagging before departure, since
+  // tankering is only a real decision if the price gap is visible in advance.
+  // Computed once rather than inline in JSX
   // so the null-narrowing stays simple and correct.
   const departureFuelPrice = preview?.fuelPricePerKg ?? null
   const destinationFuelPrice = preview?.destinationFuelPricePerKg ?? null

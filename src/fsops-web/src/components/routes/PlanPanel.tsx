@@ -197,8 +197,8 @@ export function PlanPanel({
               </div>
 
               {/* Live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
-               *  sector" readout - no fare validation beyond ">0" (see docs/PLAN.md "Fare setting
-               *  and demand response"): the simulation is the guardrail, this is the honest
+               *  sector" readout - no fare validation beyond ">0" on purpose:
+               *  the simulation is the guardrail, this is the honest
                *  warning. Absent rather than zeroed when the engine can't price this pick yet
                *  (no airline, or same-airport/no-distance). */}
               {preview.economics && (
@@ -210,7 +210,7 @@ export function PlanPanel({
               )}
 
               <p className="text-xs text-muted-foreground">
-                This creates both directions at once — {departure.icao} → {arrival.icao} and {arrival.icao} → {departure.icao}
+                This creates both directions at once — {departure.icao} → {arrival.icao} and {arrival.icao} → {departure.icao}{' '}
                 — so an aircraft never gets stranded at the outstation.
               </p>
               {createError && <p className="text-sm text-danger">{createError}</p>}

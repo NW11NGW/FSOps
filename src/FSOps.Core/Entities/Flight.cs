@@ -106,7 +106,8 @@ public class Flight
     /// reconnect, or crash rehydration that calls completion again for the same flight is a no-op
     /// once this is true, so ledger lines are posted exactly once no matter how many times
     /// completion is invoked. Fuel is posted separately, at <see cref="FlightStatus.InProgress"/>
-    /// start (see the fuel-uplift rule in docs/PLAN.md), so it isn't gated by this flag.
+    /// start, because fuel is charged when it is bought rather than when it is burned, so it isn't
+    /// gated by this flag.
     /// </summary>
     public bool RevenuePosted { get; set; }
 
@@ -114,7 +115,8 @@ public class Flight
     /// Human-readable reason this virtual-pilot occurrence could not fly - e.g. "G-OLAF is still at
     /// EGPF from Tuesday" - set for <see cref="FlightStatus.Skipped"/>, <see cref="FlightStatus.Cancelled"/>
     /// and <see cref="FlightStatus.Suspended"/> flights. Null for every other status, including a
-    /// normal Completed flight. See docs/PLAN.md "Conflicts must be explained in words".
+    /// normal Completed flight. Conflicts are always explained in words: a sector that silently
+    /// did not happen is the worst possible outcome for the player.
     /// </summary>
     public string? UnflyableReason { get; set; }
 

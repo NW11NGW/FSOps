@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 
 import { AppShell } from '@/components/layout/AppShell'
-import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { PageSkeleton } from '@/components/shared/PageSkeleton'
 import { useAirlineGate } from '@/hooks/useAirlineGate'
@@ -21,9 +20,17 @@ const Finances = lazy(() => import('@/pages/Finances').then((m) => ({ default: m
 const Stats = lazy(() => import('@/pages/Stats').then((m) => ({ default: m.Stats })))
 const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
 // Outside AppShell (below) - the in-game toolbar panel gets none of the sidebar/topbar chrome,
-// just its own compact content. See docs/PLAN.md's in-game panel section: same origin, same
+// just its own compact content: same origin, same
 // SignalR live-flight data, but its own route so it never has to download the rest of the app.
 const Panel = lazy(() => import('@/pages/Panel').then((m) => ({ default: m.Panel })))
+// Lazy for the same reason: the wizard drags in the whole onboarding tree, and /panel must never
+// download it. It is the one thing on the "no airline" path that the toolbar panel cannot use.
+const OnboardingWizard = lazy(() =>
+  import('@/components/onboarding/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })),
+)
+const PanelNoAirline = lazy(() =>
+  import('@/components/panel/PanelNoAirline').then((m) => ({ default: m.PanelNoAirline })),
+)
 
 function FullScreenSplash() {
   return (
@@ -48,14 +55,30 @@ function App() {
     return <FullScreenSplash />
   }
 
+  // No airline yet. Everything except the toolbar panel gets the full-screen wizard; /panel gets its
+  // own one-line state instead, because a nine-step founding form is unusable in an MSFS toolbar
+  // iframe and a player in the cockpit cannot complete it there anyway. Routing (rather than an
+  // early return) is what keeps the wizard's chunk from being fetched on the panel path at all.
   if (status === 'wizard') {
     return (
-      <OnboardingWizard
-        onCreated={(created) => {
-          markCreated(created)
-          navigate('/', { replace: true })
-        }}
-      />
+      <ErrorBoundary>
+        <Suspense fallback={<FullScreenSplash />}>
+          <Routes>
+            <Route path="panel" element={<PanelNoAirline />} />
+            <Route
+              path="*"
+              element={
+                <OnboardingWizard
+                  onCreated={(created) => {
+                    markCreated(created)
+                    navigate('/', { replace: true })
+                  }}
+                />
+              }
+            />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
     )
   }
 

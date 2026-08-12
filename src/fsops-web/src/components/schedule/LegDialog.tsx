@@ -47,7 +47,7 @@ interface LegDialogProps {
 
 /**
  * The keyboard- and mouse-accessible way to build a duty day: pick the aircraft first, then the
- * legs that aircraft can actually fly at a chosen time (docs/PLAN.md "2a"/"2b") - the old
+ * legs that aircraft can actually fly at a chosen time - the old
  * route x aircraft cross-product picker is gone; there is no field anywhere on the wire that could
  * even represent it any more.
  */

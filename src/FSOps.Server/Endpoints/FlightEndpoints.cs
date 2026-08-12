@@ -62,7 +62,7 @@ public static class FlightEndpoints
     /// timeout, a city-pair mismatch, ...) forward onto the plan that's actually used -
     /// BuiltInFlightPlanProvider itself never sets a message (it always succeeds outright), so
     /// without this the player would see a plan with no explanation of why it isn't from SimBrief.
-    /// "Say so plainly" means WHY, not just THAT (docs/PLAN.md "Flight plan import"). A pure,
+    /// Saying so plainly means WHY, not just THAT. A pure,
     /// I/O-free function so this fallback contract is unit-testable without a network call.
     /// </summary>
     internal static FlightPlanOutcome MergeFallback(FlightPlanOutcome primaryOutcome, FlightPlanOutcome fallbackOutcome) =>
@@ -101,13 +101,13 @@ public static class FlightEndpoints
             return Results.NotFound(new { error = "Route not found." });
         }
 
-        // Reservation is the sole gate on both sides (docs/PLAN.md "3a", decided 2026-08-09): the
+        // Reservation is the sole gate on both sides (decided 2026-08-09): the
         // player may ONLY fly an aircraft reserved to them. This is enforced here as well as by
         // OptionsAsync only ever OFFERING reserved airframes - never trust the client to have
         // respected what it was shown, the same way every other write endpoint in this app
         // re-validates server-side rather than assuming the UI enforced it. Position is checked here
         // too (it never was before this pass) - "you can only start a flight from where the aircraft
-        // actually is" (docs/PLAN.md "Aircraft positioning") applies exactly as much to a
+        // actually is" applies exactly as much to a
         // hand-crafted request as to one built by clicking through the Fly screen.
         FleetAircraft? fleetAircraft;
         if (request.FleetAircraftId is Guid fleetAircraftId)
@@ -135,7 +135,28 @@ public static class FlightEndpoints
                 .Where(f => f.AirlineId == airline.Id && f.Status == FleetAircraftStatus.Active &&
                             f.ReservedForPlayer && f.LocationIcao == route.DepartureIcao)
                 .ToListAsync(ct);
-            fleetAircraft = candidates.OrderBy(f => f.CreatedUtc).FirstOrDefault();
+
+            // Only ever auto-pick an aircraft that can actually reach the destination - otherwise
+            // "start a flight on this route" would pick the oldest airframe and then refuse it on
+            // range grounds below while a perfectly capable one sat on the same apron.
+            var candidateTypeIds = candidates.Select(f => f.AircraftTypeId).Distinct().ToList();
+            var candidateTypesById = await db.AircraftTypes.Where(t => candidateTypeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, ct);
+
+            fleetAircraft = candidates
+                .Where(f => !candidateTypesById.TryGetValue(f.AircraftTypeId, out var t) || RouteRangeAssessor.CanReach(t.RangeNm, route.DistanceNm))
+                .OrderBy(f => f.CreatedUtc)
+                .FirstOrDefault();
+
+            // "Nothing is available here" would be actively misleading when aircraft ARE parked here
+            // and reserved to you - they just can't make the distance. Say which problem it is.
+            if (fleetAircraft is null && candidates.Count > 0)
+            {
+                return Results.BadRequest(new
+                {
+                    error = $"Nothing reserved to you at {route.DepartureIcao} can reach {route.ArrivalIcao} - " +
+                            $"{route.DistanceNm:F0} nm is beyond the range of every aircraft you have there.",
+                });
+            }
         }
 
         if (fleetAircraft is null)
@@ -147,6 +168,20 @@ public static class FlightEndpoints
         if (aircraftType is null)
         {
             return Results.Problem("The selected aircraft's type could not be found.", statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // Enforced here as well as by OptionsAsync marking an out-of-range airframe unflyable, for
+        // exactly the reason reservation and position are: filtering a list is presentation, and a
+        // stale client or a hand-made request must not be able to launch a sector the aircraft
+        // physically cannot complete.
+        if (!RouteRangeAssessor.CanReach(aircraftType.RangeNm, route.DistanceNm))
+        {
+            return Results.BadRequest(new
+            {
+                error = $"{fleetAircraft.Registration} ({aircraftType.Name}) can't reach {route.ArrivalIcao} - " +
+                        $"{route.DistanceNm:F0} nm is beyond its practical range of about " +
+                        $"{RouteRangeAssessor.OperationalRangeNm(aircraftType.RangeNm):F0} nm.",
+            });
         }
 
         var departure = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
@@ -170,7 +205,8 @@ public static class FlightEndpoints
         // deterministic estimate, exactly as before). This purely decides what PlannedBlockMinutes
         // and FuelPlannedKg record as "the plan" for this sector: a real SimBrief OFP when the
         // player has a Pilot ID set and its latest plan matches this route, the same built-in
-        // estimate as before otherwise. See docs/PLAN.md "Flight plan import".
+        // estimate as before otherwise. Which plan was used never affects payment: FSOps bills
+        // from what the sim actually reported, so planning elsewhere costs and earns the same.
         var userSettings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == currentUser.UserId, ct);
         var flightPlanRequest = new FlightPlanRequest(departure, arrival, aircraftType, economyConfig, airline.StrategyProfile, userSettings?.SimBriefPilotId);
         var flightPlanOutcome = await ResolveFlightPlanAsync(flightPlanRequest, ct);
@@ -211,7 +247,7 @@ public static class FlightEndpoints
         fleetAircraft.Status = FleetAircraftStatus.InFlight;
 
         // Fuel is a persisted asset on FleetAircraft.FuelOnBoardKg, charged when it's bought
-        // (uplifted), never on burn - see docs/PLAN.md "Persistent fuel state and tankering".
+        // (uplifted), never on burn. Fuel already in the tanks has been paid for.
         // Whatever's left in the tank from the last flight carries forward, so a return leg (or
         // any sector) flown on fuel already on board posts no fuel charge at all here.
         //
@@ -282,8 +318,8 @@ public static class FlightEndpoints
         lifecycle.BeginTracking(flight.Id, airline.Id, fleetAircraft.Id, arrival.Icao, flight.PlannedBlockMinutes, fleetAircraft.FuelOnBoardKg);
 
         // planSource/planMessage are informational only, alongside the flight's own fields - never
-        // persisted (no schema change needed), just what "say so plainly" (docs/PLAN.md "Flight
-        // plan import") requires the player be told about where this sector's plan came from.
+        // persisted (no schema change needed), just what the player has to be told plainly about
+        // where this sector's plan came from, and why, when it isn't the one they expected.
         return Results.Created($"/api/v1/flights/{flight.Id}", ToFlightStartDto(flight, flightPlanOutcome));
     }
 
@@ -310,7 +346,7 @@ public static class FlightEndpoints
         flight.Status = FlightStatus.Abandoned;
         await RevertFleetAircraftAsync(db, flight, lastSnapshot, ct);
 
-        // Reputation - docs/PLAN.md "Progression - reputation and pilot skill". From a passenger's
+        // Reputation. From a passenger's
         // point of view an abandoned sector never happened, exactly like a virtual pilot's
         // occurrence that could never fly, so this reuses ReputationPoster.PostCancelledOrSkipped
         // unchanged rather than inventing a fourth shape. The revenue/fuel loss already inherent to
@@ -509,8 +545,7 @@ public static class FlightEndpoints
         // The persisted asset's CURRENT value - accurate as "fuel remaining after this flight"
         // when it's the aircraft's most recent one (the common case: viewing the report card right
         // after landing), but drifts once a later flight has flown. Null if the aircraft record is
-        // gone (sold/removed) rather than guessing - see docs/PLAN.md "Persistent fuel state and
-        // tankering".
+        // gone (sold/removed) rather than guessing at a figure the app can no longer verify.
         var aircraftFuelOnBoardKg = await db.FleetAircraft
             .Where(f => f.Id == flight.FleetAircraftId)
             .Select(f => (double?)f.FuelOnBoardKg)
@@ -611,23 +646,39 @@ public static class FlightEndpoints
 
             var aircraftOptions = atDeparture.Select(aircraft =>
             {
+                var aircraftType = aircraftTypesById.TryGetValue(aircraft.AircraftTypeId, out var matchedType) ? matchedType : null;
+
                 // Priority matters here (2b: "one short reason ... ending in an action that fixes
                 // it"): a hard physical blocker must be reported BEFORE reservation, because
                 // reservation is a one-click fix and the others are not. Leading with "not reserved
                 // to you" on an aircraft that is ALSO in maintenance sends the player to reserve it,
                 // then back here to find it still can't fly - telling them to do something that
                 // will not actually work is the same class of bug as the old "you'd need a route"
-                // wording (docs/PLAN.md "2b"). Only say "not reserved" when reserving genuinely is
+                // wording: every reason shown must end in an action that actually works.
+                // Only say "not reserved" when reserving genuinely is
                 // sufficient to let them fly.
                 string? reason = null;
                 if (aircraft.Status == FleetAircraftStatus.InFlight)
                 {
                     reason = $"{aircraft.Registration} is currently in flight.";
                 }
+                else if (aircraftType is not null && !RouteRangeAssessor.CanReach(aircraftType.RangeNm, route.DistanceNm))
+                {
+                    // The most permanent blocker of the lot, so it comes before the transient ones:
+                    // nothing the player does to this airframe - reserving it, waiting out a
+                    // grounding, finishing the flight in progress - will ever let it reach that
+                    // airport. Reported rather than the aircraft being silently dropped from the
+                    // list, per the same rule as every other unflyable reason here.
+                    reason =
+                        $"{aircraft.Registration} ({aircraftType.Name}) can't reach {route.ArrivalIcao} - " +
+                        $"{route.DistanceNm:F0} nm is beyond its practical range of about " +
+                        $"{RouteRangeAssessor.OperationalRangeNm(aircraftType.RangeNm):F0} nm.";
+                }
                 else if (aircraft.Status == FleetAircraftStatus.InMaintenance)
                 {
-                    // "Why and until when", not merely "in maintenance" - see docs/PLAN.md's E1
-                    // brief. GroundedUntilUtc should always be set whenever Status is InMaintenance
+                    // "Why and until when", not merely "in maintenance", which tells the player
+                    // nothing they can plan around.
+                    // GroundedUntilUtc should always be set whenever Status is InMaintenance
                     // (MaintenancePoster sets both together), but a plain fallback covers the
                     // theoretical gap rather than showing a broken/missing date to the player.
                     reason = aircraft.GroundedUntilUtc is { } until
@@ -645,7 +696,6 @@ public static class FlightEndpoints
                     reason = "Not reserved to you - reserve it from the Fleet page to fly it.";
                 }
 
-                var aircraftType = aircraftTypesById.TryGetValue(aircraft.AircraftTypeId, out var matchedType) ? matchedType : null;
                 int? aircraftBlockMinutes = null;
                 if (aircraftType is not null)
                 {

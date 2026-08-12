@@ -26,6 +26,7 @@ interface StatusOverrides {
   message?: string
   installedPort?: string | null
   expectedPort?: string | null
+  missingFiles?: string[]
 }
 
 function status(overrides: StatusOverrides = {}) {
@@ -42,8 +43,19 @@ function status(overrides: StatusOverrides = {}) {
     message: 'Installed and up to date.',
     installedPort: '5977',
     expectedPort: '5977',
+    missingFiles: [] as string[],
     ...overrides,
   }
+}
+
+/**
+ * A package that IS in the folder but has lost files - what the server reports after the player (or
+ * an add-on manager) deletes part of it. `installed` is false because it now means "complete", so
+ * every assertion about this state is really checking that the UI reads the pair of fields rather
+ * than the flag alone.
+ */
+function damaged(missingFiles: string[], overrides: StatusOverrides = {}) {
+  return status({ installed: false, missingFiles, ...overrides })
 }
 
 /**
@@ -369,6 +381,91 @@ describe('MsfsPanelSection - install, repair and remove', () => {
     await flush()
 
     expect(del).toHaveBeenCalledWith('/panel/uninstall', { path: SAVED })
+
+    mounted.unmount()
+  })
+})
+
+/**
+ * A package that is present but has lost files. This shipped reporting itself as perfectly healthy:
+ * "installed" was decided from manifest.json alone, so deleting the panel's own FSOpsPanel.js left a
+ * green "Installed - up to date" over a panel that renders nothing in the sim, with nothing anywhere
+ * suggesting the repair that would fix it.
+ */
+describe('MsfsPanelSection - a damaged install', () => {
+  const MISSING_JS = 'html_ui/InGamePanels/FSOpsPanel/FSOpsPanel.js'
+
+  it('calls it out instead of reporting a healthy install', async () => {
+    mockApi({ panelStatus: damaged([MISSING_JS]) })
+    const mounted = await render()
+    await flush()
+
+    const rendered = mounted.container.textContent ?? ''
+    expect(rendered).toContain('Needs repair')
+    expect(rendered).toContain('1 file is missing')
+    expect(rendered).toContain(MISSING_JS)
+    expect(rendered).not.toContain('Not installed in this folder')
+
+    mounted.unmount()
+  })
+
+  it('offers repair and removal, not a fresh install', async () => {
+    // Tying these to the healthy state would hide the fix behind the very damage it repairs.
+    mockApi({ panelStatus: damaged([MISSING_JS]) })
+    const mounted = await render()
+    await flush()
+
+    expect(findButton(mounted.container, 'Reinstall / repair')).toBeTruthy()
+    expect(findButton(mounted.container, 'Remove panel')).toBeTruthy()
+    expect(
+      Array.from(mounted.container.querySelectorAll('button')).some((b) => b.textContent === 'Install panel'),
+    ).toBe(false)
+
+    mounted.unmount()
+  })
+
+  it('still reports port drift, rather than letting one fault mask the other', async () => {
+    // Regression: once `installed` came to mean "complete", the drift check keyed off it and a
+    // damaged install confidently claimed its port "matches this copy of FSOps" - about the wrong
+    // port. A confident wrong answer is worse than silence.
+    mockApi({ panelStatus: damaged([MISSING_JS], { installedPort: '5977', expectedPort: '5978' }) })
+    const mounted = await render()
+    await flush()
+
+    const rendered = mounted.container.textContent ?? ''
+    expect(rendered).toContain('but FSOps is on 5978')
+    expect(rendered).not.toContain('matches this copy of FSOps')
+
+    mounted.unmount()
+  })
+
+  it('blames the copy, not the build, when the compiled component is the missing file', async () => {
+    // "A future update will finish it" sends the player away to wait for something that will never
+    // arrive. The template ships a .spb, so a missing one is theirs to repair right now.
+    mockApi({
+      panelStatus: damaged(['InGamePanels/FSOpsPanel.spb'], { spbPresent: false, toolbarWillAppearInSim: false }),
+    })
+    const mounted = await render()
+    await flush()
+
+    const rendered = mounted.container.textContent ?? ''
+    expect(rendered).toContain('missing from your copy')
+    expect(rendered).not.toContain('a future update will finish it')
+    // The honest-reporting property survives: a missing component still means no button.
+    expect(rendered).not.toContain('Appears in the MSFS toolbar')
+
+    mounted.unmount()
+  })
+
+  it('still blames the build when this build genuinely ships no compiled component', async () => {
+    // Nothing is missing relative to the template - the build simply has none to give.
+    mockApi({ panelStatus: status({ spbPresent: false, toolbarWillAppearInSim: false, missingFiles: [] }) })
+    const mounted = await render()
+    await flush()
+
+    const rendered = mounted.container.textContent ?? ''
+    expect(rendered).toContain('doesn’t include the compiled panel component')
+    expect(rendered).not.toContain('missing from your copy')
 
     mounted.unmount()
   })

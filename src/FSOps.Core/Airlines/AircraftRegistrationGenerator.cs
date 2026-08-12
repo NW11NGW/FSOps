@@ -3,8 +3,9 @@ namespace FSOps.Core.Airlines;
 /// <summary>
 /// Generates an individual, format-correct tail number for one fleet aircraft, based on the ISO
 /// country code of the airline's HOME AIRPORT at the moment of acquisition - never the aircraft's
-/// current location (see docs/PLAN.md "Registrations - real tail numbers, and let the player
-/// choose"). Each mapped country carries its own registration FORMAT, not just a prefix, because
+/// current location - an aircraft is registered in its operator's home country, not wherever it
+/// happens to be parked, so one night-stopping in Spain keeps its G- tail. Each mapped country
+/// carries its own registration FORMAT, not just a prefix, because
 /// real formats genuinely differ in shape: most of Europe is a fixed prefix plus a fixed number of
 /// letters, but the US "N-number" is a hyphen-less 1-5 character code that must start with a digit.
 /// A single "prefix + 4 letters" template (the old design) cannot express the US rule at all, which
@@ -35,7 +36,8 @@ public static class AircraftRegistrationGenerator
     /// </summary>
     private static readonly Dictionary<string, RegistrationFormat> FormatByCountry = new(StringComparer.OrdinalIgnoreCase)
     {
-        // The six formats docs/PLAN.md calls out explicitly.
+        // The six European formats spelled out explicitly; the US is handled separately below,
+        // since "N + digits and letters" cannot be expressed as prefix + fixed letter count.
         ["GB"] = new("G-", 4),
         ["DE"] = new("D-A", 3),
         ["FR"] = new("F-G", 3),
@@ -119,7 +121,7 @@ public static class AircraftRegistrationGenerator
 
     /// <summary>
     /// Light validation for a player-typed custom registration (buying, leasing, or renaming from
-    /// the Fleet page) - docs/PLAN.md "Let the player set a custom registration": uppercase,
+    /// the Fleet page), because people want their tail to match the livery they fly: uppercase,
     /// letters/digits/hyphen only, a sensible length. Deliberately does NOT enforce any country's
     /// registry format - a player matching a specific repaint's real-world tail knows what they
     /// want better than a validator does; this only rejects what would break the app. Expects the

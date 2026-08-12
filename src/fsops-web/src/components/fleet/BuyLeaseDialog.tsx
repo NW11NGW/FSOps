@@ -79,9 +79,9 @@ export function BuyLeaseDialog({ open, onOpenChange, onSuccess }: BuyLeaseDialog
     [types, filteredTypes, selectedId],
   )
 
-  // Fresh, format-correct suggestion each time the dialog opens - docs/PLAN.md "Show the generated
-  // suggestion pre-filled so randomising is the zero-effort path and typing over it is the
-  // deliberate one". Falls back to a client-side generator if the request fails, so a flaky
+  // Fresh, format-correct suggestion each time the dialog opens, shown pre-filled so that
+  // randomising is the zero-effort path and typing over it is the deliberate one.
+  // Falls back to a client-side generator if the request fails, so a flaky
   // connection never blocks buying/leasing outright (the server re-validates uniqueness anyway).
   useEffect(() => {
     if (!open) {

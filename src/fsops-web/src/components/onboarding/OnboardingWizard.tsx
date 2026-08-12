@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/useSettings'
 import { ApiError, post } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { Airline } from '@/types/airline'
+import type { Airline, AirlineSummary } from '@/types/airline'
 
 import { installPanel } from './panelInstallApi'
 import { WizardProgress } from './WizardProgress'
@@ -87,7 +87,12 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
     setSubmitError(null)
     try {
       const payload = buildCreateAirlineInput(data)
-      const created = await post<Airline>('/airline', payload)
+      // POST /airline answers with the same summary envelope GET /airline/summary does - the
+      // airline itself is nested, not the top-level object. Unwrapping it here is what lets the
+      // app re-theme around the chosen accent colour the moment onboarding finishes; reading the
+      // envelope as if it were the airline left accentColour undefined, so the colour only
+      // appeared after a reload (when the gate re-fetches the bare airline from GET /airline).
+      const createdSummary = await post<AirlineSummary>('/airline', payload)
 
       // Best-effort, never blocks finishing onboarding - the airline is already created by this
       // point. A player who chose a Community folder in the "MSFS panel" step gets it saved (the
@@ -104,7 +109,7 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
         }
       }
 
-      onCreated(created)
+      onCreated(createdSummary.airline)
     } catch (err) {
       const message =
         err instanceof ApiError

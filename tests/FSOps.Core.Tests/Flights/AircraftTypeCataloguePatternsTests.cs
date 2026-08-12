@@ -4,9 +4,10 @@ namespace FSOps.Core.Tests.Flights;
 
 /// <summary>
 /// Exercises the MatchPatterns actually shipped in AircraftTypeSeeder.cs against a realistic
-/// sample of freeform TITLE strings popular add-ons report - docs/PLAN.md "Match patterns matter
-/// as much as the numbers ... regex patterns broad enough to catch the popular add-ons (PMDG,
-/// Fenix, iniBuilds, FlyByWire, Leonardo, Aerosoft) without colliding with another family". The
+/// sample of freeform TITLE strings popular add-ons report. Match patterns matter as much as the
+/// numbers: each family needs regex broad enough to catch the popular add-ons (PMDG, Fenix,
+/// iniBuilds, FlyByWire, Leonardo, Aerosoft) without colliding with another family, which is what
+/// makes type verification useful rather than noise. The
 /// patterns are duplicated here (rather than referencing the seeder's private consts) because this
 /// is deliberately testing the SHAPE of the data as shipped, the same way
 /// EconomyConfigTests.FromJson_ParsesTheShippedConfigShape keeps its own copy of economy-config.json's
@@ -29,7 +30,7 @@ public class AircraftTypeCataloguePatternsTests
     private const string AtrPatterns = """["ATR.{0,3}42","ATR.{0,3}72","AT42","AT43","AT45","AT46","AT72","AT73","AT75","AT76"]""";
     private const string Dash8Patterns = """["Q400","DHC-?8","Dash.{0,2}8","DH8D"]""";
 
-    /// <summary>The exact title the user's own installed aircraft reports (docs/PLAN.md), pinned as
+    /// <summary>The exact title the user's own installed aircraft reports, pinned as
     /// its own regression test since this is the concrete bug report that started this work.</summary>
     [Fact]
     public void IsMatch_TheUsersActualFenixA320Title_MatchesTheA320Family()
@@ -63,7 +64,7 @@ public class AircraftTypeCataloguePatternsTests
     }
 
     /// <summary>
-    /// "Without one family stealing another's" (docs/PLAN.md) - a sample of cross-family titles
+    /// Breadth must not come at the cost of one family stealing another's - a sample of cross-family titles
     /// that must NOT match a neighbouring family's patterns, guarding against overly broad tokens
     /// (e.g. a bare "7" or "A3" that would swallow half the catalogue).
     /// </summary>

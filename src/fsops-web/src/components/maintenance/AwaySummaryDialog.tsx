@@ -58,7 +58,8 @@ function unresolvedStatusLabel(status: UnflyableOccurrenceSummary['status']): { 
 }
 
 /**
- * "While you were away" - docs/PLAN.md "the app must explain catch-up": on startup after a real
+ * "While you were away" - the app has to explain catch-up, or months of bills arriving at once
+ * looks exactly like a bug. On startup after a real
  * gap, shows what the wall clock resolved while the player was gone - charges by category, what
  * virtual pilots flew and earned, maintenance that fell due, and anything skipped/cancelled/
  * suspended and why - rather than opening to a changed balance with no explanation. Self-contained:

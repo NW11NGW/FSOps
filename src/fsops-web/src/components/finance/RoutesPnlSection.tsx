@@ -15,8 +15,8 @@ interface RoutesPnlSectionProps {
 }
 
 /**
- * docs/PLAN.md "Profit and loss per route ... which routes actually make money, given every real
- * cost." From completed, revenue-posted flights only - see FinanceRoute doc for why the field
+ * Profit and loss per route: which routes actually make money, given every real cost.
+ * From completed, revenue-posted flights only - see FinanceRoute doc for why the field
  * names carry no "30Days" suffix (the window is whatever `periodDays` was requested for).
  */
 export function RoutesPnlSection({ status, routes, periodDays }: RoutesPnlSectionProps) {

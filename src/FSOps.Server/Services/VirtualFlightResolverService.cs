@@ -11,7 +11,7 @@ namespace FSOps.Server.Services;
 
 /// <summary>
 /// Resolves every virtual pilot's scheduled occurrence whose block time has elapsed on the real
-/// wall clock - see docs/PLAN.md "Virtual pilots on the wall clock" and "Virtual pilot scheduling".
+/// wall clock, so a standing schedule keeps flying even while the app is closed.
 /// A virtual flight is a full economic citizen: it goes through the exact same
 /// <see cref="FlightEconomicsCalculator"/>/<see cref="FlightEconomicsPoster"/>/<see cref="MaintenancePoster"/>
 /// pipeline a player flight does, so it earns ticket revenue, pays every itemised cost, advances
@@ -22,8 +22,8 @@ namespace FSOps.Server.Services;
 /// <see cref="PilotScheduleEntry"/> rows, which a player pilot can never own (see
 /// PilotEndpoints.SaveScheduleAsync's IsPlayer guard).
 /// <para>
-/// <b>Reuses EconomyClockService's idempotency/monotonicity/capped-catch-up shape exactly</b> - see
-/// docs/PLAN.md's instruction not to invent a second pattern:
+/// <b>Reuses EconomyClockService's idempotency/monotonicity/capped-catch-up shape exactly</b>,
+/// deliberately rather than inventing a second pattern for the same problem:
 /// </para>
 /// <list type="bullet">
 /// <item><b>Idempotency is structural.</b> Each occurrence's Flight row (and whatever ledger lines
@@ -40,7 +40,8 @@ namespace FSOps.Server.Services;
 /// treated as a backwards jump - nothing processed, watermark unmoved, logged rather than absorbed.</item>
 /// <item><b>Capped catch-up.</b> Bounded two ways per pass - at most <see cref="MaxOccurrencesPerPass"/>
 /// occurrences actually resolved (directly bounds how many flights one pass can mint, which is the
-/// thing docs/PLAN.md's wall-clock section cares about), and the enumeration window itself never
+/// thing that matters, since winding the system clock forward would otherwise be the single most
+/// lucrative exploit in the design), and the enumeration window itself never
 /// looks further ahead than <see cref="MaxLookaheadDays"/> - so neither a huge backlog of schedule
 /// entries nor an enormous apparent clock jump can produce an unbounded burst in one pass; the
 /// remainder continues on the next 60s tick.</item>
@@ -64,8 +65,8 @@ public sealed class VirtualFlightResolverService : BackgroundService
 
     /// <summary>How far ahead of the watermark a single pass will even look for due occurrences,
     /// regardless of how many entries exist - bounds enumeration cost independently of
-    /// <see cref="MaxOccurrencesPerPass"/>, so a huge apparent clock jump (docs/PLAN.md "Wall-clock
-    /// manipulation") can't force this pass to build an enormous in-memory occurrence list before
+    /// <see cref="MaxOccurrencesPerPass"/>, so a huge apparent clock jump - whether genuine or a
+    /// system clock wound forward - can't force this pass to build an enormous in-memory occurrence list before
     /// even getting to the count cap. ~13 months comfortably covers any realistic "closed for a
     /// while" gap; a larger one simply takes a few extra ticks to fully catch up.</summary>
     private const int MaxLookaheadDays = 400;
@@ -78,23 +79,71 @@ public sealed class VirtualFlightResolverService : BackgroundService
     private readonly ILogger<VirtualFlightResolverService> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// Where a failed pass is recorded so the UI can tell the player, rather than the failure
+    /// living only in a log file. Optional so tests can construct this service directly without
+    /// standing one up; in the running app DI always supplies it.
+    /// </summary>
+    private readonly StartupReconciliationState? _startupState;
+
     public VirtualFlightResolverService(
-        IServiceScopeFactory scopeFactory, EconomyConfigCatalog economyConfigCatalog, IClock clock, ILogger<VirtualFlightResolverService> logger)
+        IServiceScopeFactory scopeFactory,
+        EconomyConfigCatalog economyConfigCatalog,
+        IClock clock,
+        ILogger<VirtualFlightResolverService> logger,
+        StartupReconciliationState? startupState = null)
     {
         _scopeFactory = scopeFactory;
         _economyConfigCatalog = economyConfigCatalog;
         _clock = clock;
         _logger = logger;
+        _startupState = startupState;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await RunOnceAsync(stoppingToken);
+        // Deliberately identical failure handling to EconomyClockService, whose ExecuteAsync doc
+        // explains it in full: this first pass runs before ExecuteAsync yields, so an exception here
+        // propagates out of Host.StartAsync() and kills the process with nothing in the app's log.
+        // Two wall-clock catch-up services with different startup failure behaviour would be worse
+        // than the bug, so this reuses that shape exactly rather than inventing a second one - the
+        // same rule the rest of this class already follows.
+        await RunGuardedPassAsync(stoppingToken, isStartupPass: true);
 
         using var timer = new PeriodicTimer(TickInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await RunGuardedPassAsync(stoppingToken, isStartupPass: false);
+        }
+    }
+
+    /// <summary>
+    /// One pass with the failure policy applied - see EconomyClockService.RunGuardedPassAsync,
+    /// which this mirrors exactly. Shutdown cancellation is rethrown so the timer loop ends
+    /// normally; anything else is logged at Critical, recorded for the UI, and survived.
+    /// </summary>
+    private async Task RunGuardedPassAsync(CancellationToken stoppingToken, bool isStartupPass)
+    {
+        try
+        {
             await RunOnceAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var when = isStartupPass ? "startup catch-up" : "scheduled";
+            _logger.LogCritical(
+                ex,
+                "The virtual flight resolver's {When} pass failed. Flights your virtual pilots have already flown may not " +
+                "have been resolved or paid; the next tick in {TickSeconds}s will retry. The app is still usable, but the " +
+                "schedule and any figures derived from it may be behind until then.",
+                when,
+                TickInterval.TotalSeconds);
+
+            _startupState?.RecordCatchUpFailure(nameof(VirtualFlightResolverService), ex, _clock.UtcNow);
         }
     }
 
@@ -144,7 +193,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
 
             var context = await LoadContextAsync(db, _economyConfigCatalog, ct);
 
-            // Pilot skill idle decay - docs/PLAN.md point 3. Runs every tick regardless of whether
+            // Pilot skill idle decay. Runs every tick regardless of whether
             // anything is due for resolution this pass, so a pilot left with no schedule keeps
             // decaying purely from the passage of real time since they last flew - see
             // ApplyIdlePilotSkillDecay's own doc for why "now" (not any occurrence's timestamp) is
@@ -249,8 +298,10 @@ public sealed class VirtualFlightResolverService : BackgroundService
     /// reading (this pass's own <c>_clock.UtcNow</c>), deliberately never an occurrence's own
     /// (possibly historical, mid-catch-up) timestamp - decay reflects how idle a pilot genuinely is
     /// right now, not how idle they were at some earlier point being caught up. Never touches a
-    /// <see cref="Pilot.IsPlayer"/> pilot - docs/PLAN.md's "the player's own pilot record never
-    /// decays" requirement; a player's SkillRating is only ever touched by their own flights, via
+    /// <see cref="Pilot.IsPlayer"/> pilot: the player's own record never decays. SkillRating is
+    /// only ever consumed to SIMULATE a virtual flight, and the player's real flying is measured by
+    /// real telemetry - decaying their number would punish them while changing nothing.
+    /// A player's SkillRating is only ever touched by their own flights, via
     /// <see cref="MaintenancePoster.PostFlightHours"/>.
     /// </summary>
     private static void ApplyIdlePilotSkillDecay(ResolutionContext context, DateTimeOffset now)
@@ -275,7 +326,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
     /// <summary>
     /// Every occurrence due in <c>(lastResolved, cutoff]</c> - "due" meaning its ARRIVAL (departure
     /// + this leg's own block time), not its departure, falls in that window, matching "whose block
-    /// time has elapsed" (docs/PLAN.md). Sorted by arrival ascending so aircraft/pilot state is
+    /// time has elapsed". Sorted by arrival ascending so aircraft/pilot state is
     /// resolved in the same order it would actually happen in, which is what makes each occurrence's
     /// flyability check (aircraft must be where THIS leg departs from) correct without needing to
     /// re-simulate the whole week from scratch. Entries whose route/aircraft/type can no longer be
@@ -336,7 +387,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
     /// Resolves exactly one occurrence: decides flyability, then either flies it as a full economic
     /// citizen (same FlightEconomicsCalculator/Poster/MaintenancePoster pipeline as a player's
     /// manually-completed flight) or records it as Skipped/Cancelled per the airline's playstyle -
-    /// see docs/PLAN.md's Playstyle behaviour table. Never touches aircraft position for an
+    /// Casual skips it quietly and unpenalised, True-life cancels it with a real charge. Never touches aircraft position for an
     /// unflyable occurrence - the aircraft stays exactly where it already was.
     /// </summary>
     private static async Task<VirtualOccurrenceOutcome> ResolveOccurrenceAsync(
@@ -367,8 +418,8 @@ public sealed class VirtualFlightResolverService : BackgroundService
             // Scoped to exactly this case - a schedule the player built badly (wrong location,
             // aircraft already flying) still skips/cancels normally below; only maintenance the
             // simulation imposed is eligible for suspension. See PilotSchedule.AutoSuspendOnMaintenance's
-            // own doc and docs/PLAN.md "A schedule option: suspend during maintenance and resume
-            // automatically".
+            // own doc. Without this, a 14-day True-life C-check against a daily schedule would be
+            // fourteen cancellation fees for something the player could not have avoided.
             if (occurrence.Schedule.AutoSuspendOnMaintenance)
             {
                 return await ResolveSuspendedAsync(db, occurrence, reason, resolvedAtUtc, ct);
@@ -440,8 +491,9 @@ public sealed class VirtualFlightResolverService : BackgroundService
         var fee = economyConfig.UnflyableSchedule.CancellationFee;
         var status = fee > 0 ? FlightStatus.Cancelled : FlightStatus.Skipped;
 
-        // Reputation - docs/PLAN.md point 1 names "cancelled AND skipped sectors" together, so
-        // both playstyles' outcomes hit reputation identically here; only the ledger line (below)
+        // Reputation: cancelled and skipped sectors count as one and the same thing to a
+        // passenger, so both playstyles' outcomes hit reputation identically here. A schedule that
+        // cannot fly costs standing whichever playstyle you chose; only the ledger line (below)
         // differs by playstyle. Never reached for a maintenance suspension - see ResolveSuspendedAsync,
         // which is a structurally separate method that never calls this one.
         ReputationPoster.PostCancelledOrSkipped(occurrence.Airline, economyConfig);
@@ -504,7 +556,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
         var flightHours = (occurrence.BlockMinutes + performance.DelayMinutes) / 60.0;
         var actualArrival = occurrence.Departure.AddMinutes(occurrence.BlockMinutes + performance.DelayMinutes);
 
-        // Reputation - docs/PLAN.md point 1. A virtual flight always has both signals (unlike a
+        // Reputation. A virtual flight always has both signals (unlike a
         // player's manual completion), so this always blends on-time + landing, never falls back to
         // one alone - see ReputationCalculator.AdvanceForCompletedFlight.
         ReputationPoster.PostCompletedFlight(airline, economyConfig, performance.DelayMinutes, performance.LandingFpm);
@@ -528,8 +580,8 @@ public sealed class VirtualFlightResolverService : BackgroundService
             LandingFpmFirst = performance.LandingFpm,
             LandingFpmHardest = performance.LandingFpm,
             LandingGForce = performance.GForce,
-            // No aircraft-type mismatch check applies to a virtual pilot - docs/PLAN.md "Virtual
-            // pilots on the wall clock". Null (unknown), not false: false means "checked and
+            // No aircraft-type mismatch check applies to a virtual pilot - there is no sim to check
+            // against. Null (unknown), not false: false means "checked and
             // matched", and nothing was ever checked here - no sim was ever loaded for this flight.
             TitleFlown = occurrence.AircraftType.Name,
             TypeMismatch = null,
@@ -541,7 +593,7 @@ public sealed class VirtualFlightResolverService : BackgroundService
         db.Flights.Add(flight);
 
         // Fuel: virtual pilots refuel automatically at the departure airport's price for what they
-        // need - docs/PLAN.md "Virtual pilots refuel automatically...". Same no-telemetry-fallback
+        // need, with no tankering logic of their own. Same no-telemetry-fallback
         // shape as FlightEndpoints.StartAsync uses when nothing was observed: top up to this
         // sector's own charged requirement if the tank doesn't already hold that much.
         var plan = RoutePreviewCalculator.Calculate(economyConfig, occurrence.DepartureAirport, occurrence.ArrivalAirport, occurrence.AircraftType, airline.StrategyProfile);

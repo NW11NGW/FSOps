@@ -20,7 +20,7 @@ const ESTIMATE_EXPLANATION =
   "Adds this pilot's monthly salary, prorated to the period shown - not a posted ledger line, since the real salary charge always posts in full on your billing cycle. Useful for comparing pilots; for the literal cash that moved, check the Ledger tab."
 
 /**
- * docs/PLAN.md "Virtual pilots - are they worth it?": salary, sectors flown, revenue against total
+ * Are your virtual pilots worth it? Salary, sectors flown, revenue against total
  * cost, and the resulting net contribution, per pilot - direct enough to answer "should I keep this
  * pilot" without the player doing arithmetic across two tables. Trailing REAL days (independent of
  * the airline's own 30-day billing cycle) - the window follows `periodDays`, so this is never

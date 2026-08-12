@@ -4,7 +4,7 @@ using FSOps.Core.Finance;
 namespace FSOps.Core.Tests.Finance;
 
 /// <summary>
-/// Exact-value coverage for docs/PLAN.md "Selling an owned aircraft must lose money on the spread" -
+/// Exact-value coverage for the rule that selling an owned aircraft must lose money on the spread:
 /// the depreciation curve itself, and proof the buy-then-sell exploit (new and used) is closed. Pure
 /// arithmetic, no database - same convention as MaintenanceSchedulerTests.
 /// </summary>
@@ -28,7 +28,7 @@ public class AircraftDepreciationCalculatorTests
         Assert.Equal(0.80m, quote.ResaleFactorApplied);
         Assert.Equal(80_000.00m, quote.SaleValue);
         // The exploit test: buying new and selling immediately, with zero wear at all, is still a
-        // loss - docs/PLAN.md "Test the round trip: buy then immediately sell must be a net loss."
+        // loss. Buy then immediately sell must be a net loss, or cash stops meaning anything.
         Assert.True(quote.SaleValue < 100_000m);
     }
 

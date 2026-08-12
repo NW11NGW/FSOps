@@ -26,7 +26,8 @@ export interface Runway {
 
 export interface AirportDetail extends AirportSummary {
   runways: Runway[]
-  /** Current price per kg at this airport - see docs/PLAN.md "Persistent fuel state and tankering". */
+  /** Current price per kg at this airport. Fuel prices vary by region, which is what makes
+   *  tankering worthwhile, so the figure has to be visible before departure. */
   fuelPricePerKg: number
 }
 
@@ -34,6 +35,17 @@ export interface WorldDataStatus {
   seeded: boolean
   airportCount: number
   runwayCount: number
+  /** A first-time seed of an empty database is running — the app has no airports yet. */
   importInProgress: boolean
   progressPercent: number
+  /**
+   * A refresh over already-seeded data is running. Deliberately separate from
+   * `importInProgress`: every screen keeps working throughout a refresh, so nothing should warn
+   * about missing airports while one runs. Optional because an older server build won't send it.
+   */
+  refreshInProgress?: boolean
+  /** Short identity of the bundled data set the current rows came from, e.g. "v1-3f9a2c40". */
+  dataVersion?: string | null
+  /** ISO timestamp of when the world data was last imported or refreshed. */
+  lastAppliedUtc?: string | null
 }

@@ -47,7 +47,7 @@ public class FuelUpliftDetectorTests
     }
 
     /// <summary>
-    /// "Handle repeated and partial uplifts" (docs/PLAN.md "Persistent fuel state and tankering"):
+    /// Repeated and partial uplifts have to be handled:
     /// a fuel truck topping off in several stages during one turnaround should read as several
     /// distinct uplift events when a caller runs a moving baseline through Classify/MagnitudeKg
     /// sample by sample, exactly as FlightLifecycleService.ProcessSample does.

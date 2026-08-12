@@ -29,7 +29,9 @@ public sealed record LandingAirportResult(string Icao, LandingAirportDecision De
 /// <summary>
 /// Works out which airport a flight actually ended up at from its last tracked position, so a
 /// diversion leaves the fleet aircraft where it really parked instead of wherever the flight was
-/// planned to go - see the "Landing somewhere else entirely" rule in docs/PLAN.md. Pure spherical
+/// planned to go. Landing somewhere else entirely is a diversion, not a payment failure: the
+/// flight completes and pays for the sector actually operated, and the aircraft's next schedule
+/// then departs from the right place. Pure spherical
 /// maths, no I/O: callers load whatever candidate airports are worth checking (typically a cheap
 /// bounding-box query) and pass them in.
 /// </summary>

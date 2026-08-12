@@ -47,7 +47,7 @@ function normalizeAircraftOption(raw: unknown): FlightOptionAircraft | null {
 }
 
 /**
- * GET /flights/options' settled DTO shape (see the E3 scheduler API contract): every fleet
+ * GET /flights/options' settled DTO shape: every fleet
  * aircraft physically at a route's departure airport appears in `aircraftOptions`, flyable or
  * not, each with its own `isFlyable`/`reason` - never a single implicit "the" aircraft for a
  * route. `reason` at the route level is only set when `aircraftOptions` is empty entirely.

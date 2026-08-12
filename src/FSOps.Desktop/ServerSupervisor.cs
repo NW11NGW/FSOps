@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
+using FSOps.Core;
 
 namespace FSOps.Desktop;
 
@@ -208,6 +209,18 @@ internal sealed class ServerSupervisor : IDisposable
             {
                 var exitCode = _process.ExitCode;
                 ShellLog.Write($"Server process exited during startup with code {exitCode}.");
+
+                // The server knows things the shell cannot - that the database is damaged, say -
+                // and it writes an explanation for the user rather than making the shell guess from
+                // an exit code. Show that verbatim when it is there. See
+                // FSOps.Server.Services.StartupFailureReport: the wording deliberately lives beside
+                // the code that knows what went wrong, so there is no second copy here to drift.
+                if (exitCode == ServerStartupErrorExitCode &&
+                    ReadStartupErrorReport() is { Length: > 0 } reported)
+                {
+                    return ServerStartupResult.Failed("FSOps could not start", reported);
+                }
+
                 return ServerStartupResult.Failed(
                     "FSOps' background service stopped unexpectedly",
                     $"It exited with code {exitCode} before it finished starting.\n\n" +
@@ -234,6 +247,49 @@ internal sealed class ServerSupervisor : IDisposable
             "FSOps' background service did not start in time",
             $"It was still not answering on port {Port} after {timeout.TotalSeconds:0} seconds.\n\n" +
             CapturedOutputOrPlaceholder());
+    }
+
+    /// <summary>
+    /// The server's "I could not start, and I have written down why" exit code, and the file it
+    /// writes. Mirrored from <c>FSOps.Server.Services.StartupFailureReport</c> rather than
+    /// referenced: the shell is a window and a process supervisor, and must not take a dependency
+    /// on the server assembly to read two constants. Only the contract is duplicated - never the
+    /// message, which is the part that would actually rot if it were copied.
+    /// </summary>
+    internal const int ServerStartupErrorExitCode = 3;
+
+    internal const string ServerStartupErrorFileName = "startup-error.txt";
+
+    /// <summary>
+    /// Reads the server's explanation, or null if there is not a usable one. Best-effort
+    /// throughout: this runs while the shell is already reporting a failure, and a missing or
+    /// unreadable file must degrade to the generic exit-code message rather than throw on top of
+    /// the problem it is trying to explain.
+    /// </summary>
+    private static string? ReadStartupErrorReport() => ReadStartupErrorReport(AppPaths.DataDirectory);
+
+    /// <summary>
+    /// Takes the directory as an argument so this can be tested without touching
+    /// <see cref="AppPaths.DataDirectory"/>, which caches its answer for the life of the process
+    /// and so cannot be redirected once anything has read it.
+    /// </summary>
+    internal static string? ReadStartupErrorReport(string dataDirectory)
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(dataDirectory, ServerStartupErrorFileName);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var text = File.ReadAllText(path).Trim();
+            return text.Length == 0 ? null : text;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static TimeSpan ResolveStartupTimeout()

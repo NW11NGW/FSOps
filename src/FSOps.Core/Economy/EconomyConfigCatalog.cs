@@ -6,8 +6,7 @@ namespace FSOps.Core.Economy;
 
 /// <summary>
 /// Loads economy-config.json's playstyle-aware shape and resolves a fully-populated
-/// <see cref="EconomyConfig"/> per <see cref="AirlinePlaystyle"/> - see docs/PLAN.md "Playstyle -
-/// Casual vs True-life". The file carries a shared base (fares, demand, fuel, costs, strategy
+/// <see cref="EconomyConfig"/> per <see cref="AirlinePlaystyle"/>. The file carries a shared base (fares, demand, fuel, costs, strategy
 /// profiles - identical for every playstyle) plus a small <c>casual</c> and <c>trueLife</c> block
 /// that each override only the handful of figures that actually differ: starting capital, the
 /// lease deposit term, every aircraft type's lease rate, and monthly insurance. A playstyle is a
@@ -145,17 +144,19 @@ public sealed class EconomyConfigCatalog
                 FleetFinance = new PlaystyleFleetFinanceOverrides { MonthlyInsurancePerAircraft = 50_000m },
                 Maintenance = new PlaystyleMaintenanceOverrides { ACheckDowntimeHours = 24, CCheckDowntimeHours = 336 },
                 // Realistic borrowing costs to match every other True-life figure - a higher base
-                // rate and the plan's 8% hard cap, both above Casual's 2.5%/5.0% (see LoanConfig's
-                // own doc). See docs/PLAN.md "Loan interest is set by the simulation, never by the
-                // player". MaxStartingLoanPrincipal 5,000,000 -> £101,381.97/month at the 8.0% cap
+                // rate and an 8% hard cap, both above Casual's 2.5%/5.0% (see LoanConfig's own
+                // doc). The cap is a ceiling the computed rate may never exceed, and the player
+                // never supplies a rate at all.
+                // MaxStartingLoanPrincipal 5,000,000 -> £101,381.97/month at the 8.0% cap
                 // rate over 60 months - roughly 2x the 2,500,000 starting capital, the same
                 // capital-multiple feel as Casual's cap; there is no solo-income figure to compare
                 // it against since True-life is not designed to be solo-profitable (see LoanConfig's
                 // own doc and GET /airline/playstyles' own description).
                 Loan = new PlaystyleLoanOverrides { BaseAnnualRatePct = 4.0, CapAnnualRatePct = 8.0, MaxStartingLoanPrincipal = 5_000_000m },
                 // True-life cancels an unflyable virtual flight with a real cost rather than
-                // Casual's quiet skip - see docs/PLAN.md's Playstyle behaviour table and
-                // UnflyableScheduleConfig's own doc. Sized as a modest multiple of a typical
+                // Casual's quiet skip, so a badly-planned schedule genuinely bites and the
+                // builder's warnings carry weight - see UnflyableScheduleConfig's own doc.
+                // Sized as a modest multiple of a typical
                 // sector's fixed per-sector costs (turnaround/handling), not a punitive figure -
                 // it needs to bite a badly-planned schedule, not bankrupt one bad week.
                 UnflyableSchedule = new PlaystyleUnflyableScheduleOverrides { CancellationFee = 350m },
@@ -204,8 +205,7 @@ public sealed class EconomyConfigCatalog
         AirlineStartup = new AirlineStartupConfig
         {
             // Shared across playstyles - the founding pilot's salary is already a realistic
-            // figure and needs no game-balance treatment (see docs/PLAN.md "The starter lease is
-            // a deliberate game-balance number").
+            // figure and needs no game-balance treatment, unlike the starter lease rate beside it.
             StartingPilotMonthlySalary = baseConfig.AirlineStartup.StartingPilotMonthlySalary,
             StartingCapital = overrides.AirlineStartup.StartingCapital,
             LeaseDepositMonths = overrides.AirlineStartup.LeaseDepositMonths,
@@ -222,8 +222,8 @@ public sealed class EconomyConfigCatalog
         {
             MonthlyInsurancePerAircraft = overrides.FleetFinance.MonthlyInsurancePerAircraft,
         },
-        // Interval/cost/condition figures are shared across playstyles (docs/PLAN.md "same cycle...
-        // and same costs"); only the two downtime figures come from the playstyle's own override -
+        // Interval/cost/condition figures are shared across playstyles - both run the same cycle
+        // at the same cost; only the two downtime figures come from the playstyle's own override -
         // see MaintenanceConfig's class doc.
         Maintenance = new MaintenanceConfig
         {

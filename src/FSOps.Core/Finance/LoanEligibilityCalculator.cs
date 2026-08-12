@@ -1,9 +1,9 @@
 namespace FSOps.Core.Finance;
 
 /// <summary>
-/// Sane borrowing limits for a mid-game loan - see docs/PLAN.md "How you get your second aircraft":
-/// "Requires sane limits (borrowing capacity tied to cash flow or fleet value, not unlimited) so it
-/// accelerates progression rather than trivialising it."
+/// Sane borrowing limits for a mid-game loan. Borrowing capacity is tied to cash flow rather than
+/// being unlimited, so a loan accelerates progression rather than trivialising it - the whole point
+/// of leverage here is a real trade-off, not a shortcut past the second-aircraft milestone.
 /// <para>
 /// <b>Chosen basis: trailing 30-day net operating cash flow, not fleet value.</b> Fleet value can't
 /// work for the moment this feature actually targets - a brand-new airline leases its only aircraft
@@ -23,8 +23,8 @@ namespace FSOps.Core.Finance;
 /// a second, larger one on the same day. Only genuine trading cash flow counts.
 /// </para>
 /// <para>
-/// Under Casual's current balance (~£45,485/month net for one aircraft flown ~1 leg/day - see
-/// docs/PLAN.md "Status after the progression-loop rebalance"), this caps a solo single-aircraft
+/// Under Casual's current balance (~£45,485/month net for one aircraft flown ~1 leg/day, against
+/// ~£45,000 of fixed monthly cost per aircraft), this caps a solo single-aircraft
 /// airline's serviceable new debt at roughly £15,900/month, which (at a moderate rate over a long
 /// term) affords on the order of £1-2m of principal - nowhere near even a discounted used airframe
 /// (tens of millions; see AircraftTypeSeeder's realistic PurchasePrice figures, which are

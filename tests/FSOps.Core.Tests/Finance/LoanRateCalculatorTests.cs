@@ -5,8 +5,8 @@ using FSOps.Core.Finance;
 namespace FSOps.Core.Tests.Finance;
 
 /// <summary>
-/// Chunk E1's own stated requirement: the rate is ALWAYS computed, never supplied - see
-/// docs/PLAN.md "Loan interest is set by the simulation, never by the player". These tests cover
+/// The rate is ALWAYS computed, never supplied: one the player could set would be set to zero,
+/// which makes borrowing free and turns loans into an exploit. These tests cover
 /// the pure maths in isolation; FleetEndpointsTests covers the same guarantees end-to-end through
 /// the actual HTTP-facing request types (which have no rate field at all).
 /// </summary>
@@ -18,8 +18,8 @@ public class LoanRateCalculatorTests
     [Fact]
     public void ComputeAnnualRatePct_CasualPlaystyle_HasTheDocumentedBaseAndCap()
     {
-        // Pins the actual shipped figures - see docs/PLAN.md "Hard caps, by playstyle: 5% in
-        // Casual, 8% in True-life". If these ever drift, this test (not just the boundary tests
+        // Pins the actual shipped figures. The hard caps by playstyle are 5% in Casual and 8% in
+        // True-life. If these ever drift, this test (not just the boundary tests
         // below) should catch it.
         Assert.Equal(5.0, Casual.CapAnnualRatePct);
         Assert.True(Casual.BaseAnnualRatePct > 0);
@@ -50,7 +50,7 @@ public class LoanRateCalculatorTests
     public void ComputeAnnualRatePct_LoanAtExactlyFullCapacity_EqualsTheCapRate()
     {
         // Constructed so the base-rate payment exactly equals the airline's max monthly payment -
-        // "borrowing to the limit reaches the cap" (docs/PLAN.md), asserted at the exact boundary,
+        // borrowing to the limit reaches the cap, asserted at the exact boundary,
         // not inferred from the formula's shape.
         const decimal trailingCashFlow = 1_000_000m;
         var maxMonthlyPayment = LoanEligibilityCalculator.MaxMonthlyPayment(trailingCashFlow);

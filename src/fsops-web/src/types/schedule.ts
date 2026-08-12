@@ -32,7 +32,8 @@ export const DAY_SHORT_LABELS: Record<DayOfWeek, string> = {
  * "HH:mm:ss". `blockMinutes` is the full gate-to-gate duration (preflight, taxi, flight, taxi in)
  * - this is what sizes the block on the calendar, not airborne time alone. There is deliberately
  * no `fleetAircraftId` here - the aircraft belongs to the whole `ScheduleDutyDay`, never the leg
- * (docs/PLAN.md "2a"; see the scheduler API contract's "Core idea" section).
+ * - with one airframe fixed for the day, "does the next leg depart where the last one arrived"
+ * is a single check against one aircraft's position, and a turnaround gap always means what it says.
  */
 export interface ScheduleLeg {
   id: string
@@ -58,7 +59,7 @@ export interface ScheduleDutyDay {
 export interface PilotSchedule {
   pilotId: string
   dutyDays: ScheduleDutyDay[]
-  /** Property of the WHOLE weekly schedule, not any one day or leg (docs/PLAN.md). When true
+  /** Property of the WHOLE weekly schedule, not any one day or leg. When true
    *  (the default), this schedule pauses while its aircraft is grounded for a maintenance check
    *  and resumes automatically once the check finishes. When false, every occurrence scheduled
    *  during that grounding is cancelled instead - at a real cancellation fee under True-life. */
@@ -101,7 +102,7 @@ export interface AircraftOptionsRequest {
 }
 
 /** One fleet aircraft's eligibility for a given duty day - step one of the picker
- *  (docs/PLAN.md "2b": pick the aircraft first). Not a full conflict check - only the aircraft's
+ *  - the aircraft is picked first, then the leg. Not a full conflict check: only the aircraft's
  *  own state (reserved / grounded) is screened here; `leg-options` checks real conflicts once an
  *  aircraft is fixed. */
 export interface AircraftOption {

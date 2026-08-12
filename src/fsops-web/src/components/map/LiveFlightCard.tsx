@@ -40,7 +40,7 @@ interface LiveFlightCardProps {
 }
 
 /**
- * The hover flight card from docs/PLAN.md "Live operations map": flight number, route, pilot,
+ * The live operations map's hover flight card: flight number, route, pilot,
  * registration and type, departure/ETA, elapsed vs remaining, percent complete, current phase.
  * `aircraftType` is left out of the layout when absent (see types/operations.ts) rather than
  * showing a blank or "undefined" - a flight whose FleetAircraft record didn't resolve still has

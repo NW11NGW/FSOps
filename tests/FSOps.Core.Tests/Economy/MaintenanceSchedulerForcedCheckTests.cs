@@ -4,7 +4,7 @@ using FSOps.Core.Entities;
 namespace FSOps.Core.Tests.Economy;
 
 /// <summary>
-/// "Perform maintenance now" - docs/PLAN.md "A 'perform maintenance now' button on the Fleet page":
+/// "Perform maintenance now":
 /// bringing a check forward must charge the FULL cost and downtime for that check type (never
 /// pro-rated down for however many hours were left on the cycle) and must forfeit whatever hours
 /// remained - otherwise bringing a check forward would be a way to dodge cost rather than a real

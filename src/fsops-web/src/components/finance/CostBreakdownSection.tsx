@@ -38,7 +38,7 @@ function BreakdownCard({ title, icon, children, total }: { title: string; icon: 
 }
 
 /**
- * docs/PLAN.md "Full breakdown of airline costs": fixed (leases, salaries, insurance, loan
+ * The full breakdown of airline costs: fixed (leases, salaries, insurance, loan
  * repayments) split from variable (fuel, landing, handling, parking, passenger charges, turnaround,
  * maintenance, crew) because they behave completely differently - fixed is owed whether or not you
  * fly. `legacyDataNotice` is shown as a small, unalarming caveat rather than hidden or dramatised -

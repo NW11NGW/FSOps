@@ -12,8 +12,8 @@ interface FlightPlanImportBannerProps {
 
 /**
  * Tells the player, before they commit to "Start flight", whether this sector's plan is coming
- * from their SimBrief OFP or FSOps' own estimate - "say so plainly" (docs/PLAN.md "Flight plan
- * import"). Only shown once a route/aircraft is picked and a SimBrief Pilot ID is configured;
+ * from their SimBrief OFP or FSOps' own estimate, and if it fell back, why - said plainly rather
+ * than substituted silently. Only shown once a route/aircraft is picked and a SimBrief Pilot ID is configured;
  * players who never set one up see nothing here, matching the "no lock-in" rule that SimBrief is
  * a convenience, never a requirement.
  */

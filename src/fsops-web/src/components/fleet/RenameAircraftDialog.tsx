@@ -22,8 +22,8 @@ interface RenameAircraftDialogProps {
 }
 
 /**
- * Repaints happen - docs/PLAN.md "Renaming an existing aircraft should also be possible from the
- * Fleet page". Same light validation and uniqueness rule as buying/leasing (PUT
+ * Repaints happen, so an existing aircraft can be renamed from the Fleet page.
+ * Same light validation and uniqueness rule as buying/leasing (PUT
  * /fleet/{id}/registration), never a country-format check - a custom entry is deliberately not
  * held to any registry's shape.
  */

@@ -14,8 +14,8 @@ interface UseFlightPlanImportResult {
 const DEBOUNCE_MS = 150
 
 /**
- * Debounced GET /flights/plan-import - the SimBrief import hand-off (docs/PLAN.md "Flight plan
- * import"). Purely informational and read-only: resolves the same plan StartAsync would use for
+ * Debounced GET /flights/plan-import - the SimBrief import hand-off.
+ * Purely informational and read-only: resolves the same plan StartAsync would use for
  * this route/aircraft pair, without starting anything. `null` routeId means "nothing selected
  * yet", not a failure - the Fly screen has no route chosen at that point.
  */

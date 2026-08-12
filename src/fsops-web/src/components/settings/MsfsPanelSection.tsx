@@ -264,7 +264,11 @@ export function MsfsPanelSection() {
     }
   }
 
-  const installed = statusState === 'ready' && status?.installed === true
+  // "Something of ours is in that folder" - true for a healthy install and for a damaged one alike,
+  // and the thing every destructive/repair control below should key off. `status.installed` alone
+  // now means "complete", so using it here would hide Repair and Remove behind the very damage they
+  // exist to undo, and offer a fresh Install instead.
+  const packagePresent = statusState === 'ready' && status !== null && isPackagePresent(status)
   const health = describeHealth(savedPath, statusState === 'ready' ? status : null, statusState)
 
   return (
@@ -334,7 +338,7 @@ export function MsfsPanelSection() {
         </div>
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-          {installed && (
+          {packagePresent && (
             <Button
               type="button"
               variant="ghost"
@@ -346,14 +350,14 @@ export function MsfsPanelSection() {
             </Button>
           )}
 
-          {installed && (
+          {packagePresent && (
             <Button type="button" variant="outline" onClick={() => void runInstall('repair')} disabled={busy !== null}>
               {busy === 'repair' ? <Loader2 className="animate-spin" /> : <RotateCcw />}
               {busy === 'repair' ? 'Repairing…' : 'Reinstall / repair'}
             </Button>
           )}
 
-          {!installed && savedPath && statusState === 'ready' && status?.success && (
+          {!packagePresent && savedPath && statusState === 'ready' && status?.success && (
             <Button type="button" variant="outline" onClick={() => void runInstall('install')} disabled={busy !== null}>
               {busy === 'install' ? <Loader2 className="animate-spin" /> : <MonitorPlay />}
               {busy === 'install' ? 'Installing…' : 'Install panel'}
@@ -451,6 +455,10 @@ function describeHealth(
   if (!savedPath) return { variant: 'muted', label: 'Not set up' }
   if (!status) return { variant: 'muted', label: 'Unknown' }
   if (!status.success) return { variant: 'danger', label: 'Needs attention' }
+  // Incomplete is checked before "not installed", because a package that is present but has lost
+  // files is emphatically not the same as an empty folder - offering Install would be technically
+  // curable but tells the player nothing about what actually went wrong.
+  if (isIncomplete(status)) return { variant: 'warning', label: 'Needs repair' }
   if (!status.installed) return { variant: 'muted', label: 'Not installed' }
   if (hasPortDrift(status)) return { variant: 'warning', label: 'Needs repair' }
   if (status.installedVersion !== status.expectedVersion) return { variant: 'warning', label: 'Update available' }
@@ -465,11 +473,31 @@ function describeHealth(
  */
 function hasPortDrift(status: PanelOperationResult): boolean {
   return (
-    status.installed &&
+    // Deliberately "a package is there", not status.installed. Since `installed` came to mean
+    // "complete", keying off it here let one fault mask another: a damaged install stopped
+    // reporting its port drift and claimed the port "matches this copy of FSOps" instead, which
+    // was worse than silence because it was a confident wrong answer about the wrong port.
+    isPackagePresent(status) &&
     status.installedPort !== null &&
     status.expectedPort !== null &&
     status.installedPort !== status.expectedPort
   )
+}
+
+/**
+ * True when an FSOps package is in the folder but has lost files it should have. This is the state
+ * that used to be invisible: the manifest alone decided "installed", so deleting the panel's own
+ * FSOpsPanel.js left a green "Installed - up to date" badge over a panel that renders nothing in
+ * the sim, and nothing anywhere suggested pressing repair.
+ */
+function isIncomplete(status: PanelOperationResult): boolean {
+  return status.success && status.missingFiles.length > 0
+}
+
+/** Something of ours is in that folder - healthy or damaged. The right question for anything that
+ *  describes or repairs an existing install, as opposed to offering a fresh one. */
+function isPackagePresent(status: PanelOperationResult): boolean {
+  return status.installed || isIncomplete(status)
 }
 
 function StatusPanel({
@@ -538,11 +566,32 @@ function StatusPanel({
   if (!status) return null
 
   const upToDate = status.installedVersion === status.expectedVersion
+  const incomplete = isIncomplete(status)
+  // The .spb being absent means two opposite things depending on why. If it is in the missing list
+  // then this build shipped one and the player's copy lost it (repairable now); if it is simply not
+  // there at all, the build genuinely has none and no amount of repairing will conjure it.
+  const spbMissingFromCopy = status.missingFiles.some((f) => f.toLowerCase().endsWith('.spb'))
+  // A damaged package is still a package: its version, port and toolbar rows are all still worth
+  // showing, and hiding them would make a repairable install look like an empty folder.
+  const present = isPackagePresent(status)
 
   return (
     <div className="rounded-lg border border-border bg-surface px-4 py-1">
       <StatusRow label="Panel files">
-        {status.installed ? (
+        {incomplete ? (
+          <span className="flex items-start gap-1.5 text-warning">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              {status.missingFiles.length === 1
+                ? '1 file is missing'
+                : `${status.missingFiles.length} files are missing`}{' '}
+              — reinstall to put {status.missingFiles.length === 1 ? 'it' : 'them'} back.
+              <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">
+                {status.missingFiles.join(', ')}
+              </span>
+            </span>
+          </span>
+        ) : status.installed ? (
           <span className="flex items-center gap-1.5 text-success">
             <CheckCircle2 className="size-3.5 shrink-0" /> Installed
           </span>
@@ -557,7 +606,7 @@ function StatusPanel({
         </span>
       </StatusRow>
 
-      {status.installed && (
+      {present && (
         <StatusRow label="Version">
           {upToDate ? (
             <span className="text-muted-foreground">
@@ -573,7 +622,7 @@ function StatusPanel({
         </StatusRow>
       )}
 
-      {status.installed && (
+      {present && (
         <StatusRow label="Connects to">
           {hasPortDrift(status) ? (
             <span className="flex items-start gap-1.5 text-warning">
@@ -591,11 +640,21 @@ function StatusPanel({
         </StatusRow>
       )}
 
-      {status.installed && (
+      {present && (
         <StatusRow label="Toolbar button">
           {status.toolbarWillAppearInSim ? (
             <span className="flex items-center gap-1.5 text-success">
               <CheckCircle2 className="size-3.5 shrink-0" /> Appears in the MSFS toolbar
+            </span>
+          ) : spbMissingFromCopy ? (
+            // Their copy lost it. Telling them to wait for a future update here would send them
+            // away for something that will never arrive - the fix is one button away, right now.
+            <span className="flex items-start gap-1.5 text-warning">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                Not yet — the compiled panel component is missing from your copy, so no FSOps button appears in the
+                sim. Reinstall to put it back.
+              </span>
             </span>
           ) : (
             <span className="flex items-start gap-1.5 text-warning">
@@ -609,7 +668,7 @@ function StatusPanel({
         </StatusRow>
       )}
 
-      {!status.installed && (
+      {!present && (
         <StatusRow label="What to do">
           <span className="text-muted-foreground">{status.message}</span>
         </StatusRow>

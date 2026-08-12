@@ -13,7 +13,8 @@ export interface AffectedScheduleEntry {
 
 /** A quote for bringing one specific check (A or C) forward - see MaintenanceQuoteResponse.quotes.
  *  Always the FULL cost/downtime for that check type; never scaled down for however many hours
- *  were left on the current cycle (docs/PLAN.md "A 'perform maintenance now' button"). */
+ *  were left on the current cycle - forfeiting those hours IS the trade-off for choosing when the
+ *  downtime lands. */
 export interface MaintenanceCheckQuote {
   type: MaintenanceCheckType
   cost: number
@@ -79,8 +80,8 @@ export interface UnflyableOccurrenceSummary {
 }
 
 /**
- * GET /away-summary - docs/PLAN.md "'While you were away' - the app must explain catch-up": what
- * happened while the app was closed, for the window since the player last acknowledged a summary.
+ * GET /away-summary - what happened while the app was closed, for the window since the player last
+ * acknowledged a summary. Catch-up has to be explained or it reads as a bug.
  * Read-only - never advances the server's cursor on its own; see POST /away-summary/acknowledge
  * for the only thing that does.
  */

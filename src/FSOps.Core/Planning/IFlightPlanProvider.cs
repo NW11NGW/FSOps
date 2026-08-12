@@ -50,8 +50,9 @@ public sealed record FlightPlanOutcome(bool Success, string ProviderName, string
 /// Callers (FlightEndpoints) compose an ordered list - a real dispatch tool such as SimBrief
 /// first, the deterministic in-app estimator last - so a sector is enriched with a real OFP when
 /// one is available and matches the route being flown, and always has something to fall back to
-/// otherwise. See docs/PLAN.md's "External tools and interoperability" and "IFlightPlanProvider"
-/// notes for why this exists as an abstraction rather than a single hardcoded source.
+/// otherwise. It is an abstraction rather than a single hardcoded source because FSOps has to be a
+/// good citizen among the tools simmers already use: planning elsewhere, or not at all, must never
+/// change what a flight earns, so the plan is a briefing rather than a contract.
 /// </summary>
 public interface IFlightPlanProvider
 {

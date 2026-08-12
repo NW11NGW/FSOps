@@ -27,7 +27,7 @@ public class DemandCalculatorTests
         // catchment = sqrt(0.6*3.0) = 1.3416407865, distanceFactor beyond the 2500nm sweet spot
         // max = 1.0 - 0.00035*(3000-2500) = 0.825, 2026-06-15 is a Monday in June: season 1.15 x
         // day 1.05. ReputationSensitivity is 0.25, not the naive 0.5 the arithmetic might suggest -
-        // it exists specifically to satisfy docs/PLAN.md's user-chosen "reputation 100 carries about
+        // it exists specifically to satisfy the user-chosen "reputation 100 carries about
         // 1.25x the passengers of reputation 50; reputation 0 about 0.75x" band (see
         // ReputationFactorAtTheExtremes_MatchesThePlansStated125And75PercentBand below for that
         // figure pinned directly), so reputation 80 -> factor 1.0 + (80-50)/50*0.25 = 1.15.
@@ -43,8 +43,8 @@ public class DemandCalculatorTests
     [Fact]
     public void ReputationFactorAtTheExtremes_MatchesThePlansStated125And75PercentBand()
     {
-        // docs/PLAN.md "Progression - reputation and pilot skill", point 2 - these are the literal
-        // figures the user was shown and chose, not a paraphrase: "Reputation 100 carries about
+        // These are the literal figures the user was shown and chose, not a paraphrase, and they
+        // are a balance target rather than an implementation detail: "Reputation 100 carries about
         // 1.25x the passengers of reputation 50; reputation 0 about 0.75x, still floored." Pinned
         // here directly (rather than only appearing inside another test's worked comment) so a
         // future retune of ReputationSensitivity can't silently drift away from what was actually

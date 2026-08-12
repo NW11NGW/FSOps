@@ -448,6 +448,137 @@ public sealed class PanelPackageInstallerTests : IDisposable
         Assert.False(status.SpbPresent);
     }
 
+    // -----------------------------------------------------------------------------------
+    // Damaged installs
+    //
+    // The failure these cover shipped once: Installed was decided from manifest.json alone, so
+    // deleting the panel's own FSOpsPanel.js left a green "Installed - up to date" status over a
+    // package that renders nothing in the sim, and nothing anywhere suggested repairing it.
+    // -----------------------------------------------------------------------------------
+
+    [Fact]
+    public void GetStatus_ReportsNothingMissing_WhenTheInstallIsIntact()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", _templateDirectory);
+
+        Assert.True(status.Installed);
+        Assert.Empty(status.MissingFiles);
+    }
+
+    [Fact]
+    public void GetStatus_ReportsADeletedFile_RatherThanClaimingTheInstallIsHealthy()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var installed = Path.Combine(_communityFolder, PanelPackageInstaller.PackageFolderName);
+        File.Delete(Path.Combine(installed, "html_ui", "InGamePanels", "FSOpsPanel", "FSOpsPanel.js"));
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", _templateDirectory);
+
+        // Still a successful read of a package that IS there - just not a complete one.
+        Assert.True(status.Success);
+        Assert.False(status.Installed);
+        Assert.Equal(["html_ui/InGamePanels/FSOpsPanel/FSOpsPanel.js"], status.MissingFiles);
+        Assert.Contains("reinstall", status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetStatus_NoticesTheGeneratedLayoutJsonGoingMissing()
+    {
+        // layout.json is written by the installer rather than copied from the template, so it is the
+        // one expected file a template-derived list would miss - and MSFS will not load the package
+        // without it.
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var installed = Path.Combine(_communityFolder, PanelPackageInstaller.PackageFolderName);
+        File.Delete(Path.Combine(installed, "layout.json"));
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", _templateDirectory);
+
+        Assert.False(status.Installed);
+        Assert.Contains("layout.json", status.MissingFiles);
+    }
+
+    [Fact]
+    public void GetStatus_CoversAFileAddedToTheTemplateLater_WithoutBeingToldAboutIt()
+    {
+        // The expected set is derived from the template every time. If it were hardcoded instead,
+        // a file added to the package later would go unchecked and quietly reproduce this bug.
+        File.WriteAllText(Path.Combine(_templateDirectory, "brand-new-file.txt"), "shipped later");
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var installed = Path.Combine(_communityFolder, PanelPackageInstaller.PackageFolderName);
+        File.Delete(Path.Combine(installed, "brand-new-file.txt"));
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", _templateDirectory);
+
+        Assert.False(status.Installed);
+        Assert.Contains("brand-new-file.txt", status.MissingFiles);
+    }
+
+    [Fact]
+    public void GetStatus_RepairPutsAMissingFileBack_AndClearsTheDamagedState()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var installed = Path.Combine(_communityFolder, PanelPackageInstaller.PackageFolderName);
+        var panelJs = Path.Combine(installed, "html_ui", "InGamePanels", "FSOpsPanel", "FSOpsPanel.js");
+        File.Delete(panelJs);
+
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", _templateDirectory);
+
+        Assert.True(File.Exists(panelJs));
+        Assert.True(status.Installed);
+        Assert.Empty(status.MissingFiles);
+    }
+
+    [Fact]
+    public void GetStatus_BlamesTheBuild_OnlyWhenTheBuildGenuinelyShipsNoSpb()
+    {
+        // Telling the player to wait for a future update is right for a build with no .spb at all,
+        // and actively harmful when their own copy merely lost one - it sends them away to wait for
+        // something that will never arrive, when a repair would fix it now.
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", _templateDirectory);
+
+        Assert.False(status.SpbPresent);
+        Assert.False(status.ToolbarWillAppearInSim);
+        Assert.Contains("isn't compiled yet", status.Message);
+        // The build has no .spb to lose, so its absence is not damage.
+        Assert.Empty(status.MissingFiles);
+    }
+
+    [Fact]
+    public void GetStatus_TreatsADeletedSpbAsDamage_NotAsAnUncompiledBuild()
+    {
+        var templateWithSpb = Path.Combine(_root, "template-with-spb");
+        CreateFakeTemplate(templateWithSpb, includeSpb: true);
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, templateWithSpb, "5977");
+        var installed = Path.Combine(_communityFolder, PanelPackageInstaller.PackageFolderName);
+        File.Delete(Path.Combine(installed, "InGamePanels", "FSOpsPanel.spb"));
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977", templateWithSpb);
+
+        Assert.False(status.Installed);
+        Assert.Contains("InGamePanels/FSOpsPanel.spb", status.MissingFiles);
+        Assert.DoesNotContain("isn't compiled yet", status.Message);
+        // The honest-reporting property must survive: a missing component still means no button.
+        Assert.False(status.ToolbarWillAppearInSim);
+    }
+
+    [Fact]
+    public void GetStatus_WithNoTemplateToCompareAgainst_DoesNotCondemnAGoodInstall()
+    {
+        // An unknown answer must not masquerade as "nothing is missing", but it must not invent
+        // damage either - the older two-argument callers still have to work.
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+
+        var status = PanelPackageInstaller.GetStatus(_communityFolder, "5977");
+
+        Assert.True(status.Installed);
+        Assert.Empty(status.MissingFiles);
+    }
+
     [Fact]
     public void GetStatus_SaysTheFolderIsGone_RatherThanJustNotInstalled_WhenItHasBeenDeleted()
     {

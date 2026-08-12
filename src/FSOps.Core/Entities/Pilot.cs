@@ -22,7 +22,8 @@ public class Pilot
     /// against, deliberately never wall-clock time since the app was last opened. A pilot on a
     /// standing schedule keeps this fresh while the app is closed (the wall-clock catch-up model
     /// resolves their flights regardless), so decay only ever reaches a pilot deliberately left
-    /// with no schedule - see docs/PLAN.md "Progression - reputation and pilot skill". Null for a
+    /// with no schedule. Decay is driven by time since THIS pilot last flew, never by wall-clock
+    /// time since the app was opened, which is what stops it punishing a casual player. Null for a
     /// pilot who has never flown a single sector.
     /// </summary>
     public DateTimeOffset? LastFlewUtc { get; set; }

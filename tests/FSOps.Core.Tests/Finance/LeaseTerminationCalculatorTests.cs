@@ -4,7 +4,7 @@ using FSOps.Core.Finance;
 namespace FSOps.Core.Tests.Finance;
 
 /// <summary>
-/// Exact-value coverage for docs/PLAN.md "Returning a lease early must cost something" - proof the
+/// Exact-value coverage for the rule that returning a lease early must cost something - proof the
 /// "lease, fly for free, return before the billing tick" exploit is closed. Pure arithmetic, no
 /// database.
 /// </summary>
@@ -19,7 +19,7 @@ public class LeaseTerminationCalculatorTests
         var now = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
 
         // lastProcessedUtc == now: zero elapsed time in the current billing period - the exact
-        // "lease and immediately return" exploit scenario docs/PLAN.md calls out.
+        // "lease and immediately return" exploit - free capacity with no commitment.
         var settlement = LeaseTerminationCalculator.ComputeSettlement(
             monthlyRate: 30_000m, lastProcessedUtc: now, now: now, PeriodLength, Config);
 

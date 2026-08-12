@@ -35,8 +35,8 @@ const STATUS_BADGE: Record<PilotStatus, { label: string; variant: 'success' | 'w
   Inactive: { label: 'Inactive', variant: 'muted' },
 }
 
-/** Hire and release virtual pilots, and open each one's weekly schedule builder - see
- *  docs/PLAN.md "Virtual pilot scheduling". Virtual pilots are what let the airline keep running
+/** Hire and release virtual pilots, and open each one's weekly schedule builder.
+ *  Virtual pilots are what let the airline keep running
  *  while the player is away; this page is where that starts. */
 export function Pilots() {
   const pilotsQuery = usePilots()

@@ -44,8 +44,8 @@ public sealed class EconomyConfig
     public DemandConfig Demand { get; init; } = new();
 
     /// <summary>
-    /// Tuning for how <see cref="Entities.Airline.ReputationScore"/> moves - see docs/PLAN.md
-    /// "Progression - reputation and pilot skill". Shared across playstyles: how forgiving
+    /// Tuning for how <see cref="Entities.Airline.ReputationScore"/> moves on a flight's outcome.
+    /// Shared across playstyles: how forgiving
     /// reputation is to earn or lose is a simulation-fairness question, not a figure the user
     /// asked to differ between Casual and True-life.
     /// </summary>
@@ -53,8 +53,7 @@ public sealed class EconomyConfig
 
     /// <summary>
     /// Tuning for how <see cref="Entities.Pilot.SkillRating"/> grows with hours and decays with
-    /// idle time - see docs/PLAN.md "Progression - reputation and pilot skill". Shared across
-    /// playstyles, same reasoning as <see cref="Reputation"/> above.
+    /// idle time. Shared across playstyles, same reasoning as <see cref="Reputation"/> above.
     /// </summary>
     public PilotSkillConfig PilotSkill { get; init; } = new();
 
@@ -108,8 +107,12 @@ public sealed class EconomyConfig
     /// <summary>
     /// One consistent multiplier applied to <see cref="AircraftType.PurchasePrice"/> (the shared,
     /// realistic transaction value every airline's database row holds - see AircraftTypeSeeder.cs's
-    /// class doc) to get THIS playstyle's purchase price - see docs/PLAN.md "Casual pricing must
-    /// scale the WHOLE catalogue". True-life's is exactly 1.0 (real figures throughout); Casual's
+    /// class doc) to get THIS playstyle's purchase price. Deliberately ONE multiplier over the
+    /// WHOLE catalogue rather than per-type overrides: an earlier pass discounted only the two
+    /// starter types, so every other aircraft sat at its real-world price in Casual - a smaller
+    /// 737 cost eleven times an A320, and leasing an A321 as a second aircraft was instant
+    /// bankruptcy through no mistake of the player's. A catalogue-wide multiplier means adding new
+    /// types cannot reintroduce that. True-life's is exactly 1.0 (real figures throughout); Casual's
     /// is small enough that a used airframe (55% of this, see <see cref="UsedAircraft"/>) is
     /// affordable after roughly ten sectors' profit. Deliberately a scalar rather than a per-type
     /// list (unlike <see cref="LeaseRates"/>): since it is derived from AircraftType.PurchasePrice,
@@ -134,16 +137,19 @@ public sealed class EconomyConfig
     /// <see cref="Pilot.MonthlySalary"/> and do not need duplicating here.</summary>
     public FleetFinanceConfig FleetFinance { get; init; } = new();
 
-    /// <summary>A/C-check cycle, cost and downtime - see docs/PLAN.md "Maintenance" and
-    /// "Playstyle - Casual vs True-life"'s behaviour table. The interval hours, costs and condition
-    /// figures are shared across playstyles (same cycle, same costs - see the plan's table); only
+    /// <summary>A/C-check cycle, cost and downtime. The interval hours, costs and condition
+    /// figures are shared across playstyles - both run the SAME cycle (A-check every 500 h,
+    /// C-check every 4,000 h) at the SAME cost, and differ only in how long a check grounds the
+    /// aircraft; only
     /// the two downtime figures differ, resolved from the "casual"/"trueLife" override blocks by
     /// EconomyConfigCatalog, same pattern as AirlineStartup/FleetFinance.</summary>
     public MaintenanceConfig Maintenance { get; init; } = new();
 
     /// <summary>
-    /// Risk-based loan pricing - see docs/PLAN.md "Loan interest is set by the simulation, never by
-    /// the player". Entirely playstyle-owned (like FleetFinance/LeaseRates, not merged field-by-
+    /// Risk-based loan pricing. Interest is set by the simulation and never by the player: a rate
+    /// the player controls can be set to zero, which makes borrowing free and turns loans from a
+    /// strategic trade-off into an exploit. Entirely playstyle-owned (like FleetFinance/LeaseRates,
+    /// not merged field-by-
     /// field with a shared base): resolved from the "casual"/"trueLife" override blocks by
     /// EconomyConfigCatalog. The only sanctioned way to price a loan anywhere in the app is
     /// <see cref="FSOps.Core.Finance.LoanRateCalculator.ComputeAnnualRatePct"/>, which reads this.
@@ -151,8 +157,9 @@ public sealed class EconomyConfig
     public LoanConfig Loan { get; init; } = new();
 
     /// <summary>
-    /// The penalty for ending a lease before it would otherwise have been billed - see docs/PLAN.md
-    /// "Returning a lease early must cost something". Resolved per playstyle by
+    /// The penalty for ending a lease before it would otherwise have been billed. An early return
+    /// has to cost something, or the optimal play is to lease an aircraft, fly it, and hand it back
+    /// before the monthly charge lands - free capacity with no commitment. Resolved per playstyle by
     /// <see cref="EconomyConfigCatalog"/>, like <see cref="FleetFinance"/>/<see cref="Loan"/> above -
     /// harsher in True-life like every other figure that differs by playstyle. See
     /// <see cref="LeaseEarlyTerminationConfig"/>'s own doc for what the fee sits alongside.
@@ -160,28 +167,32 @@ public sealed class EconomyConfig
     public LeaseEarlyTerminationConfig LeaseEarlyTermination { get; init; } = new();
 
     /// <summary>
-    /// The fee for paying off a loan's full remaining balance before term - see docs/PLAN.md "Paying
-    /// a loan back... Charge a modest early-settlement fee". Resolved per playstyle by
+    /// The fee for paying off a loan's full remaining balance before term. Modest by design: real
+    /// lenders price in the interest they lose, and without a fee there is no trade-off at all in
+    /// clearing debt early. Resolved per playstyle by
     /// <see cref="EconomyConfigCatalog"/>, same pattern as <see cref="LeaseEarlyTermination"/> above.
     /// </summary>
     public LoanEarlySettlementConfig LoanEarlySettlement { get; init; } = new();
 
-    /// <summary>Purchasing a used, rather than new, airframe - see docs/PLAN.md "Used aircraft -
-    /// cheap to buy, expensive to run". Shared across playstyles: the discount and the wear a used
+    /// <summary>Purchasing a used, rather than new, airframe: cheap to buy, expensive to run - the
+    /// acquisition saving is repaid through the maintenance cycle, which is what makes buying used
+    /// a real decision rather than simply the cheaper option. Shared across playstyles: the
+    /// discount and the wear a used
     /// airframe starts with are a property of the used-aircraft market, not a game-balance figure
     /// that differs by how realistically the player wants to be billed.</summary>
     public UsedAircraftConfig UsedAircraft { get; init; } = new();
 
     /// <summary>The depreciation curve <see cref="FSOps.Core.Finance.AircraftDepreciationCalculator"/>
-    /// reads when quoting a sale - see docs/PLAN.md "Selling an owned aircraft must lose money on the
-    /// spread". Shared across playstyles, like <see cref="UsedAircraft"/> - what a worn airframe is
+    /// reads when quoting a sale. Selling must lose money on the spread: if an aircraft sold for
+    /// what it cost, buying and selling would be a free round trip and cash would stop meaning
+    /// anything. Shared across playstyles, like <see cref="UsedAircraft"/> - what a worn airframe is
     /// worth on the secondhand market doesn't depend on how realistically the SELLING airline chose to
     /// be billed elsewhere.</summary>
     public AircraftDepreciationConfig Depreciation { get; init; } = new();
 
     /// <summary>
-    /// Pilot rest/duty and minimum turnaround for the weekly schedule builder - see docs/PLAN.md
-    /// "Virtual pilot scheduling". Shared across playstyles: a duty day and a legal rest period are
+    /// Pilot rest/duty and minimum turnaround for the weekly schedule builder. Shared across
+    /// playstyles: a duty day and a legal rest period are
     /// working-time facts, not a game-balance figure that should differ by how realistically the
     /// player wants to be billed (unlike <see cref="UnflyableSchedule"/> below, which does differ).
     /// </summary>
@@ -189,8 +200,9 @@ public sealed class EconomyConfig
 
     /// <summary>
     /// What happens to a scheduled virtual flight that cannot fly (aircraft in maintenance, still
-    /// away, or otherwise unavailable) - see docs/PLAN.md "Playstyle is not only numbers - it
-    /// changes behaviour". Resolved per playstyle by <see cref="EconomyConfigCatalog"/>, like
+    /// away, or otherwise unavailable). Playstyle is not only a set of tuned numbers - it changes
+    /// behaviour, and this is one of the two places it does (maintenance downtime is the other).
+    /// Resolved per playstyle by <see cref="EconomyConfigCatalog"/>, like
     /// <see cref="FleetFinance"/>/<see cref="Loan"/>: Casual's <see cref="UnflyableScheduleConfig.CancellationFee"/>
     /// is zero (skipped quietly, no penalty), True-life's is positive (cancelled with a real cost).
     /// Nothing in <see cref="FSOps.Server.Services.VirtualFlightResolverService"/> branches on the
@@ -625,9 +637,10 @@ public sealed class EconomyConfig
                 BaseDemandPerCatchmentPoint = 45.0,
                 ReputationBaselineScore = 50.0,
                 // 0.25, not the 0.5 this shipped with before reputation ever actually moved: solves
-                // 1 + (100-50)/50 x S = 1.25 (docs/PLAN.md point 2's "reputation 100 carries about
-                // 1.25x the passengers of reputation 50") for S. At reputation 0 this gives exactly
-                // 0.75x, also matching the plan's stated figure, comfortably above ReputationFloor.
+                // 1 + (100-50)/50 x S = 1.25 for S, 1.25x being the user-chosen magnitude:
+                // reputation 100 carries about 1.25x the passengers of reputation 50. At
+                // reputation 0 this gives exactly 0.75x, the matching figure at the other end,
+                // comfortably above ReputationFloor.
                 ReputationSensitivity = 0.25,
                 ReputationFloor = 0.3,
                 MonthlySeasonality = new[] { 0.90, 0.88, 0.95, 1.00, 1.05, 1.15, 1.22, 1.20, 1.02, 0.95, 0.88, 1.05 },
@@ -702,8 +715,10 @@ public sealed class EconomyConfig
             },
             // Casual figures - every entry is trueLife's real rate (EconomyConfigCatalog.Default())
             // times the ~8% catalogue-wide multiplier, except A320/B738 which are hard-anchored at
-            // exactly 30,000 since the whole Casual balance is anchored to that figure - see
-            // docs/PLAN.md "Casual pricing must scale the WHOLE catalogue".
+            // exactly 30,000 since the whole Casual balance is anchored to that figure. The
+            // multiplier covers the WHOLE catalogue on purpose: discounting only the starter types
+            // left every other aircraft at its real-world rate in Casual, so a smaller 737 cost
+            // eleven times an A320 and a second aircraft could bankrupt the player outright.
             LeaseRates = new List<LeaseRateConfig>
             {
                 new("A319", 28_000m),
@@ -793,7 +808,7 @@ public sealed class EconomyConfig
             // 10h rest / 13h max duty are ordinary short-haul crewing figures, comfortably inside
             // the 24h/day ceiling Validate() enforces; 45 minutes covers a realistic minimum
             // turnaround (deplane, clean, board) without being so tight that a modest schedule
-            // trips it constantly. See docs/PLAN.md "Virtual pilot scheduling".
+            // trips it constantly.
             Scheduling = new SchedulingConfig
             {
                 MinRestHoursBetweenDutyDays = 10,
@@ -834,7 +849,8 @@ public sealed record ReferenceFareConfig
     /// <summary>Raised from 35 to 65 in the fuel-honesty-fix pass: at 0.12/nm the formula fare for
     /// a short domestic hop (e.g. 275 nm -> ~£33) sat below the old floor, masking how cheap
     /// short-haul yield actually was and leaving fixed per-sector costs structurally unaffordable.
-    /// See docs/PLAN.md "Status after the fuel-honesty fix".</summary>
+    /// Raised from 35 to 65 in the same pass that stopped billing every sector for reserve and
+    /// alternate fuel it never burned; the two together are what made short-haul viable.</summary>
     public decimal MinimumFare { get; init; } = 65m;
 }
 
@@ -842,8 +858,9 @@ public sealed record ReferenceFareConfig
 /// Figures used once, when a new airline is founded. <see cref="StartingCapital"/> is a single
 /// ledger line (LedgerCategory.StartingCapital); the deposit is a separate LeasePayment line of
 /// <c>leaseRate x LeaseDepositMonths</c> for whichever aircraft type the player chose, so it
-/// scales with the starter aircraft rather than being a flat figure that only suits one type. See
-/// docs/PLAN.md "Economic balance" and "The progression loop" for the target this is tuned to.
+/// scales with the starter aircraft rather than being a flat figure that only suits one type. The
+/// target it is tuned to: start the airline lean enough that the first months feel tight and route
+/// pricing genuinely matters, while still leaving a player who flies one leg a day solvent.
 /// </summary>
 public sealed record AirlineStartupConfig
 {
@@ -853,8 +870,9 @@ public sealed record AirlineStartupConfig
     /// standard practice for a real operating lease. Reduced from 2.0 to 1.0 in the 2026-08-08
     /// progression-loop rebalance: at the game-balanced starter lease (see
     /// AircraftTypeSeeder.cs), a 1-month deposit on a second aircraft is affordable within roughly
-    /// 7-10 flights at a genuinely casual one-leg-a-day pace, which is the plan's explicit target -
-    /// see docs/PLAN.md "The progression loop". A single month is still a normal real-world lease
+    /// 7-10 flights at a genuinely casual one-leg-a-day pace. That is the deliberate target: the
+    /// second aircraft is the first real milestone of the game, and it has to feel earned but
+    /// reachable rather than distant. A single month is still a normal real-world lease
     /// deposit term, unlike the lease rate itself.</summary>
     public double LeaseDepositMonths { get; init; } = 1.0;
 
@@ -866,18 +884,21 @@ public sealed record LeaseRateConfig(string IcaoType, decimal MonthlyRate);
 
 /// <summary>Recurring monthly fleet costs that are not per-flight and not already covered by
 /// <see cref="Lease.MonthlyRate"/> or <see cref="Pilot.MonthlySalary"/>. Together with the lease
-/// payment and pilot salaries, this is the "fixed costs" side of the balance - see
-/// docs/PLAN.md "The progression loop".</summary>
+/// payment and pilot salaries, this is the "fixed costs" side of the balance - the part owed
+/// whether or not anything flies.</summary>
 public sealed record FleetFinanceConfig
 {
     /// <summary>DELIBERATE GAME-BALANCE FIGURE, NOT A REAL RATE - reduced from 50,000 (roughly
     /// 12% of the realistic figure) alongside the starter A320/B738's <c>MonthlyLeaseRate</c>
     /// (AircraftTypeSeeder.cs, also cut to ~8% of a real rate) in the 2026-08-08 progression-loop
     /// rebalance confirmed by the user: at real-world lease/insurance rates, one aircraft flown
-    /// casually (~1 leg/day) can never be profitable, which the plan's "The progression loop"
-    /// section requires. Do NOT "correct" this toward a realistic figure - see
-    /// docs/PLAN.md "Status after the progression-loop rebalance" for the numbers this was derived
-    /// from and why reverting it reopens an unplayable grind.</summary>
+    /// casually (~1 leg/day) can never be profitable - and one aircraft flown casually HAS to be
+    /// profitable, or the second aircraft never arrives and the game has no progression at all.
+    /// Do NOT "correct" this toward a realistic figure. The numbers it was derived from: at a
+    /// realistic ~50,000 the fixed cost per aircraft per month is about 439,000 against a 3,016
+    /// sector, which is a break-even near 5.6 sectors/day and roughly 252 flights before a second
+    /// aircraft is affordable. At 6,000 it is about 0.5 sectors/day and roughly 10 flights.
+    /// Reverting reopens an unplayable grind.</summary>
     public decimal MonthlyInsurancePerAircraft { get; init; } = 6_000m;
 }
 
@@ -962,9 +983,11 @@ public sealed class FuelConfig
     /// extra fuel: roughly this fraction of the EXTRA fuel mass (carried beyond what the sector
     /// itself would normally need) burned per hour it stays on board. 0.03 = ~3% of the excess
     /// mass per hour of carriage, e.g. 2,000 kg of tankered fuel carried for two hours burns
-    /// about 120 kg extra. This is fuel tankering's counterweight alongside weight-based landing
-    /// fees (see docs/PLAN.md "Persistent fuel state and tankering" - "carrying fuel costs
-    /// fuel"). Applied only to fuel carried BEYOND a sector's own normal requirement (see
+    /// about 120 kg extra. This is the ONLY counterweight to fuel tankering and has to do the whole
+    /// job alone: landing fees are charged against the airframe's fixed certificated MTOW, not the
+    /// weight on the day, so a tankered sector pays exactly the same landing fee as an empty one.
+    /// If tankering ever looks too strong, this rate is the lever - never the landing fee.
+    /// Applied only to fuel carried BEYOND a sector's own normal requirement (see
     /// BlockFuelEstimator.Estimate's extraCarriedFuelKg parameter) - a normal, non-tankering
     /// flight's block fuel and cost are completely unaffected by this constant, which is the
     /// gate BlockFuelEstimatorWeightPenaltyTests asserts.
@@ -1017,9 +1040,10 @@ public sealed class AirportSizeRateTable
 }
 
 /// <summary>
-/// A/C-check cycle, cost and downtime - see docs/PLAN.md "Maintenance" and the "Playstyle" section's
-/// behaviour table. IntervalHours/Cost/ConditionDecay/ConditionRestore are shared across playstyles
-/// ("same cycle... and same costs" per the plan); only the two downtime figures differ and are
+/// A/C-check cycle, cost and downtime. IntervalHours/Cost/ConditionDecay/ConditionRestore are
+/// shared across playstyles - both run the same cycle at the same cost, because what differs
+/// between them is how long an aircraft is grounded, not what the work costs. Only the two
+/// downtime figures differ and are
 /// resolved from each playstyle's own override block by EconomyConfigCatalog - see
 /// <see cref="EconomyConfigCatalog"/>'s class doc for why that split exists.
 /// </summary>
@@ -1035,11 +1059,11 @@ public sealed class MaintenanceConfig
     /// happens rather than scheduling a redundant A-check moments later.</summary>
     public double CCheckIntervalHours { get; init; } = 4_000;
 
-    /// <summary>DELIBERATE GAME-BALANCE FIGURE - shared by both playstyles per docs/PLAN.md's
-    /// behaviour table ("same costs"). Sized so it stays a genuine but affordable bill against a
-    /// casually-flown airline's accumulated monthly surplus by the time 500 airframe hours have
-    /// passed (see docs/PLAN.md's E1 balance guardrails) - not a real-world A-check bill, which
-    /// would run into six figures on its own.</summary>
+    /// <summary>DELIBERATE GAME-BALANCE FIGURE - shared by both playstyles, which differ in
+    /// maintenance DOWNTIME but never in maintenance COST. Sized so it stays a genuine but
+    /// affordable bill against a casually-flown airline's accumulated monthly surplus by the time
+    /// 500 airframe hours have passed - not a real-world A-check bill, which would run into six
+    /// figures on its own.</summary>
     public decimal ACheckCost { get; init; } = 45_000m;
 
     /// <summary>DELIBERATE GAME-BALANCE FIGURE, shared by both playstyles - see
@@ -1069,11 +1093,11 @@ public sealed class MaintenanceConfig
 }
 
 /// <summary>
-/// Risk-based loan pricing, resolved per playstyle - see docs/PLAN.md "Loan interest is set by the
-/// simulation, never by the player" and <see cref="FSOps.Core.Finance.LoanRateCalculator"/>, the
+/// Risk-based loan pricing, resolved per playstyle. The rate is set by the simulation and never by
+/// the player - see <see cref="FSOps.Core.Finance.LoanRateCalculator"/>, the
 /// only code allowed to turn this into an actual rate. <see cref="BaseAnnualRatePct"/> is what a
 /// loan that consumes almost none of the airline's borrowing capacity costs; <see
-/// cref="CapAnnualRatePct"/> is the hard ceiling docs/PLAN.md specifies (5% Casual / 8% True-life)
+/// cref="CapAnnualRatePct"/> is the hard ceiling (5% Casual / 8% True-life)
 /// that a loan consuming all of it (or more - an over-capacity request is clamped, not
 /// extrapolated past the cap) is charged. Every rate LoanRateCalculator produces for this
 /// playstyle falls in [BaseAnnualRatePct, CapAnnualRatePct] by construction.
@@ -1101,8 +1125,8 @@ public sealed class LoanConfig
 
 /// <summary>
 /// The depreciation curve <see cref="FSOps.Core.Finance.AircraftDepreciationCalculator"/> reads -
-/// see that class's own doc for the formula and docs/PLAN.md's requirement that sale value be
-/// "consistent with [the used-aircraft] curve, not a separate invented one" (<see cref="UsedAircraftConfig.PriceMultiplier"/>
+/// see that class's own doc for the formula. Sale value is deliberately kept consistent with the
+/// used-aircraft curve rather than being a separate invented one (<see cref="UsedAircraftConfig.PriceMultiplier"/>
 /// of 0.55 at 70% condition/70% into both maintenance cycles).
 /// <para>
 /// <b>Anchored, not guessed.</b> With the four defaults below, a used aircraft bought at exactly
@@ -1121,7 +1145,7 @@ public sealed class AircraftDepreciationConfig
     /// The ceiling on resale value as a fraction of THIS playstyle's new price
     /// (<see cref="EconomyConfig.PurchasePriceFor"/>) - what a zero-hour, 100%-condition aircraft
     /// sells for the instant it changes hands. Below 1.0 on purpose: this alone is what makes
-    /// "buy new, sell immediately" a loss (see docs/PLAN.md "Test the round trip"), before any
+    /// "buy new, sell immediately" a loss - the round trip is asserted by test - before any
     /// wear-based depreciation is even applied.
     /// </summary>
     public decimal NewAircraftResaleFactor { get; init; } = 0.80m;
@@ -1142,8 +1166,8 @@ public sealed class AircraftDepreciationConfig
 
     /// <summary>
     /// Extra flat cut applied while the aircraft is <see cref="FSOps.Core.Entities.FleetAircraftStatus.InMaintenance"/> -
-    /// docs/PLAN.md "An aircraft grounded for maintenance can still be disposed of, at a worse
-    /// figure". Needed as its own term because a just-triggered check resets
+    /// A grounded aircraft can still be sold - that is precisely the situation where someone wants
+    /// rid of it - but at a worse figure. Needed as its own term because a just-triggered check resets
     /// HoursSinceACheck/HoursSinceCCheck to (near) zero the same flight it grounds the aircraft, so
     /// the cycle-wear term alone would score a freshly-grounded aircraft as if it had low wear.
     /// </summary>
@@ -1156,8 +1180,9 @@ public sealed class AircraftDepreciationConfig
 }
 
 /// <summary>
-/// The penalty for ending a lease before it would otherwise have been billed - see docs/PLAN.md
-/// "Returning a lease early must cost something". This app's leases are open-ended/rolling (no
+/// The penalty for ending a lease before it would otherwise have been billed. Returning early has
+/// to cost something, or "lease it, fly it, hand it back before the monthly charge lands" is free
+/// capacity with no commitment. This app's leases are open-ended/rolling (no
 /// fixed term stored on <see cref="FSOps.Core.Entities.Lease"/>), so there is no "clean, penalty-
 /// free end of term" to distinguish from an early one - every termination this feature offers IS
 /// the early case, and the charge is what stands between leasing being a genuine commitment and it
@@ -1177,8 +1202,9 @@ public sealed class LeaseEarlyTerminationConfig
 }
 
 /// <summary>
-/// The fee for paying off a loan's full remaining balance before term - see docs/PLAN.md "Paying a
-/// loan back... Charge a modest early-settlement fee". Deliberately NOT charged on a partial
+/// The fee for paying off a loan's full remaining balance before term - modest, because a real
+/// lender prices in the interest it loses, and without a fee there is no trade-off in clearing a
+/// loan early at all. Deliberately NOT charged on a partial
 /// overpayment (see <see cref="FSOps.Core.Finance.LoanSettlementCalculator.ApplyOverpayment"/>'s
 /// own doc for why) - only closing the loan entirely carries it, which is also the only way early
 /// settlement could ever be "gamed" (take a loan, immediately close it, pay nothing): the fee
@@ -1192,8 +1218,9 @@ public sealed class LoanEarlySettlementConfig
 }
 
 /// <summary>
-/// Buying a used, rather than new, airframe - see docs/PLAN.md "Used aircraft - cheap to buy,
-/// expensive to run". Shared across playstyles: what a used aircraft looks like on the market
+/// Buying a used, rather than new, airframe: cheap to buy, expensive to run - the acquisition
+/// saving is handed back through the maintenance cycle. Shared across playstyles: what a used
+/// aircraft looks like on the market
 /// doesn't depend on how realistically the owning airline chose to be billed elsewhere.
 /// </summary>
 public sealed class UsedAircraftConfig
@@ -1213,8 +1240,8 @@ public sealed class UsedAircraftConfig
     /// <see cref="StartingHoursSinceACheckFraction"/>, one cycle up.</summary>
     public double StartingHoursSinceCCheckFraction { get; init; } = 0.7;
 
-    /// <summary>Condition percentage a used airframe starts at, versus 100 for new - see
-    /// docs/PLAN.md "condition decays from a lower base".</summary>
+    /// <summary>Condition percentage a used airframe starts at, versus 100 for new - the lower
+    /// base its condition then decays from.</summary>
     public double StartingConditionPercent { get; init; } = 70;
 
     /// <summary>Total lifetime airframe hours a used aircraft is shown as having already flown -
@@ -1225,12 +1252,12 @@ public sealed class UsedAircraftConfig
 }
 
 /// <summary>Pilot rest/duty and minimum turnaround for the weekly schedule builder - see
-/// <see cref="EconomyConfig.Scheduling"/>'s own doc and docs/PLAN.md "Virtual pilot scheduling".
-/// Shared across playstyles.</summary>
+/// <see cref="EconomyConfig.Scheduling"/>'s own doc. Shared across playstyles.</summary>
 public sealed class SchedulingConfig
 {
     /// <summary>Minimum hours between the end of one duty day and the start of the next, for one
-    /// pilot - "the honest reason one pilot cannot saturate an aircraft" (docs/PLAN.md).</summary>
+    /// pilot. This is the honest reason one pilot cannot saturate an aircraft, and therefore the
+    /// reason hiring a second is worthwhile rather than optional.</summary>
     public double MinRestHoursBetweenDutyDays { get; init; } = 10;
 
     /// <summary>Maximum hours from a pilot's first departure to their last arrival on any single
@@ -1238,16 +1265,18 @@ public sealed class SchedulingConfig
     public double MaxDutyHoursPerDay { get; init; } = 13;
 
     /// <summary>Minimum minutes an aircraft must sit on the ground between one leg's arrival and
-    /// its next leg's departure - shows up as its own gap in the calendar UI (docs/PLAN.md "Minimum
-    /// turnaround appears as its own gap") and is enforced here so the builder can't be saved with
+    /// its next leg's departure - drawn as its own gap in the calendar UI, so a day that cannot
+    /// physically fit is visibly over-stuffed rather than silently failing, and enforced here so
+    /// the builder can't be saved with
     /// a day that only looks fine at a glance.</summary>
     public double MinTurnaroundMinutes { get; init; } = 45;
 }
 
 /// <summary>
 /// What happens to a scheduled virtual flight that cannot fly - see
-/// <see cref="EconomyConfig.UnflyableSchedule"/>'s own doc and docs/PLAN.md's Playstyle behaviour
-/// table. Resolved per playstyle, unlike <see cref="SchedulingConfig"/> above.
+/// <see cref="EconomyConfig.UnflyableSchedule"/>'s own doc. Casual skips it quietly and
+/// unpenalised; True-life cancels it with a real, clearly-reported charge. Resolved per playstyle,
+/// unlike <see cref="SchedulingConfig"/> above.
 /// </summary>
 public sealed class UnflyableScheduleConfig
 {
@@ -1264,9 +1293,11 @@ public sealed class UnflyableScheduleConfig
 
 /// <summary>
 /// Tuning for how <see cref="Entities.Airline.ReputationScore"/> moves on one flight's outcome -
-/// see <see cref="EconomyConfig.Reputation"/>'s own doc, <see cref="ReputationCalculator"/>, and
-/// docs/PLAN.md "Progression - reputation and pilot skill", point 1 (what moves it) and point 2
-/// (magnitude). Shared across playstyles.
+/// see <see cref="EconomyConfig.Reputation"/>'s own doc and <see cref="ReputationCalculator"/>.
+/// Three things move it: on-time performance (the primary signal), cancelled and skipped sectors
+/// (a bigger hit than a mere delay), and landing quality (the smallest weight of the three). The
+/// intended magnitude is "noticeable but slow" - roughly 40-60 consistent sectors to climb from 50
+/// to 75. Shared across playstyles.
 /// </summary>
 public sealed class ReputationConfig
 {
@@ -1278,14 +1309,16 @@ public sealed class ReputationConfig
     /// The exponential-smoothing step size for one ordinary completed sector - see
     /// <see cref="ReputationCalculator.AdvanceForCompletedFlight"/>. Derived so a run of sectors
     /// each scoring the maximum (100) target crosses 75 at exactly the 50th sector - the midpoint
-    /// of docs/PLAN.md point 2's stated 40-60 sector band. Solving
+    /// of the stated 40-60 sector band. That band is a balance target asserted by test, NOT an
+    /// implementation detail to be quietly retuned so some other test passes. Solving
     /// <c>75 = 100 - 50 x (1-alpha)^50</c> for alpha gives <c>1 - 2^(-1/50) ~= 0.013767</c>.
     /// </summary>
     public double Alpha { get; init; } = 0.013767;
 
     /// <summary>How much of a completed sector's target score comes from on-time performance vs
-    /// landing quality - docs/PLAN.md point 1: on-time is the primary signal, landing is the
-    /// smallest weight of the three inputs (the third, cancellation, is not a weight in this blend
+    /// landing quality. On-time is the primary signal - it is the one that applies identically to
+    /// the player and to virtual pilots, so a large automated airline cannot dodge the metric - and
+    /// landing is the smallest weight of the three inputs (the third, cancellation, is not a weight in this blend
     /// at all - see <see cref="CancelledAlphaMultiplier"/>). Should sum to 1.0 with
     /// <see cref="LandingWeight"/> - see EconomyConfig.Validate.</summary>
     public double OnTimeWeight { get; init; } = 0.8;
@@ -1310,8 +1343,9 @@ public sealed class ReputationConfig
     /// Landing-rate bounds a sector's landing score is measured against - DELIBERATELY the same
     /// best/worst-case fpm <see cref="Scheduling.VirtualPilotPerformanceCalculator"/> uses for a
     /// virtual pilot's simulated touchdown, so a player's real touchdown and a virtual pilot's
-    /// simulated one are scored on literally the same scale - docs/PLAN.md point 1's explicit
-    /// "scored on the same scale" requirement.
+    /// simulated one are scored on literally the same scale. That is deliberate and load-bearing:
+    /// scoring landing quality at all risks rewarding flying yourself over delegating to a hired
+    /// pilot, and putting both touchdowns on one scale is the mitigation.
     /// </summary>
     public double LandingBestFpm { get; init; } = 150.0;
 
@@ -1327,8 +1361,8 @@ public sealed class ReputationConfig
 
     /// <summary>
     /// Multiplies <see cref="Alpha"/> for a cancelled or skipped sector, so it moves reputation
-    /// toward its target faster than an ordinary completed sector ever can - the mechanism behind
-    /// docs/PLAN.md point 1's "a bigger hit than a delay" requirement. Never applied to
+    /// toward its target faster than an ordinary completed sector ever can - the mechanism that
+    /// makes a schedule which cannot fly cost more standing than a mere delay does. Never applied to
     /// <see cref="Entities.FlightStatus.Suspended"/> - see <see cref="ReputationCalculator"/>'s own doc.
     /// </summary>
     public double CancelledAlphaMultiplier { get; init; } = 2.5;
@@ -1369,8 +1403,9 @@ public sealed class ReputationConfig
 /// <summary>
 /// Tuning for how <see cref="Entities.Pilot.SkillRating"/> grows with hours flown (diminishing
 /// returns, capped below perfect) and decays with idle time - see
-/// <see cref="EconomyConfig.PilotSkill"/>'s own doc, <see cref="Scheduling.PilotSkillCalculator"/>,
-/// and docs/PLAN.md "Progression - reputation and pilot skill", point 3. Shared across playstyles.
+/// <see cref="EconomyConfig.PilotSkill"/>'s own doc and <see cref="Scheduling.PilotSkillCalculator"/>.
+/// Keeping a pilot is meant to become an investment, and hiring cheap juniors a real strategy.
+/// Shared across playstyles.
 /// </summary>
 public sealed class PilotSkillConfig
 {
@@ -1381,7 +1416,7 @@ public sealed class PilotSkillConfig
 
     /// <summary>The ceiling growth asymptotically approaches but never reaches - kept below
     /// perfect (100) so landing/delay variance never fully disappears even for the most
-    /// experienced hire, per docs/PLAN.md point 3.</summary>
+    /// experienced hire.</summary>
     public double SkillCap { get; init; } = 87.0;
 
     /// <summary>Hours flown to close half the remaining gap between <see cref="StartingSkill"/>

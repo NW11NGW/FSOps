@@ -8,7 +8,7 @@ export const PX_PER_MIN = 1
 export const MIN_BLOCK_PX = 34
 
 /** Below this many minutes of gap between two consecutive legs on the same duty day (always the
- *  same airframe - a day carries exactly one aircraft, docs/PLAN.md "2a"), the grid renders the
+ *  same airframe, since a day carries exactly one aircraft), the grid renders the
  *  gap as a visibly tight "turnaround" band rather than plain empty space. This is a display hint
  *  only - the backend's own minimum-turnaround rule is authoritative and surfaces as a save
  *  conflict if violated. */

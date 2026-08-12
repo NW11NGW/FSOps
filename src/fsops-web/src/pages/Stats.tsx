@@ -80,9 +80,12 @@ export function Stats() {
         </div>
       )}
 
+      {/* The "not a calendar month" caveat only says anything at 30 days, where the window is easy
+          to mistake for one. At 7 or 90 it reads as a non-sequitur, so it is left out. */}
       <p className="text-xs text-muted-foreground">
-        Showing the trailing {overview.periodDays} days, not a calendar month - the app bills on a rolling cycle, and every figure below is measured from
-        completed flights over exactly this window.
+        Showing the trailing {overview.periodDays} days
+        {overview.periodDays === 30 ? ', not a calendar month' : ''} - the app bills on a rolling cycle, and every
+        figure below is measured from completed flights over exactly this window.
       </p>
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-4">

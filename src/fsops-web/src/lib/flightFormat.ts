@@ -58,7 +58,8 @@ export interface LandingQuality {
   label: string
 }
 
-/** Roughly -100 to -200 fpm reads as smooth, beyond -400 fpm as hard - see PLAN.md's report-card spec. */
+/** Roughly -100 to -200 fpm reads as smooth, beyond -400 fpm as hard - the bands the report card
+ *  grades a touchdown against. */
 export function assessLanding(fpm: number): LandingQuality {
   const magnitude = Math.abs(fpm)
   const verdict: LandingVerdict = magnitude <= 200 ? 'smooth' : magnitude <= 400 ? 'firm' : 'hard'

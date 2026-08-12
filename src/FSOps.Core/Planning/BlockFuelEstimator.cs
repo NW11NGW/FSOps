@@ -25,7 +25,8 @@ public record FuelBreakdown(
     /// taxi, and contingency - as opposed to <see cref="AlternateFuelKg"/> and
     /// <see cref="FinalReserveFuelKg"/>, which are loaded for safety and, on a normal flight,
     /// stay in the tanks rather than being consumed. Historically this was the interim per-sector
-    /// billing figure (see docs/PLAN.md "Status after the fuel-honesty fix"); now that fuel is a
+    /// billing figure, until it was found that charging every sector for reserve and alternate fuel
+    /// that is never burned made short-haul structurally unprofitable; now that fuel is a
     /// persisted, uplift-charged asset (see FSOps.Server.Services.FlightEconomicsPoster and
     /// FlightEndpoints.StartAsync's reconciliation), this is retained as the "no-telemetry
     /// fallback" charge - the conservative assumption used only when there's no telemetry to

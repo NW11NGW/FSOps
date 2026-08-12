@@ -64,7 +64,7 @@ builder.Services.AddFsOpsData();
 
 // The single place economy-config.json is ever loaded from - every tuning constant the economy
 // engine uses (fares, demand, fuel, costs), plus the "casual"/"trueLife" playstyle overrides (see
-// docs/PLAN.md "Playstyle - Casual vs True-life"). AppContext.BaseDirectory (not ContentRootPath)
+// EconomyConfigCatalog for how those are merged). AppContext.BaseDirectory (not ContentRootPath)
 // so this resolves the same way under "dotnet run" and a published exe, matching the world-data
 // seed path above. Falls back to EconomyConfigCatalog.Default() if the file is missing (e.g. a
 // stripped deployment); either way, both playstyles' Validate() has already run by the time this
@@ -114,8 +114,8 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<FlightLifecycleSer
 builder.Services.AddHostedService<HeartbeatService>();
 
 // Posts monthly lease/salary/insurance charges on the real-world clock, with startup catch-up for
-// however long the app was closed - see EconomyClockService's class doc and
-// docs/PLAN.md "Status after the progression-loop rebalance".
+// however long the app was closed - see EconomyClockService's class doc. Without this the balance
+// is fiction: the fixed costs the economy is tuned around would never actually be charged.
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddHostedService<EconomyClockService>();
 
@@ -135,6 +135,11 @@ builder.Services.AddSingleton<StartupReconciliationState>();
 // hold up a dashboard request.
 builder.Services.AddHttpClient("vatsim", client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<IVatsimNetworkClient, VatsimNetworkClient>();
+
+// Bundled VAT-Spy FIR/UIR geometry - the only reason en-route (CTR/FSS) controllers can be shown
+// at all. Singleton because it parses two data files once, lazily, on the first request that
+// needs a boundary; nothing is fetched, so this stays true inside the in-game panel and offline.
+builder.Services.AddSingleton<IAtcBoundarySource, VatSpyBoundarySource>();
 
 // The update check's transport - see UpdateChecker for why this exists at all and how far it is
 // allowed to go. Second and last outbound call the server makes, after VATSIM. Nothing is
@@ -156,7 +161,31 @@ var app = builder.Build();
 // listening. The world data import can take longer, so it's kicked off in the background
 // below and its progress is polled through /api/v1/worlddata/status instead of blocking
 // startup on it.
-app.Services.MigrateFsOpsDatabase();
+// The database is the whole application - every screen is a query - so a file that cannot be
+// opened is a fail-fast case, deliberately the opposite of the wall-clock catch-up services'
+// log-and-carry-on. What was wrong before was never that the app exited; it was that it exited
+// saying nothing anyone could act on. FsOpsDatabaseUnavailableException carries text written for
+// the person in front of the app, StartupFailureReport puts it where the shell can show it, and
+// exit code 3 tells the shell to go and look. See FsOpsDatabaseUnavailableException for why
+// FSOps must never repair, rename or delete a damaged database by itself.
+var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DatabaseStartup");
+try
+{
+    app.Services.MigrateFsOpsDatabase();
+    StartupFailureReport.Clear();
+}
+catch (FsOpsDatabaseUnavailableException ex)
+{
+    startupLogger.LogCritical(ex, "The database at {Path} could not be opened.", ex.DatabasePath);
+    Log.CloseAndFlush();
+    return StartupFailureReport.Write(ex.UserMessage);
+}
+catch (FsOpsBackupFailedException ex)
+{
+    startupLogger.LogCritical(ex, "The pre-migration database backup could not be taken; nothing was migrated.");
+    Log.CloseAndFlush();
+    return StartupFailureReport.Write(ex.Message);
+}
 
 // MUST run here: after the schema migration, and strictly before any hosted service starts.
 // Reservation only became a hard two-way invariant in E3, so a database written earlier can hold
@@ -253,7 +282,11 @@ if (!app.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("FSOP
 {
     try
     {
-        Process.Start(new ProcessStartInfo("http://localhost:5977") { UseShellExecute = true });
+        // The resolved port, not a hardcoded 5977. These had drifted apart: a second instance
+        // started on another port (because 5977 was taken, or FSOPS_PORT was set) opened a browser
+        // pointed at the FIRST instance - so the user was looking at a different copy of the app
+        // than the one they had just launched, with no indication anything was wrong.
+        Process.Start(new ProcessStartInfo($"http://localhost:{port}") { UseShellExecute = true });
     }
     catch
     {
@@ -261,4 +294,52 @@ if (!app.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("FSOP
     }
 }
 
-app.Run();
+// Last-chance diagnostics. This exists because of a real, repeated failure: nine identical
+// process terminations were found in the Windows Application event log with NOTHING in FSOps' own
+// log file. The throw happened inside Host.DisposeAsync() - after logging had already been torn
+// down - and it aborted the disposal loop part-way, so Serilog was never flushed. From the user's
+// side the app simply vanished, which is close to undiagnosable.
+//
+// The underlying disposal bug is fixed where it belongs, but the blind spot was the worse problem:
+// a crash that leaves no trace turns a five-minute fix into an open question that sits in the plan
+// for weeks. Anything that kills this process should now leave something behind.
+// Deliberately the logger resolved from the container, not the static Log.Fatal. UseSerilog's
+// service-provider overload configures the HOST's logger, and relying on the static one here would
+// risk writing these particular messages - the ones that explain a fatal exit - into a logger that
+// may never have been assigned. Losing this message specifically would be a bitter way to
+// reintroduce the very blind spot these handlers exist to close.
+var fatalLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("FSOps");
+
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    fatalLogger.LogCritical(e.ExceptionObject as Exception, "Unhandled exception; the process is terminating");
+    Log.CloseAndFlush();
+};
+
+// Faults on a task nobody awaited are silent by default. Several of this app's moving parts are
+// background services, so this is exactly where an error would otherwise disappear.
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    fatalLogger.LogError(e.Exception, "Unobserved task exception");
+    e.SetObserved();
+};
+
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    // Covers startup failures and anything thrown out of shutdown, including host disposal - the
+    // exact path that produced those nine silent deaths.
+    fatalLogger.LogCritical(ex, "FSOps terminated unexpectedly");
+    throw;
+}
+finally
+{
+    // Serilog's file sink buffers. Without this, the last writes before an abnormal exit - the
+    // ones that actually explain what happened - are lost.
+    Log.CloseAndFlush();
+}
+
+return 0;

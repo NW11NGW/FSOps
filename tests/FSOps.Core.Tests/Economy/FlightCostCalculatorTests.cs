@@ -16,7 +16,8 @@ public class FlightCostCalculatorTests
     [Fact]
     public void FuelUpliftCost_NegativeUplift_IsZero()
     {
-        // A defuel is treated as a non-event, not a refund - see docs/PLAN.md's fuel-state section.
+        // A defuel is treated as a non-event, not a refund - one of the two options was picked and
+        // documented deliberately, so a decrease can never be turned into a credit.
         Assert.Equal(0m, FlightCostCalculator.FuelUpliftCost(-500, 0.85m));
     }
 
@@ -49,8 +50,10 @@ public class FlightCostCalculatorTests
     [Fact]
     public void LandingFee_TankeredHeavierAircraft_PaysMore()
     {
-        // A tankered (heavier) aircraft pays more in landing fees - the second natural
-        // counterweight to fuel tankering alongside the extra burn (docs/PLAN.md).
+        // The fee scales with MTOW tonnes. NOTE this is NOT a tankering counterweight, despite
+        // reading like one here: production always passes the aircraft TYPE's fixed certificated
+        // MtowTonnes, never the weight on the day, so a tankered sector pays exactly the same
+        // landing fee as an empty one. Cost-of-carry burn is the only counterweight to tankering.
         var lightWithoutTankeredFuel = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Medium, 65);
         var heavyWithTankeredFuel = FlightCostCalculator.LandingFee(Config, AirportSizeCategory.Medium, 70);
 

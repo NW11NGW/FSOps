@@ -26,7 +26,7 @@ interface PerformMaintenanceDialogProps {
 }
 
 /**
- * "Perform maintenance now" - docs/PLAN.md "A 'perform maintenance now' button on the Fleet page":
+ * "Perform maintenance now":
  * bring an A- or C-check forward at the player's own choosing, instead of waiting for it to fall
  * due mid-week. States the trade-off plainly before confirming - full cost, full downtime, and any
  * hours already accrued on the current cycle are forfeited, not pro-rated - plus which pilots'

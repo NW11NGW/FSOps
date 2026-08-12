@@ -87,11 +87,20 @@ public static class RouteEndpoints
                 return Results.Ok(EmptyPreview(departureIcao, arrivalIcao, warnings));
             }
 
-            var result = RoutePreviewCalculator.Calculate(economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile);
+            // The range verdict is about the whole fleet, never about the one type these figures were
+            // planned with - see RouteRangeAssessor. An airline that is not created yet has no fleet
+            // to assess, and gets no range verdict at all rather than a made-up one.
+            var rangeCandidates = airline is null
+                ? Array.Empty<RangeCandidateAircraft>()
+                : await LoadRangeCandidatesAsync(db, airline.Id, ct);
+
+            var result = RoutePreviewCalculator.Calculate(
+                economyConfig, departure, arrival, aircraftType, airline?.StrategyProfile, rangeCandidates);
             warnings.AddRange(result.Validation.Warnings);
 
             // Fuel price must be visible before departure so tankering is an informed decision -
-            // see docs/PLAN.md "Persistent fuel state and tankering". Priced "today" (UtcNow) since
+            // fuel prices vary by region, and a hidden price makes the decision a guess.
+            // Priced "today" (UtcNow) since
             // this is what the player would pay uplifting right now, not at the scheduled departure
             // time. World seed falls back the same way FlightEconomicsPoster does - see its doc.
             var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
@@ -104,7 +113,8 @@ public static class RouteEndpoints
             // distance-only estimate above. Needs an airline (for strategy profile and
             // reputation) and a real sector, so it's null for onboarding or a same-airport/no
             // distance pick rather than guessing at either. No fare validation beyond ">0" per
-            // docs/PLAN.md "Fare setting and demand response" - the simulation is the guardrail.
+            // design: the simulation is the guardrail, not an input cap. A player who prices badly
+            // watches the load factor collapse in the readout instead of being refused.
             object? economics = null;
             // Also feeds the tankering advisory's MTOW check below - falls back to full capacity
             // (the more conservative assumption) when there's no live demand-modelled booking yet.
@@ -131,10 +141,10 @@ public static class RouteEndpoints
                 expectedPassengersForMtowCheck = booking.PaxBooked;
             }
 
-            // Advisory only, never automatic or enforced - see docs/PLAN.md "the tankering
-            // trade-off". Modelled as "uplift enough extra here, on top of what this leg needs
+            // Advisory only, never automatic or enforced - the player decides.
+            // Modelled as "uplift enough extra here, on top of what this leg needs
             // anyway, to also cover a same-distance return leg" - routes in this app are always
-            // bidirectional pairs (see docs/PLAN.md "Routes are always bidirectional pairs"), so
+            // bidirectional pairs, which is what makes tankering meaningful in the first place, so
             // the return leg's own normal requirement is the same great-circle distance's own
             // FuelBreakdown.TotalFuelKg, computed above for this very preview.
             object? tankeringAdvisory = null;
@@ -182,6 +192,7 @@ public static class RouteEndpoints
                     arrivalRunwayAdequate = result.Validation.ArrivalRunwayAdequate,
                     sameAirport = result.Validation.SameAirport,
                     warnings,
+                    range = RangeDto(result.Validation.Range),
                 },
             });
         }
@@ -190,6 +201,42 @@ public static class RouteEndpoints
             return Results.Ok(EmptyPreview(string.Empty, string.Empty, new List<string> { "Could not compute a preview for this route." }));
         }
     }
+
+    /// <summary>
+    /// The whole fleet in the shape <see cref="RouteRangeAssessor"/> needs. Includes every aircraft
+    /// the airline owns regardless of where it is, what it is doing or whether it is reserved -
+    /// "could this airline ever fly this sector" is a question about capability, not about today's
+    /// availability, and a route is a permanent thing being planned rather than a flight being
+    /// started right now.
+    /// </summary>
+    private static async Task<IReadOnlyList<RangeCandidateAircraft>> LoadRangeCandidatesAsync(
+        FsOpsDbContext db, Guid airlineId, CancellationToken ct)
+    {
+        var fleet = await db.FleetAircraft.Where(f => f.AirlineId == airlineId).ToListAsync(ct);
+        if (fleet.Count == 0)
+        {
+            return Array.Empty<RangeCandidateAircraft>();
+        }
+
+        var typeIds = fleet.Select(f => f.AircraftTypeId).Distinct().ToList();
+        var typesById = await db.AircraftTypes.Where(t => typeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, ct);
+
+        return fleet
+            .Where(f => typesById.ContainsKey(f.AircraftTypeId))
+            .Select(f => new RangeCandidateAircraft(
+                f.Registration, typesById[f.AircraftTypeId].Name, typesById[f.AircraftTypeId].RangeNm, f.ReservedForPlayer))
+            .ToList();
+    }
+
+    private static object RangeDto(RouteRangeAssessment assessment) => new
+    {
+        verdict = assessment.Verdict.ToString(),
+        blocking = assessment.Blocking,
+        message = assessment.Message,
+        aircraftRegistration = assessment.AircraftRegistration,
+        aircraftTypeName = assessment.AircraftTypeName,
+        operationalRangeNm = assessment.OperationalRangeNm is double nm ? Math.Round(nm, 0) : (double?)null,
+    };
 
     private static object EmptyPreview(string departureIcao, string arrivalIcao, List<string> warnings) => new
     {
@@ -213,6 +260,9 @@ public static class RouteEndpoints
             arrivalRunwayAdequate = false,
             sameAirport = departureIcao.Length > 0 && departureIcao == arrivalIcao,
             warnings,
+            // Nothing was computed, so there is no range verdict to give - and specifically nothing
+            // blocking, so an incomplete airport pick is never reported as an out-of-range route.
+            range = RangeDto(RouteRangeAssessment.NotAssessed),
         },
     };
 
@@ -427,11 +477,16 @@ public static class RouteEndpoints
             var fleetAircraftTypes = await db.AircraftTypes.Where(t => fleetTypeIds.Contains(t.Id)).ToListAsync(ct);
             aircraftType ??= fleetAircraftTypes.FirstOrDefault();
 
+            // Creating a route is guidance, not a gate, and only ONE range answer is a genuine
+            // block: nothing the airline owns can fly it. "Nothing you have reserved can fly it, but
+            // that 787 over there can" is a route worth having - it just needs the aircraft
+            // reserved, or a virtual pilot rostered onto it - and refusing to create it made that a
+            // dead end. See RouteRangeAssessor.
             var distanceNm = GreatCircle.DistanceNm(departure.Latitude, departure.Longitude, arrival.Latitude, arrival.Longitude);
-            var anyTypeInRange = fleetAircraftTypes.Any(t => distanceNm <= t.RangeNm * RoutePreviewCalculator.OperationalRangeFactor);
-            if (!anyTypeInRange)
+            var rangeAssessment = RouteRangeAssessor.Assess(distanceNm, await LoadRangeCandidatesAsync(db, airline.Id, ct));
+            if (rangeAssessment.Blocking)
             {
-                return (null, Results.BadRequest(new { error = $"This route ({distanceNm:F0} nm) is beyond your fleet's range." }));
+                return (null, Results.BadRequest(new { error = rangeAssessment.Message }));
             }
         }
 

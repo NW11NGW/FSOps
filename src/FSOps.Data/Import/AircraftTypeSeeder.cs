@@ -4,8 +4,9 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Data.Import;
 
 /// <summary>
-/// Reconciles the purchasable/leasable aircraft catalogue against the definitions below - see
-/// docs/PLAN.md "The aircraft catalogue must cover what people actually fly". Runs on every
+/// Reconciles the purchasable/leasable aircraft catalogue against the definitions below. The
+/// catalogue has to be broad enough that someone who flies the 777 or the A350 can found the
+/// airline they want - anything less is a hard stop on the core fantasy. Runs on every
 /// startup, not just once: an existing database must pick up newly added types and corrected
 /// catalogue figures (name, spec, purchase price, match patterns, ...) the same way a fresh
 /// database does, rather than being frozen at whatever the catalogue looked like when its
@@ -20,7 +21,7 @@ namespace FSOps.Data.Import;
 /// Lease, Loan, LedgerTransaction, ...).</para>
 ///
 /// <para>Matching only needs to work at family level (a 737-800 flown on a 737-600 route is fine -
-/// see PLAN.md), so every variant within a family shares the same detection patterns rather than
+/// a mismatch is informational and never penalised), so every variant within a family shares the same detection patterns rather than
 /// trying to tell specific sub-variants apart from a freeform TITLE string.</para>
 ///
 /// <para><b><c>MonthlyLeaseRate</c> on this entity is NOT read for pricing anywhere in the app -
@@ -30,8 +31,8 @@ namespace FSOps.Data.Import;
 /// <c>FleetEndpoints.LeaseAsync</c>/<c>ListAircraftTypesAsync</c> alike) resolves the rate from
 /// <c>economy-config.json</c>'s playstyle-aware <c>EconomyConfig.LeaseRates</c>, keyed by ICAO
 /// type, via <c>EconomyConfig.LeaseRateFor</c> - every type here has an entry in BOTH the
-/// <c>casual</c> and <c>trueLife</c> blocks (see docs/PLAN.md "Lease rates are per playstyle and
-/// required"), which is what LeaseRateFor's loud throw on a missing type guards. The values below
+/// <c>casual</c> and <c>trueLife</c> blocks. That is what LeaseRateFor's loud throw on a missing
+/// type guards: a type that is purchasable but unpriceable must never reach the player. The values below
 /// are left in place purely as a historical/informational default (the real-world rate at seed
 /// time); do not read them for anything that affects money.</para>
 ///
@@ -40,8 +41,9 @@ namespace FSOps.Data.Import;
 /// <c>EconomyConfig.PurchasePriceFor</c> (never read directly - see that method's own doc). True-life
 /// charges it unmodified; Casual applies a small, catalogue-wide multiplier
 /// (<c>EconomyConfig.PurchasePriceMultiplier</c>) so a used example of even the starter type is
-/// affordable after roughly ten sectors' profit - see docs/PLAN.md "Casual pricing must scale the
-/// WHOLE catalogue". Airlines never pay list: real-world launch customers routinely negotiate
+/// affordable after roughly ten sectors' profit. The multiplier covers the WHOLE catalogue rather
+/// than named types, so adding new aircraft can never leave them at real-world prices in Casual -
+/// the bug that once made a smaller 737 cost eleven times an A320. Airlines never pay list: real-world launch customers routinely negotiate
 /// 45-55% off, so each figure here is a realistic negotiated transaction value rather than a
 /// manufacturer list price.</para>
 /// </summary>

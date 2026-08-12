@@ -4,11 +4,16 @@ using FSOps.Core.Entities;
 namespace FSOps.Core.Planning;
 
 public record RoutePreviewValidation(
+    // "The aircraft type these figures were planned with can reach that far" - a statement about ONE
+    // type, which is all this calculator knows about on its own. It is NOT a verdict on whether the
+    // airline can fly the route: that is <see cref="Range"/>, and it is the only one a caller should
+    // ever block on.
     bool WithinRange,
     bool DepartureRunwayAdequate,
     bool ArrivalRunwayAdequate,
     bool SameAirport,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    RouteRangeAssessment Range);
 
 public record RoutePreviewResult(
     double DistanceNm,
@@ -31,15 +36,25 @@ public static class RoutePreviewCalculator
     /// <summary>
     /// Real aircraft rarely fly right up to their catalogue range once reserves and payload are
     /// accounted for, so "within range" uses this fraction of the published range rather than
-    /// the raw figure.
+    /// the raw figure. Defined once, in <see cref="RouteRangeAssessor"/>; kept here as an alias so
+    /// existing callers keep working and the two can never disagree.
     /// </summary>
-    public const double OperationalRangeFactor = 0.85;
+    public const double OperationalRangeFactor = RouteRangeAssessor.OperationalRangeFactor;
 
     private const int SamplePointCount = 64;
     private const double ShortHopThresholdNm = 200;
 
+    /// <param name="fleet">
+    /// Every aircraft the airline owns, for the range verdict. Pass it wherever the answer will be
+    /// shown to or enforced against the player: range is a property of the FLEET, and a verdict
+    /// derived from the single <paramref name="aircraftType"/> these figures happen to be planned
+    /// with would name an aircraft that may be irrelevant to whether the route can be flown (see
+    /// <see cref="RouteRangeAssessor"/>). Null means "don't assess" and is right for the callers
+    /// that only want block time or fuel out of this - they never surface the warnings.
+    /// </param>
     public static RoutePreviewResult Calculate(
-        EconomyConfig economyConfig, Airport departure, Airport arrival, AircraftType aircraftType, AirlineStrategyProfile? strategy)
+        EconomyConfig economyConfig, Airport departure, Airport arrival, AircraftType aircraftType, AirlineStrategyProfile? strategy,
+        IReadOnlyList<RangeCandidateAircraft>? fleet = null)
     {
         var warnings = new List<string>();
         var sameAirport = string.Equals(departure.Icao, arrival.Icao, StringComparison.OrdinalIgnoreCase);
@@ -79,11 +94,26 @@ public static class RoutePreviewCalculator
             warnings.Add("Departure and arrival are the same airport.");
         }
 
-        if (!sameAirport && !withinRange)
+        // The range verdict is a whole-fleet question - see RouteRangeAssessor's class doc for the
+        // defect that made that non-negotiable. This calculator no longer says anything at all about
+        // range in terms of the single type it planned with; it either reports the fleet's verdict or
+        // says nothing.
+        var rangeAssessment = fleet is null ? RouteRangeAssessment.NotAssessed : RouteRangeAssessor.Assess(distanceNm, fleet);
+
+        if (!sameAirport && rangeAssessment.Message is { } rangeMessage)
         {
+            warnings.Add(rangeMessage);
+        }
+        else if (!sameAirport && !withinRange && fleet is { Count: 0 })
+        {
+            // An airline with no aircraft yet (onboarding, or one that has sold everything) has no
+            // fleet to assess, but silently saying nothing about a 4,000 nm sector would be worse
+            // than useless. Say what the planning figures assumed, and say plainly that it is an
+            // assumption rather than a limit of theirs - and never block on it, because there is no
+            // fleet for it to be a fact about.
             warnings.Add(
-                $"This route ({distanceNm:F0} nm) is beyond the {aircraftType.Name}'s practical operating range " +
-                $"(~{operationalRangeNm:F0} nm once reserves are accounted for).");
+                $"This route is {distanceNm:F0} nm and you have no aircraft yet. These figures assume a " +
+                $"{aircraftType.Name}, which plans to about {operationalRangeNm:F0} nm once reserves are accounted for.");
         }
 
         if (!departureRunwayAdequate)
@@ -114,7 +144,8 @@ public static class RoutePreviewCalculator
             }
         }
 
-        var validation = new RoutePreviewValidation(withinRange, departureRunwayAdequate, arrivalRunwayAdequate, sameAirport, warnings);
+        var validation = new RoutePreviewValidation(
+            withinRange, departureRunwayAdequate, arrivalRunwayAdequate, sameAirport, warnings, rangeAssessment);
 
         return new RoutePreviewResult(distanceNm, bearingDeg, blockTime, cruiseAltitudeFt, fuel, fare, path, validation);
     }

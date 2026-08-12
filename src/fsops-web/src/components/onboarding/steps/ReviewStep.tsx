@@ -38,8 +38,8 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
   const playstyle = PLAYSTYLE_META.find((p) => p.id === data.playstyle)
   const aircraft = AIRCRAFT_OPTIONS.find((a) => a.id === data.starterAircraftFamily)
 
-  // The startup loan's rate is NEVER chosen by the player - see docs/PLAN.md "Loan interest is set
-  // by the simulation, never by the player". A brand-new airline has no trading history, so the
+  // The startup loan's rate is NEVER chosen by the player: one they could set would be set to
+  // zero, which makes borrowing free. A brand-new airline has no trading history, so the
   // backend always prices a starting loan at the playstyle's rate ceiling; startingLoanAnnualRatePct
   // (from GET /airline/playstyles) is that same figure, quoted here rather than guessed.
   const playstyleInfo = data.playstyle ? playstyles.find((p) => p.playstyle === data.playstyle) : undefined

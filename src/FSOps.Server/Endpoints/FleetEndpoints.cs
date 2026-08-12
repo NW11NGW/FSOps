@@ -10,8 +10,8 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Endpoints;
 
 /// <summary>
-/// Fleet finance and the Fleet page's backing data - see docs/PLAN.md's E1 brief ("Fleet finance",
-/// "The Fleet page"). Buying/leasing additional aircraft, buying used (cheap to buy, expensive to
+/// Fleet finance and the Fleet page's backing data.
+/// Buying/leasing additional aircraft, buying used (cheap to buy, expensive to
 /// run - <see cref="MaintenanceScheduler.ResolveUsedAircraftState"/>), and mid-game loans
 /// (<see cref="LoanEligibilityCalculator"/>), all on top of the founding lease/aircraft
 /// AirlineEndpoints.CreateAsync already sets up.
@@ -35,8 +35,9 @@ public static class FleetEndpoints
 
     /// <summary>
     /// Everything the Fleet page shows per aircraft: identity, location, ownership, condition/hours
-    /// and - for a grounded aircraft - why and until when, never just "in maintenance" (docs/PLAN.md's
-    /// E1 brief). Releases any aircraft whose downtime has already elapsed first, same as the Fly
+    /// and - for a grounded aircraft - why and until when, never just "in maintenance", which
+    /// tells the player nothing they can act on. Releases any aircraft whose downtime has already
+    /// elapsed first, same as the Fly
     /// screen's options endpoint, so status here is never stale.
     /// </summary>
     internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
@@ -103,7 +104,7 @@ public static class FleetEndpoints
     /// <summary>
     /// The buy/lease picker's catalogue: every seeded aircraft type with its new purchase price,
     /// lease rate, and - because the trade-off must be informed before purchase, never a surprise
-    /// (docs/PLAN.md "Used aircraft") - exactly what a used example of this type would cost and what
+    /// - exactly what a used example of this type would cost and what
     /// hours/condition it would start at, computed with the same
     /// <see cref="MaintenanceScheduler.ResolveUsedAircraftState"/> call BuyAsync actually applies.
     /// </summary>
@@ -158,8 +159,8 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Coarse size/role grouping for the buy/lease dialog's filter chips - docs/PLAN.md "filtering
-    /// by size or role". Purely presentational, derived from <see cref="AircraftType.Family"/>
+    /// Coarse size/role grouping for the buy/lease dialog's filter chips, so a catalogue this long
+    /// can be filtered by size or role rather than scrolled. Purely presentational, derived from <see cref="AircraftType.Family"/>
     /// rather than a stored column, so a new family only ever needs adding here, never a migration.
     /// Unrecognised families default to Narrowbody rather than throwing - informational grouping,
     /// not a safety-relevant lookup like <see cref="EconomyConfig.LeaseRateFor"/>.
@@ -183,8 +184,10 @@ public static class FleetEndpoints
     /// <summary>
     /// Leases an additional aircraft, same shape as the founding lease (AirlineEndpoints.CreateAsync):
     /// a deposit charged up-front, a recurring Lease row EconomyClockService bills monthly. Always a
-    /// fresh airframe - leasing an already-worn example isn't offered (see docs/PLAN.md, which frames
-    /// the condition/age trade-off as a BUYING decision, not a leasing one).
+    /// fresh airframe - leasing an already-worn example isn't offered, because the condition/age
+    /// trade-off is deliberately a BUYING decision. Leasing is what gets you a clean aircraft with
+    /// no capital outlay and no inherited maintenance, and that contrast is what keeps both routes
+    /// to a second aircraft worth taking.
     /// </summary>
     internal static async Task<IResult> LeaseAsync(
         LeaseAircraftRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
@@ -245,7 +248,8 @@ public static class FleetEndpoints
             Status = FleetAircraftStatus.Active,
             // Never auto-reserved itself - see EnsureSoleAircraftIsReservedAsync below, which
             // protects the PRE-EXISTING aircraft the moment this one becomes the second, per
-            // docs/PLAN.md "prefer reserving an aircraft where the player actually is".
+            // preferring to reserve an aircraft where the player actually is, so the one held back
+            // for them is genuinely usable rather than an arbitrary airframe at the wrong airport.
             ReservedForPlayer = false,
             CreatedUtc = now,
         };
@@ -281,7 +285,7 @@ public static class FleetEndpoints
     /// <summary>
     /// Buys an aircraft outright - New at full <see cref="AircraftType.PurchasePrice"/>, or Used at
     /// the discounted price and worn-in hours/condition <see cref="MaintenanceScheduler.ResolveUsedAircraftState"/>
-    /// computes (docs/PLAN.md "Used aircraft - cheap to buy, expensive to run"). Genuine milestone
+    /// computes - cheap to buy, expensive to run. Genuine milestone
     /// pricing throughout - purchase prices are realistic, unlike the deliberately-cut starter lease
     /// rate, so this is never cheap even used.
     /// </summary>
@@ -413,8 +417,9 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Live preview for the loan dialog - docs/PLAN.md "Show the rate before the player commits,
-    /// along with the monthly repayment and total interest over the term". Runs the exact same
+    /// Live preview for the loan dialog: the rate, the monthly repayment and the total interest
+    /// over the term are all shown before the player commits, so borrowing is an informed decision
+    /// rather than a surprise. Runs the exact same
     /// <see cref="LoanRateCalculator"/> + <see cref="LoanEligibilityCalculator"/> pipeline
     /// <see cref="TakeLoanAsync"/> uses, so what the dialog shows can never disagree with what
     /// taking the loan actually charges. Read-only and side-effect-free - callable as often as the
@@ -458,13 +463,15 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Mid-game borrowing - docs/PLAN.md "Loans accelerate it": extends the Loan entity/annuity
+    /// Mid-game borrowing, the classic leverage decision: borrow to grow faster and carry the
+    /// repayment, or wait and stay unencumbered. Extends the Loan entity/annuity
     /// amortisation Chunk B built for airline creation to any point in an airline's life. Bounded by
     /// <see cref="LoanEligibilityCalculator"/> so borrowing accelerates progression rather than
     /// trivialising it. Repaid monthly through EconomyClockService, same as lease/salary/insurance.
     /// The rate is ALWAYS computed by <see cref="LoanRateCalculator"/>, exactly like
-    /// <see cref="GetLoanQuoteAsync"/> previews it - see docs/PLAN.md "Loan interest is set by the
-    /// simulation, never by the player". TakeLoanRequest has no rate field at all, so there is
+    /// <see cref="GetLoanQuoteAsync"/> previews it. The rate is the simulation's to set and never
+    /// the player's: one they control can be set to zero, which makes borrowing free.
+    /// TakeLoanRequest has no rate field at all, so there is
     /// nothing here for a caller to supply or for this endpoint to trust.
     /// </summary>
     internal static async Task<IResult> TakeLoanAsync(
@@ -535,8 +542,10 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Fires the moment a fleet exceeds one aircraft - see docs/PLAN.md "Always keep one aircraft
-    /// free for the human" and "The one-aircraft case must be handled deliberately". A brand-new
+    /// Fires the moment a fleet exceeds one aircraft. One airframe is always kept free for the
+    /// human: opening the app to find your whole fleet booked out to virtual pilots is the fastest
+    /// way to feel locked out of your own airline. Below two aircraft the rule does not apply at
+    /// all, or a new airline's pilots could never fly anything. A brand-new
     /// airline's sole aircraft already starts reserved (AirlineEndpoints.CreateAsync), but this is
     /// the moment that reservation actually starts to matter (before now there was only ever one
     /// aircraft to fly anyway), so this defensively (re-)asserts it rather than trusting it was
@@ -553,7 +562,7 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Reservation is the sole gate on both sides now (docs/PLAN.md "3a", decided 2026-08-09): the
+    /// Reservation is the sole gate on both sides (decided 2026-08-09): the
     /// player may only fly a reserved aircraft, and a reserved aircraft is never offered to the
     /// scheduler - so reserving one that a virtual pilot is already scheduled to fly would create
     /// exactly the unrepresentable conflict 3a exists to prevent. Releasing (reserved -&gt; not
@@ -669,8 +678,8 @@ public static class FleetEndpoints
 
     /// <summary>
     /// Live preview for the buy/lease dialog's "randomise" button and its pre-filled suggestion -
-    /// docs/PLAN.md "Show the generated suggestion pre-filled so randomising is the zero-effort
-    /// path". Read-only: never reserves the registration, since the player may never submit the
+    /// the suggestion is shown pre-filled so that randomising is the zero-effort path and typing
+    /// over it is the deliberate one. Read-only: never reserves the registration, since the player may never submit the
     /// purchase - the actual endpoints re-check uniqueness at commit time regardless.
     /// </summary>
     internal static async Task<IResult> GetRegistrationSuggestionAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -686,9 +695,9 @@ public static class FleetEndpoints
     }
 
     /// <summary>
-    /// Repaints happen - docs/PLAN.md "Renaming an existing aircraft should also be possible from
-    /// the Fleet page ... subject to the same uniqueness rule" as a custom registration at
-    /// acquisition. Light validation only, same as buying/leasing: never a country-format check.
+    /// Repaints happen, so an existing aircraft can be renamed from the Fleet page, subject to the
+    /// same uniqueness rule as a custom registration at acquisition. Light validation only, same as
+    /// buying/leasing: never a country-format check.
     /// </summary>
     internal static async Task<IResult> RenameAsync(
         Guid id, RenameAircraftRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -731,10 +740,13 @@ public static class FleetEndpoints
 
     /// <summary>
     /// Resolves the registration for a newly acquired aircraft - either the player's own custom
-    /// entry (validated lightly, never against a country's format - docs/PLAN.md "Let the player
-    /// set a custom registration") or a freshly generated one. The country comes from the airline's
+    /// entry (validated lightly, never against a country's format: liveries vary wildly, and a
+    /// player matching a specific repaint knows what they want better than a validator does, so
+    /// only what would break the app is rejected) or a freshly generated one. The country comes from the airline's
     /// HOME AIRPORT at this exact moment (acquisition time), never from anywhere the aircraft might
-    /// later fly - see docs/PLAN.md "The country comes from the airline's HUB, always".
+    /// later fly. That is also how reality works: an aircraft is registered in its operator's home
+    /// country, not wherever it happens to be parked, so one night-stopping in Spain keeps its
+    /// G- tail.
     ///
     /// <para>Uniqueness is achieved by REGENERATING - calling <see cref="AircraftRegistrationGenerator.Generate"/>
     /// again with a fresh random draw - never by appending a numeric suffix, which is what produced
@@ -780,8 +792,8 @@ public static class FleetEndpoints
 }
 
 /// <summary>
-/// <see cref="Registration"/> is the player's own custom entry (optional) - docs/PLAN.md "Let the
-/// player set a custom registration when buying or leasing". Null or blank means "generate one".
+/// <see cref="Registration"/> is the player's own custom entry (optional) - people want their tail
+/// to match the livery they fly. Null or blank means "generate one".
 /// </summary>
 public record LeaseAircraftRequest(Guid? AircraftTypeId, string? Registration = null);
 
@@ -791,8 +803,8 @@ public record BuyAircraftRequest(Guid? AircraftTypeId, string? Condition, string
 public record RenameAircraftRequest(string? Registration);
 
 /// <summary>
-/// A mid-game loan request. Deliberately has NO rate field - see docs/PLAN.md "Loan interest is set
-/// by the simulation, never by the player". The rate is always computed by
+/// A mid-game loan request. Deliberately has NO rate field: a rate the player supplies can be set
+/// to zero, which makes borrowing free. The rate is always computed by
 /// <see cref="LoanRateCalculator"/>; there is nothing here for a caller to supply or for
 /// <see cref="FleetEndpoints.TakeLoanAsync"/> to trust.
 /// </summary>

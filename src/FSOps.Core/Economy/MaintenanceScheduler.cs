@@ -6,8 +6,8 @@ namespace FSOps.Core.Economy;
 /// Pure maintenance arithmetic: given a fleet aircraft's current hours/condition and the flight
 /// hours it has just flown, decides whether an A- or C-check fires, what it costs and how long it
 /// grounds the aircraft, and the new hours/condition figures either way. No I/O, no randomness -
-/// entirely deterministic from its inputs, same convention as the rest of the economy engine (see
-/// docs/PLAN.md "Economy design"). The caller (MaintenancePoster, in FSOps.Server) is responsible
+/// entirely deterministic from its inputs, same convention as the rest of the economy engine, so
+/// tests can assert exact numbers. The caller (MaintenancePoster, in FSOps.Server) is responsible
 /// for actually writing the result back to the database, posting the ledger line and the
 /// <see cref="MaintenanceEvent"/> row, and grounding the aircraft.
 /// </summary>
@@ -70,7 +70,8 @@ public static class MaintenanceScheduler
 
     /// <summary>
     /// Brings an A- or C-check forward at the player's own choosing, ahead of its natural due
-    /// point - see docs/PLAN.md "A 'perform maintenance now' button on the Fleet page". Charges the
+    /// point, which turns maintenance from an ambush into a decision: better to ground an aircraft
+    /// on a quiet evening than mid-week with three pilots scheduled on it. Charges the
     /// FULL cost and downtime for the check type, exactly as if it had fired naturally at its usual
     /// interval, and always resets that cycle's hours to zero - so any hours already accrued since
     /// the last check of this type are forfeited. That forfeiture is the deliberate cost of
@@ -111,7 +112,8 @@ public static class MaintenanceScheduler
 
     /// <summary>
     /// The hours/condition/purchase-price state a used airframe of the given <paramref name="newPurchasePrice"/>
-    /// starts at - see docs/PLAN.md "Used aircraft - cheap to buy, expensive to run". Pure: does not
+    /// starts at: cheap to buy, expensive to run - the acquisition saving is repaid through the
+    /// maintenance cycle, because a used airframe simply enters that cycle further along. Pure: does not
     /// touch the database or assign a registration; the caller builds the actual FleetAircraft row.
     /// </summary>
     public static UsedAircraftState ResolveUsedAircraftState(decimal newPurchasePrice, EconomyConfig config)

@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, RadioTower, Route, ShieldCheck, Users } from 'lucide-react'
 
@@ -15,6 +15,7 @@ import { useServerClock } from '@/hooks/useServerClock'
 import { useSettings } from '@/hooks/useSettings'
 import { useWorldDataStatus } from '@/hooks/useWorldDataStatus'
 import { AtcControllerList, AtcCountBadge } from '@/components/map/AtcControllerList'
+import type { MapBounds } from '@/components/map/atcVisibility'
 import { reputationDemandLabel, reputationDrivers, reputationTrendLabel } from '@/lib/reputation'
 import type { LiveContext } from '@/types/live-context'
 import type { ReputationDirection } from '@/types/airline'
@@ -54,7 +55,13 @@ export function Dashboard() {
   const serverNow = useServerClock(heartbeat)
   const worldData = useWorldDataStatus()
   const liveOps = useLiveOperations()
-  const atc = useVatsimAtc()
+  // The map can show a controller anywhere the user pans, so this asks for the world and the
+  // client narrows it to the viewport - see AtcControllerList. Geometry only because this page
+  // actually draws the polygons; a map-free consumer must not pay for coordinates it discards.
+  const atc = useVatsimAtc({ scope: 'all', geometry: true })
+  // Null until the lazy-loaded map mounts and reports its first view, which correctly leaves the
+  // list showing the server's own network scoping in the meantime rather than nothing.
+  const [atcViewport, setAtcViewport] = useState<MapBounds | null>(null)
   const reputation = useReputationSummary()
   const { fmt } = useSettings()
 
@@ -278,7 +285,9 @@ export function Dashboard() {
                 aircraft={liveOps.data.aircraft}
                 network={liveOps.data.network}
                 atcControllers={atc.status === 'ready' && atc.data?.status === 'ok' ? atc.data.controllers : []}
+                atcBoundaries={atc.data?.boundaries ?? null}
                 atcUnavailable={atc.status === 'error' || atc.data?.status === 'unavailable'}
+                onViewportChange={setAtcViewport}
                 className="h-[360px]"
               />
             </Suspense>
@@ -292,10 +301,12 @@ export function Dashboard() {
             <RadioTower className="size-4" />
             ATC coverage
           </CardTitle>
-          <AtcCountBadge status={atc.status} data={atc.data} />
+          <AtcCountBadge status={atc.status} data={atc.data} viewport={atcViewport} />
         </CardHeader>
         <CardContent>
-          <AtcControllerList status={atc.status} data={atc.data} />
+          {/* Same viewport the map above reports, so this list is always describing the picture
+              the user is currently looking at rather than a fixed slice of the world. */}
+          <AtcControllerList status={atc.status} data={atc.data} viewport={atcViewport} />
         </CardContent>
       </Card>
     </div>

@@ -24,8 +24,9 @@ public static class AirlineEndpoints
     private static string PlaystyleOptionsText => string.Join(", ", Enum.GetNames<AirlinePlaystyle>());
 
     /// <summary>
-    /// The sensible fallback when the player leaves the onboarding "your name" field blank - see
-    /// docs/PLAN.md "Default it sensibly rather than blocking progress if left blank". Matches what
+    /// The sensible fallback when the player leaves the onboarding "your name" field blank -
+    /// defaulted rather than blocking progress, since nothing about founding an airline should
+    /// stall on a field the player did not want to fill in. Matches what
     /// every player's pilot was named before this field existed, so leaving it blank changes
     /// nothing for anyone who skips it.
     /// </summary>
@@ -92,8 +93,11 @@ public static class AirlineEndpoints
             return Results.BadRequest(new { error = $"strategyProfile must be one of: {StrategyProfileOptionsText}." });
         }
 
-        // Chosen once, here, and permanent for the airline's life - see docs/PLAN.md "Playstyle -
-        // Casual vs True-life". There is deliberately no update path for this later (see
+        // Chosen once, here, and permanent for the airline's life. Casual -> True-life would
+        // multiply an existing airline's fixed costs roughly twelvefold overnight and bankrupt a
+        // healthy airline instantly; the reverse would trivialise everything already earned. Either
+        // way its whole history would have been earned under rules that no longer apply, which
+        // makes its numbers meaningless. There is deliberately no update path for this later (see
         // UpdateAsync, which never accepts it).
         if (!Enum.TryParse<AirlinePlaystyle>(request.Playstyle, ignoreCase: true, out var playstyle))
         {
@@ -161,8 +165,9 @@ public static class AirlineEndpoints
                 });
             }
 
-            // The rate is ALWAYS computed, never accepted from the request - see docs/PLAN.md "Loan
-            // interest is set by the simulation, never by the player" and LoanRateCalculator's own
+            // The rate is ALWAYS computed, never accepted from the request: a rate the player
+            // supplies can be set to zero, which makes borrowing free and turns a loan from a
+            // trade-off into an exploit. See LoanRateCalculator's own
             // doc. StartingLoanRequest deliberately has no annualRatePct field at all, so there is
             // nothing here to validate or ignore; a caller that still sends one (an old client, or a
             // deliberate probe) is simply talking to a schema that no longer has that property, and
@@ -212,9 +217,9 @@ public static class AirlineEndpoints
             AirlineId = airline.Id,
             AircraftTypeId = aircraftType.Id,
             Registration = registration,
-            // A new airline leases its starter aircraft rather than buying outright - see
-            // docs/PLAN.md "Economic balance". Buying becomes a mid-game milestone funded by
-            // retained profit or a deliberate loan, not the opening move.
+            // A new airline leases its starter aircraft rather than buying outright, which is how
+            // a real start-up begins and what keeps starting capital lean. Buying becomes a
+            // mid-game milestone funded by retained profit or a deliberate loan, not the opening move.
             Ownership = AircraftOwnership.Leased,
             AirframeHours = 0,
             HoursSinceACheck = 0,
@@ -223,8 +228,10 @@ public static class AirlineEndpoints
             LocationIcao = homeAirportIcao,
             Status = FleetAircraftStatus.Active,
             // A brand-new airline has exactly one aircraft, so it defaults to reserved-for-player -
-            // see docs/PLAN.md "The one-aircraft case must be handled deliberately": the plan wants
-            // the player to choose explicitly whether a pilot may fly their only aircraft, and
+            // the one-aircraft case is handled deliberately rather than by the general rule. If
+            // the reserve-one-for-the-player rule applied unconditionally, virtual pilots could
+            // never fly at all for a new airline. So the player chooses explicitly whether a pilot
+            // may fly their only aircraft, and
             // defaulting to protected is the safe choice for that explicit-choice requirement
             // (releasing it is one click away via PUT /fleet/{id}/reservation, forcing it to fly
             // for a pilot silently would not be). See FleetAircraft.ReservedForPlayer's own doc for
@@ -255,8 +262,9 @@ public static class AirlineEndpoints
             CreatedUtc = now,
         };
 
-        // The player names their own pilot at onboarding (docs/PLAN.md "You cannot name your own
-        // pilot") - currentUser.DisplayName is a fixed placeholder ("Local Pilot") from the
+        // The player names their own pilot at onboarding - it is their own identity in their own
+        // airline, appearing on every flight they fly and throughout the Pilots page.
+        // currentUser.DisplayName is a fixed placeholder ("Local Pilot") from the
         // single-user LocalUser stub, never a real identity. Trimmed and defaulted sensibly rather
         // than blocking founding an airline over a blank field; the same default LocalUser used to
         // supply unconditionally, so blank input changes nothing for a player who skips it.
@@ -560,8 +568,9 @@ public static class AirlineEndpoints
 
     /// <summary>
     /// The window of most recent Completed/Cancelled/Skipped sectors this endpoint bases the
-    /// reputation summary on - "noticeable but slow" (docs/PLAN.md point 2: 40-60 sectors moves the
-    /// score meaningfully) means a single sector should never swing "direction", so this looks at a
+    /// reputation summary on. Reputation is tuned to be "noticeable but slow" - 40-60 consistent
+    /// sectors to climb from 50 to 75 - so a single sector should never swing the reported
+    /// "direction". This therefore looks at a
     /// recent handful rather than either one flight or the airline's entire history.
     /// </summary>
     private const int ReputationWindowSectors = 15;
@@ -572,9 +581,9 @@ public static class AirlineEndpoints
     private const double ReputationDirectionThreshold = 2.0;
 
     /// <summary>
-    /// The dashboard's reputation card - see docs/PLAN.md "Progression - reputation and pilot
-    /// skill", point 5: "a number that silently governs demand and never appears in the UI is
-    /// indistinguishable from a bug". <see cref="Airline.ReputationScore"/> is already a plain field
+    /// The dashboard's reputation card. A number that silently governs demand and never appears in
+    /// the UI is indistinguishable from a bug, which is the whole reason this endpoint exists.
+    /// <see cref="Airline.ReputationScore"/> is already a plain field
     /// on <see cref="GetAsync"/>/<see cref="GetSummaryAsync"/>; this endpoint answers the two things
     /// a bare number can't show - which way it is moving, and what is moving it. Both are derived
     /// fresh from the append-only <see cref="Flight"/> rows on every call (point 4: "the safest
@@ -608,9 +617,9 @@ public static class AirlineEndpoints
             .Take(ReputationWindowSectors)
             .ToList();
 
-        // A brand-new airline (or one with nothing recent) has no honest trend to report - see
-        // docs/PLAN.md "a brand-new airline sits at exactly 50 with no history... must look
-        // deliberate". "new" is a distinct value from "steady" so the UI can say so plainly rather
+        // A brand-new airline (or one with nothing recent) has no honest trend to report: it sits
+        // at exactly 50 with no history behind it, and that state has to read as deliberate rather
+        // than as a broken reading. "new" is a distinct value from "steady" so the UI can say so plainly rather
         // than implying a flat trend it has no evidence for.
         if (recent.Count == 0)
         {
@@ -690,8 +699,9 @@ public static class AirlineEndpoints
     /// <summary>
     /// The itemised ledger, newest first - so the player can see exactly what they were charged and
     /// why, including the monthly lease/salary/insurance lines <see cref="FSOps.Server.Services.EconomyClockService"/>
-    /// posts. Backend visibility only (see docs/PLAN.md Chunk E1) - no Finances page consumes this
-    /// yet. <c>limit</c> caps the page size (default 100, max 1000); <c>cashBalance</c> and
+    /// posts. This is the plain backend view and nothing in the UI consumes it: the Finances page
+    /// has its own richer, category-filterable <c>GET /finance/ledger</c> instead.
+    /// <c>limit</c> caps the page size (default 100, max 1000); <c>cashBalance</c> and
     /// <c>totalCount</c> are computed from the whole ledger, not just the returned page, so the UI
     /// can show "showing 100 of 4,213" honestly. SQLite can't translate OrderBy over
     /// DateTimeOffset, so the ledger is materialised first and ordered in memory - same rule as
@@ -784,15 +794,16 @@ public record CreateAirlineRequest(
     string? CurrencyCode,
     StartingLoanRequest? StartingLoan,
     /// <summary>
-    /// The player's own name for their founding pilot - see docs/PLAN.md "You cannot name your own
-    /// pilot". Optional: blank or omitted falls back to <see cref="AirlineEndpoints.DefaultPilotName"/>
+    /// The player's own name for their founding pilot - it appears on every flight they fly and
+    /// throughout the Pilots page, so it should be theirs rather than a placeholder.
+    /// Optional: blank or omitted falls back to <see cref="AirlineEndpoints.DefaultPilotName"/>
     /// rather than blocking airline creation.
     /// </summary>
     string? PilotName = null);
 
 /// <summary>
-/// A loan taken at the same moment the airline is created. Deliberately has NO rate field - see
-/// docs/PLAN.md "Loan interest is set by the simulation, never by the player". The rate is always
+/// A loan taken at the same moment the airline is created. Deliberately has NO rate field: a rate
+/// the player supplies can be set to zero, which makes borrowing free. The rate is always
 /// computed by <see cref="FSOps.Core.Finance.LoanRateCalculator"/>; there is nothing here for a
 /// caller to supply or for the endpoint to trust.
 /// </summary>
@@ -823,7 +834,8 @@ public record UpdateAirlineRequest(
     string? IcaoCode,
     string? HomeAirportIcao,
     /// <summary>
-    /// Renames the player's own pilot from Settings - docs/PLAN.md "Editable later from Settings".
+    /// Renames the player's own pilot from Settings, since the name chosen at onboarding should not
+    /// be permanent.
     /// Null means "leave unchanged" (same convention as every other field here); an explicit blank
     /// string is rejected rather than silently reset, since a deliberate edit blanking the field is
     /// a mistake to catch, not the same "leave it blank" case onboarding allows.
@@ -848,13 +860,14 @@ public record StrategyProfileInfo(
 
 /// <summary>
 /// The figures and honest description behind one playstyle, for the onboarding picker and the
-/// read-only Settings display - see docs/PLAN.md "Playstyle - Casual vs True-life". The two
+/// read-only Settings display: the consequences of the choice have to be legible before it is
+/// made, because it is locked for the airline's life. The two
 /// starter lease rates are shown separately (rather than a single figure) because the founding
 /// lease depends on which starter aircraft family the player picks alongside this.
 /// <para>
 /// <see cref="StartingLoanAnnualRatePct"/> is included so the onboarding review step can show the
-/// rate a startup loan will actually carry, never a player-editable field - see docs/PLAN.md "Loan
-/// interest is set by the simulation, never by the player". It always equals
+/// rate a startup loan will actually carry, never a player-editable field - taking a loan should
+/// be an informed decision, not a surprise, and the rate is the simulation's to set. It always equals
 /// <see cref="LoanConfig.CapAnnualRatePct"/>: a brand-new airline has no trading history, so
 /// <see cref="LoanRateCalculator"/> always prices its starting loan at the playstyle's
 /// ceiling (see that class's own doc) - this is simply that same, single source of truth, quoted

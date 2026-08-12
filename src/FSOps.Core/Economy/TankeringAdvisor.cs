@@ -2,8 +2,8 @@ namespace FSOps.Core.Economy;
 
 /// <summary>
 /// Advisory-only comparison of "uplift extra here to cover the return leg" against "buy minimal
-/// here, refuel at the destination" - see docs/PLAN.md "Persistent fuel state and tankering",
-/// "the trade-off". Every figure is a raw number, never pre-formatted - money is stored in base
+/// here, refuel at the destination". Advisory only, never automatic: the player decides.
+/// Every figure is a raw number, never pre-formatted - money is stored in base
 /// units and formatted only for display (the currency is user-selectable), so callers own that.
 /// </summary>
 public sealed record TankeringAdvisory(
@@ -22,8 +22,8 @@ public sealed record TankeringAdvisory(
 /// the return leg (paying this airport's price for all of it, but burning a little more of it in
 /// the process - <see cref="EconomyConfig.CostOfCarryRatePerHour"/>) against buying nothing extra
 /// here and refuelling the return leg at the destination's price. Deliberately does not touch
-/// weight-based landing fees as a further counterweight - see the docs/PLAN.md finding recorded
-/// alongside this class in Chunk E1's report: FlightCostCalculator.LandingFee is keyed off the
+/// weight-based landing fees as a further counterweight. This was checked rather than assumed, and
+/// the answer is that there is no second counterweight: FlightCostCalculator.LandingFee is keyed off the
 /// aircraft type's fixed MtowTonnes, not the aircraft's actual operating weight, so carrying extra
 /// fuel does not currently raise the landing fee it will pay. Cost-of-carry burn is therefore the
 /// only counterweight this advisory can honestly account for.

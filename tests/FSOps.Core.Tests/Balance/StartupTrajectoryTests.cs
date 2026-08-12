@@ -6,7 +6,7 @@ using FSOps.Core.Planning;
 namespace FSOps.Core.Tests.Balance;
 
 /// <summary>
-/// Validates docs/PLAN.md's "The progression loop" section end to end: one aircraft flown
+/// Validates the progression loop end to end: one aircraft flown
 /// casually (roughly one leg a day) must be genuinely profitable, not merely break-even, and a
 /// second aircraft's lease deposit must be affordable within about 7-10 flights at that pace.
 /// Every number here is computed from the real economy engine (ReferenceFareCalculator,
@@ -16,7 +16,7 @@ namespace FSOps.Core.Tests.Balance;
 /// FSOps.Data (not referenced from this project); both are commented with the exact
 /// AircraftTypeSeeder A320 entry they must stay in sync with.
 ///
-/// <para><b>History, briefly (see docs/PLAN.md for the full account):</b> Chunk D's original
+/// <para><b>History, briefly:</b> the original
 /// break-even target was "4-5 sectors/day/aircraft". The fuel-honesty fix (charging
 /// <see cref="FuelBreakdown.ChargedFuelKg"/> - trip + taxi + contingency only - instead of the
 /// full block-fuel figure, which had been silently over-billing every sector for reserve/alternate
@@ -32,7 +32,7 @@ namespace FSOps.Core.Tests.Balance;
 /// contain are gone - that framing no longer describes the design.</para>
 ///
 /// <para><b>The scenario:</b> a 275.2 nm short-haul sector - the real distance between EGGD and
-/// EGPH, one of the routes this rebalance was checked against (see docs/PLAN.md and
+/// EGPH, one of the routes this rebalance was checked against (see also
 /// FlightFuelChargeBalanceTests) - Medium-to-Medium airports, flown on the Domestic strategy
 /// profile at exactly the suggested (reference) fare, the fare a new player actually sees. 180
 /// seats, 78t MTOW, 447 kt cruise and a 2,500 kg/h burn are the seeded A320's own figures. Fuel
@@ -261,8 +261,7 @@ public class StartupTrajectoryTests
 
         // 2. Reachable after a plausible period of profitable operation, at an established,
         // multi-pilot-fed operating tempo well above the casual one-leg-a-day baseline above -
-        // buying outright is explicitly still a later, ambitious milestone (docs/PLAN.md "The
-        // progression loop": "buying outright stays the long-term milestone it already is"), not
+        // buying outright is explicitly still a later, ambitious milestone rather than
         // something casual play alone should fund. Ramp to, then hold, 8 sectors/day for 24
         // months, then take a loan for whatever shortfall remains and confirm it is serviceable
         // out of ongoing profit at that same tempo.

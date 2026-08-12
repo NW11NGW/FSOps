@@ -29,10 +29,21 @@ public class PilotScheduleValidatorTests
         [RouteElsewhere] = new Route { Id = RouteElsewhere, DepartureIcao = "EGSS", ArrivalIcao = "EGPF", DistanceNm = 300 },
     };
 
+    private static readonly Guid NarrowbodyTypeId = Guid.NewGuid();
+
     private static Dictionary<Guid, FleetAircraft> Fleet(bool reserved = false) => new()
     {
-        [AircraftX] = new FleetAircraft { Id = AircraftX, Registration = "G-ONEX", ReservedForPlayer = reserved },
-        [AircraftY] = new FleetAircraft { Id = AircraftY, Registration = "G-TWOY", ReservedForPlayer = false },
+        [AircraftX] = new FleetAircraft { Id = AircraftX, Registration = "G-ONEX", ReservedForPlayer = reserved, AircraftTypeId = NarrowbodyTypeId },
+        [AircraftY] = new FleetAircraft { Id = AircraftY, Registration = "G-TWOY", ReservedForPlayer = false, AircraftTypeId = NarrowbodyTypeId },
+    };
+
+    /// <summary>Keyed by AircraftTypeId, as the validator's range check expects. 3,300 nm published
+    /// (2,805 nm operational) comfortably covers every route in <see cref="Routes"/>, so range is a
+    /// non-event for every test that isn't specifically about it - pass
+    /// <paramref name="rangeNm"/> to make it one.</summary>
+    private static Dictionary<Guid, AircraftType> AircraftTypes(int rangeNm = 3300) => new()
+    {
+        [NarrowbodyTypeId] = new AircraftType { Id = NarrowbodyTypeId, Name = "Airbus A320", RangeNm = rangeNm },
     };
 
     private static Dictionary<(Guid, Guid), int> BlockMinutes() => new()
@@ -81,7 +92,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.True(result.IsValid);
         Assert.Empty(result.Conflicts);
@@ -99,7 +110,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteElsewhere, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("EGPH") && c.Contains("EGSS"));
@@ -120,7 +131,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteElsewhere, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(includeHubToElsewhere: true));
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs(includeHubToElsewhere: true));
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("EGPH") && c.Contains("EGSS"));
@@ -138,7 +149,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
     }
@@ -152,7 +163,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotB, DayOfWeek.Monday, new TimeSpan(8, 30, 0), RouteOut, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("double-booked"));
@@ -169,7 +180,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(9, 45, 0), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("turnaround") || c.Contains("minutes on the ground"));
@@ -188,7 +199,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Tuesday, new TimeSpan(7, 0, 0), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("rest") || c.Contains("hours"));
@@ -208,7 +219,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(19, 0, 0), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("maximum duty day"));
@@ -223,10 +234,101 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(reserved: true), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(reserved: true), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("reserved for the player"));
+    }
+
+    [Fact]
+    public void Validate_SameReservedAircraftFlownEveryWeekday_ReportsItOnce()
+    {
+        // Same one-plain-reason rule the over-range check already keeps: five weekdays on the one
+        // reserved airframe is ONE problem, and repeating the identical sentence five times is the
+        // wall of text that rule exists to prevent.
+        var entries = Enumerable.Range(1, 5)
+            .Select(day => new PilotScheduleEntryInput(PilotA, (DayOfWeek)day, TimeSpan.FromHours(8), RouteOut, AircraftX))
+            .ToArray();
+
+        var result = PilotScheduleValidator.Validate(
+            entries, Routes(), Fleet(reserved: true), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
+
+        Assert.False(result.IsValid);
+        Assert.Single(result.Conflicts);
+        Assert.Contains("G-ONEX", result.Conflicts[0]);
+    }
+
+    [Fact]
+    public void Validate_BrokenChain_QuotesTheArrivalTimeOfTheLegThatLanded_NotItsDeparture()
+    {
+        // "G-ONEX lands at EGPH (Monday 08:00)" for a leg that DEPARTED at 08:00 reads as a broken
+        // clock - the sentence must quote when it actually lands (08:00 + 65 min block = 09:05).
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(12), RouteElsewhere, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
+
+        Assert.False(result.IsValid);
+        var chainConflict = Assert.Single(result.Conflicts, c => c.Contains("lands at EGPH"));
+        Assert.Contains("lands at EGPH (Monday 09:05)", chainConflict);
+        Assert.Contains("departs EGSS (Monday 12:00)", chainConflict);
+    }
+
+    [Fact]
+    public void Validate_LegBeyondTheAircraftsRange_IsRefusedWithOnePlainReason()
+    {
+        // J24: an A320 must never be scheduled beyond its range. 275.2 nm against a 300 nm published
+        // range (255 nm operational) is over by a whisker, which is the interesting boundary - the
+        // refusal comes from the derated figure, not the catalogue one.
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(
+            entries, Routes(), Fleet(), AircraftTypes(rangeNm: 300), BlockMinutes(), Config, ExistingRoutePairs());
+
+        Assert.False(result.IsValid);
+        Assert.All(result.Conflicts, c => Assert.Contains("beyond G-ONEX's", c));
+        Assert.Contains(result.Conflicts, c => c.Contains("EGGD -> EGPH") && c.Contains("275 nm") && c.Contains("255 nm"));
+        // One reason per (route, aircraft) pair, not one per leg - the two entries above are two
+        // different routes, so exactly two conflicts, not four and not one.
+        Assert.Equal(2, result.Conflicts.Count);
+    }
+
+    [Fact]
+    public void Validate_SameOverRangeLegFlownEveryWeekday_ReportsItOnce()
+    {
+        var entries = Enumerable.Range(1, 5)
+            .Select(day => new PilotScheduleEntryInput(PilotA, (DayOfWeek)day, TimeSpan.FromHours(8), RouteOut, AircraftX))
+            .ToArray();
+
+        var result = PilotScheduleValidator.Validate(
+            entries, Routes(), Fleet(), AircraftTypes(rangeNm: 300), BlockMinutes(), Config, ExistingRoutePairs());
+
+        Assert.False(result.IsValid);
+        Assert.Single(result.Conflicts);
+    }
+
+    [Fact]
+    public void Validate_LegExactlyAtTheOperationalRangeLimit_IsAllowed()
+    {
+        // 275.2 nm against 324 nm published = 275.4 nm operational. The boundary must be inclusive:
+        // "can just about make it" is a legal schedule, not a refusal.
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(
+            entries, Routes(), Fleet(), AircraftTypes(rangeNm: 324), BlockMinutes(), Config, ExistingRoutePairs());
+
+        Assert.True(result.IsValid);
     }
 
     [Fact]
@@ -241,7 +343,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
 
         Assert.True(result.IsValid);
     }
@@ -260,7 +362,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteElsewhere, AircraftX), // departs EGSS
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("EGPH") && c.Contains("EGSS"));
@@ -279,7 +381,7 @@ public class PilotScheduleValidatorTests
         };
 
         var result = PilotScheduleValidator.Validate(
-            entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(includeHubToElsewhere: true), requireWeekClosure: false);
+            entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs(includeHubToElsewhere: true), requireWeekClosure: false);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("schedule a EGPH -> EGSS leg"));
@@ -298,14 +400,14 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Tuesday, new TimeSpan(7, 0, 0), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("rest") || c.Contains("hours"));
     }
 
     /// <summary>
-    /// Regression for the 2026-08-09 real-use defect (docs/PLAN.md "2c"): a duty day was accepted
+    /// Regression for the 2026-08-09 real-use defect: a duty day was accepted
     /// with two legs, both EGPH -&gt; EGLL, on two DIFFERENT airframes (G-PKS0, then a rendered "38m
     /// turnaround", then G-LHRE) - impossible, because after the first leg the first aircraft is at
     /// EGLL, and the second aircraft was never checked to be at EGPH at all. Root cause:
@@ -324,7 +426,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(14, 50, 0), RouteBack, AircraftY), // EGPH -> EGGD on G-TWOY
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs(), requireWeekClosure: false);
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("G-TWOY"));
@@ -344,7 +446,7 @@ public class PilotScheduleValidatorTests
             new PilotScheduleEntryInput(PilotB, DayOfWeek.Tuesday, TimeSpan.FromHours(10), RouteBack, AircraftX),
         };
 
-        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), BlockMinutes(), Config, ExistingRoutePairs());
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), Config, ExistingRoutePairs());
 
         Assert.True(result.IsValid);
     }

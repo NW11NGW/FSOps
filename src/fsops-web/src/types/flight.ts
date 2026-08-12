@@ -100,7 +100,7 @@ export interface FlightDetail {
   /** The fleet aircraft's CURRENT persisted fuel (FleetAircraft.FuelOnBoardKg) - reads as "fuel
    *  remaining after this flight" for the common case of viewing the report card right after
    *  landing, but drifts once a later flight has flown this aircraft. Null if the aircraft record
-   *  is gone. See docs/PLAN.md "Persistent fuel state and tankering". */
+   *  is gone - fuel is a persisted asset on the airframe, not a per-flight figure. */
   aircraftFuelOnBoardKg: number | null
 }
 
@@ -164,8 +164,8 @@ export interface SimStatus {
 /**
  * One fleet aircraft PHYSICALLY AT a route's departure airport, as returned by
  * GET /flights/options' `aircraftOptions`. Every aircraft present is listed here - flyable or not
- * (docs/PLAN.md "2b"; the 2026-08-09 defect this fixes was silently dropping the ones that
- * weren't) - `isFlyable`/`reason` say which. This does NOT carry `icaoType`/`family`; join against
+ * (the 2026-08-09 defect this fixes was silently dropping the ones that weren't, which taught the
+ * player nothing) - `isFlyable`/`reason` say which. This does NOT carry `icaoType`/`family`; join against
  * GET /fleet/aircraft-types by `aircraftTypeId` for those (see routeRow.ts's `AircraftOptionRow`),
  * needed for the SimBrief hand-off and the sim-aircraft readiness check.
  */

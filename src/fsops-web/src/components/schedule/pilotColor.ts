@@ -1,6 +1,6 @@
 /**
- * Deterministic colour assignment for the schedule overview's by-aircraft view (docs/PLAN.md
- * "2a": "every aircraft as a row ... colour-coded by pilot"). Six categorical hues (the
+ * Deterministic colour assignment for the schedule overview's by-aircraft view, where every
+ * aircraft is a row and its legs are colour-coded by pilot. Six categorical hues (the
  * `--chart-*` tokens in index.css, tuned for both themes) cycled by a stable hash of the pilot id
  * - not by list position, so a given pilot keeps the same colour across renders and toggles
  * between the by-pilot and by-aircraft views, even as other pilots are hired or released.

@@ -16,12 +16,25 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
   </ItemGroup>
 
-  <!-- Read-only seed data (OurAirports CSVs, gzip-compressed) lives in a repo-root data/
-       folder to keep it out of every project's own tree. It ships next to the built
-       assembly so AppContext.BaseDirectory finds it the same way in dev and once published. -->
+  <!-- Read-only seed data (OurAirports CSVs and the VAT-Spy FIR boundary files, all
+       gzip-compressed) lives in a repo-root data/ folder to keep it out of every project's own
+       tree. It ships next to the built assembly so AppContext.BaseDirectory finds it the same way
+       in dev and once published. The recursive glob already carries sub-folders through - a file
+       at data/vatspy/X.gz links to data\vatspy\X.gz - so new bundled data needs no new item. -->
   <ItemGroup>
     <None Include="..\..\data\**\*.gz">
       <Link>data\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- The VAT-Spy boundary data is CC BY-SA 4.0, unlike the public-domain OurAirports CSVs beside
+       it, so its attribution notice has to travel with the files it covers rather than living only
+       in the repository. Separate item because the glob above is deliberately .gz-only. -->
+  <ItemGroup>
+    <None Include="..\..\data\vatspy\ATTRIBUTION.txt">
+      <Link>data\vatspy\ATTRIBUTION.txt</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>

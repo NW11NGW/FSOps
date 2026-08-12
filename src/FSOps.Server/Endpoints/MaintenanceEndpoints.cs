@@ -10,8 +10,7 @@ namespace FSOps.Server.Endpoints;
 
 /// <summary>
 /// Maintenance controls beyond the automatic accrual/grounding <see cref="MaintenancePoster"/>
-/// already does at flight completion - see docs/PLAN.md "Maintenance and schedules - pausing,
-/// planning it early, and mid-flight":
+/// already does at flight completion:
 /// <list type="bullet">
 /// <item><b>Perform maintenance now</b> - bring an A- or C-check forward at the player's own
 /// choosing, at full cost, forfeiting whatever hours remained on the current cycle. Quote-then-
@@ -52,8 +51,10 @@ public static class MaintenanceEndpoints
 
     /// <summary>
     /// Everything the player needs to decide whether, and which check, to bring forward - see
-    /// docs/PLAN.md: "Show, before confirming: hours remaining until it would fall due naturally,
-    /// the cost, the downtime, and which pilots' schedules will be affected." Returns a quote for
+    /// shown before confirming: hours remaining until it would fall due naturally, the cost, the
+    /// downtime, and which pilots' schedules will be affected. The trade-off has to be stated,
+    /// because bringing a check forward forfeits hours already paid for through accrual, and what
+    /// it buys is control over when the downtime lands. Returns a quote for
     /// BOTH check types so the choice is made with full information in one screen, rather than a
     /// round trip per option.
     /// </summary>
@@ -224,8 +225,9 @@ public static class MaintenanceEndpoints
     }
 
     /// <summary>
-    /// The "while you were away" catch-up summary - docs/PLAN.md "'While you were away' - the app
-    /// must explain catch-up": what was charged, what virtual pilots flew and earned, maintenance
+    /// The "while you were away" catch-up summary. Time is real-world time, not time with the app
+    /// open, so reopening after months charges months of bills at once - which looks exactly like a
+    /// bug unless it is explained: what was charged, what virtual pilots flew and earned, maintenance
     /// that fell due, and anything skipped/cancelled/suspended and why, for the window since the
     /// player last acknowledged a summary. Side-effect free (never advances
     /// <see cref="EconomyState.AwaySummaryLastViewedUtc"/> itself) so polling or refreshing the

@@ -28,7 +28,7 @@ namespace FSOps.Data.Migrations
                 defaultValue: false);
 
             // HAND-CORRECTED - do not trust the scaffolded "false for everyone" default above.
-            // docs/PLAN.md "Always keep one aircraft free for the human" requires exactly one
+            // Keeping one aircraft free for the human requires exactly one
             // aircraft reserved per airline once its fleet exceeds one aircraft (and its single
             // aircraft reserved when it has only one) - a rule this app is only now old enough to
             // have pre-existing fleets for. Leaving every existing row at the scaffolded false

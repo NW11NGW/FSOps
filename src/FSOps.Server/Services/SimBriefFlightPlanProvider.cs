@@ -5,8 +5,9 @@ namespace FSOps.Server.Services;
 
 /// <summary>
 /// Fetches the player's latest OFP from SimBrief's free, keyless dispatch API and turns it into a
-/// FlightPlan for the sector they're about to fly - see docs/PLAN.md's "External tools and
-/// interoperability" and "Flight plan import" notes. The endpoint identifies the player purely by
+/// FlightPlan for the sector they're about to fly. Importing a real OFP is a convenience and never
+/// a requirement: planning in SimBrief, elsewhere, or not at all earns exactly the same, because
+/// FSOps bills from what the sim reported. The endpoint identifies the player purely by
 /// their SimBrief Pilot ID (UserSettings.SimBriefPilotId, set on the Settings page); there is no
 /// OAuth and FSOps never sees a SimBrief password.
 ///

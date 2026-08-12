@@ -8,7 +8,7 @@ namespace FSOps.Server.Services;
 
 /// <summary>
 /// The only place a flight's money becomes real, append-only <see cref="LedgerTransaction"/> rows.
-/// Every integrity rule in docs/PLAN.md "Integrity" is enforced structurally here rather than
+/// Every integrity rule is enforced structurally here rather than
 /// re-implemented by each caller: a slew/position-jump flight posts no ticket revenue because the
 /// code path that would add it is never reached, not because a computed figure gets zeroed out
 /// afterwards.
@@ -109,7 +109,8 @@ public static class FlightEconomicsPoster
         }
 
         // Structural gate: a slew/position-jump flight never reaches the code below that would
-        // compute or post ticket revenue - see docs/PLAN.md "Integrity". Fuel, charged separately
+        // compute or post ticket revenue: teleporting the aircraft is unambiguous, and a sector
+        // flown that way is not paid for. Fuel, charged separately
         // at uplift, is the only cost that stays posted for a sector like this.
         var payable = !(flight.SlewDetected || flight.PositionJumpDetected);
         if (!payable)

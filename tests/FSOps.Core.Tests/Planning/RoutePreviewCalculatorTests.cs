@@ -101,12 +101,66 @@ public class RoutePreviewCalculatorTests
             MinRunwayFt = 5500, ServiceCeilingFt = 39000,
         };
 
+        // The verdict is now about the FLEET rather than about whichever type these figures happened
+        // to be planned with (see RouteRangeAssessor), so the fleet is what makes the sector
+        // unflyable here: one short-legged airframe and nothing else.
+        var fleet = new[] { new RangeCandidateAircraft("G-TINY", shortRangeAircraft.Name, shortRangeAircraft.RangeNm, ReservedForPlayer: true) };
+
         foreach (var profile in Enum.GetValues<AirlineStrategyProfile>())
         {
-            var result = RoutePreviewCalculator.Calculate(Config, Bristol, Jfk, shortRangeAircraft, profile);
+            var result = RoutePreviewCalculator.Calculate(Config, Bristol, Jfk, shortRangeAircraft, profile, fleet);
             Assert.False(result.Validation.WithinRange);
-            Assert.Contains(result.Validation.Warnings, w => w.Contains("operating range", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(RouteRangeVerdict.BeyondFleet, result.Validation.Range.Verdict);
+            Assert.True(result.Validation.Range.Blocking);
+            Assert.Contains(result.Validation.Warnings, w => w.Contains("beyond every aircraft in your fleet", StringComparison.OrdinalIgnoreCase));
         }
+    }
+
+    [Fact]
+    public void Calculate_WithNoFleetPassed_SaysNothingAboutRange()
+    {
+        // The callers that only want block time or fuel out of this (the Fly screen's per-aircraft
+        // estimate, the scheduler's block-minutes cache) pass no fleet, and must never be handed a
+        // range verdict derived from one arbitrary type - that misattribution is the whole defect.
+        var shortRangeAircraft = new AircraftType
+        {
+            Id = Guid.NewGuid(), IcaoType = "TEST", Family = "TEST", Name = "Short-range test type",
+            RangeNm = 500, CruiseTasKts = 450, FuelBurnKgPerHour = 2400,
+            MinRunwayFt = 5500, ServiceCeilingFt = 39000,
+        };
+
+        var result = RoutePreviewCalculator.Calculate(Config, Bristol, Jfk, shortRangeAircraft, AirlineStrategyProfile.Balanced);
+
+        Assert.Equal(RouteRangeVerdict.NotAssessed, result.Validation.Range.Verdict);
+        Assert.False(result.Validation.Range.Blocking);
+        Assert.DoesNotContain(result.Validation.Warnings, w => w.Contains("range", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Calculate_WithAnEmptyFleet_SaysWhatTheFiguresAssume_AndDoesNotBlock()
+    {
+        var result = RoutePreviewCalculator.Calculate(
+            Config, Bristol, Jfk, A320, AirlineStrategyProfile.Balanced, Array.Empty<RangeCandidateAircraft>());
+
+        Assert.False(result.Validation.Range.Blocking);
+        Assert.Contains(result.Validation.Warnings, w => w.Contains("you have no aircraft yet", StringComparison.OrdinalIgnoreCase));
+        // Never phrased as a limit of the airline's, because there is no fleet for it to be one of.
+        Assert.DoesNotContain(result.Validation.Warnings, w => w.Contains("beyond every aircraft", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Calculate_WhenAReservedAircraftCanFlyIt_WarnsAboutNothing()
+    {
+        var fleet = new[]
+        {
+            new RangeCandidateAircraft("G-SHRT", "Short-range test type", RangeNm: 500, ReservedForPlayer: false),
+            new RangeCandidateAircraft("G-LONG", "Boeing 787-9 Dreamliner", RangeNm: 7635, ReservedForPlayer: true),
+        };
+
+        var result = RoutePreviewCalculator.Calculate(Config, Bristol, Jfk, A320, AirlineStrategyProfile.Balanced, fleet);
+
+        Assert.Equal(RouteRangeVerdict.ReservedCanFly, result.Validation.Range.Verdict);
+        Assert.DoesNotContain(result.Validation.Warnings, w => w.Contains("range", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -116,7 +170,7 @@ public class RoutePreviewCalculatorTests
     /// anchors <c>FareDemandModel</c>'s elasticity curve to (<see cref="ReferenceFareCalculator"/>).
     /// Before the fuel-honesty fix these were two separate hardcoded formulas (this one and the
     /// now-deleted <c>FareEstimator</c>) that happened to agree only because nobody had changed
-    /// either one - see docs/PLAN.md "Status after the fuel-honesty fix". If they ever diverge
+    /// either one. If they ever diverge
     /// again, a player would be offered one fare while the engine scores it against a different
     /// one, silently distorting demand and elasticity. Derived from Enum.GetValues so a new
     /// strategy profile is covered automatically, per the plan's rule against hardcoded profile

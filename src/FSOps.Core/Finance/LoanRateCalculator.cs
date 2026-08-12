@@ -3,8 +3,9 @@ using FSOps.Core.Economy;
 namespace FSOps.Core.Finance;
 
 /// <summary>
-/// Computes the ONLY interest rate a loan is ever priced at - see docs/PLAN.md "Loan interest is
-/// set by the simulation, never by the player". The player never supplies a rate; every loan entry
+/// Computes the ONLY interest rate a loan is ever priced at. Interest is set by the simulation and
+/// never by the player: a rate they control can be set to zero, which makes borrowing free and
+/// turns loans from a strategic trade-off into an exploit. The player never supplies a rate; every loan entry
 /// point (AirlineEndpoints.CreateAsync's starting loan, FleetEndpoints.TakeLoanAsync's mid-game
 /// loan) calls this instead of trusting anything arriving on the request, so a request-supplied
 /// rate can never reach a <see cref="FSOps.Core.Entities.Loan"/> row.
@@ -18,7 +19,7 @@ namespace FSOps.Core.Finance;
 /// capacity band, which prices in more risk premium. The consumed-capacity proportion is clamped to
 /// [0,1] before it scales the gap between base and cap, so the result always lands in
 /// [<see cref="LoanConfig.BaseAnnualRatePct"/>, <see cref="LoanConfig.CapAnnualRatePct"/>] by
-/// construction - the playstyle's hard cap (5% Casual / 8% True-life per docs/PLAN.md) can never be
+/// construction - the playstyle's hard cap (5% Casual / 8% True-life) can never be
 /// exceeded regardless of how large a principal or how thin the airline's cash flow is. See
 /// LoanRateCalculatorTests' boundary tests, which assert this at and beyond full capacity.
 /// </para>

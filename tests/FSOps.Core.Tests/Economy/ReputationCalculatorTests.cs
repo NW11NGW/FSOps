@@ -3,9 +3,10 @@ using FSOps.Core.Economy;
 namespace FSOps.Core.Tests.Economy;
 
 /// <summary>
-/// Exercises ReputationCalculator against docs/PLAN.md "Progression - reputation and pilot skill",
-/// point 1 (what moves it, and by how much relative to each other) and point 2 (the stated 40-60
-/// sector magnitude target, asserted directly here per the plan's own instruction not to eyeball it).
+/// Exercises ReputationCalculator against the two things that define it: what moves reputation and
+/// by how much relative to each other, and the stated 40-60 sector magnitude target. The magnitude
+/// is asserted directly here rather than eyeballed, because it is a balance target the user agreed
+/// and NOT a figure to be quietly retuned so some other test passes.
 /// </summary>
 public class ReputationCalculatorTests
 {
@@ -29,7 +30,7 @@ public class ReputationCalculatorTests
         }
 
         Assert.True(crossedAt >= 40 && crossedAt <= 60,
-            $"Expected reputation to cross 75 between the 40th and 60th consistently-good sector (docs/PLAN.md point 2), but it happened at sector {crossedAt}.");
+            $"Expected reputation to cross 75 between the 40th and 60th consistently-good sector - the agreed \"noticeable but slow\" band - but it happened at sector {crossedAt}.");
     }
 
     [Fact]
@@ -72,7 +73,7 @@ public class ReputationCalculatorTests
 
         Assert.True(fromScore - afterWorstCompleted > 0, "A worst-case completed sector should still cost some reputation.");
         Assert.True(fromScore - afterCancelled > fromScore - afterWorstCompleted,
-            "A cancelled/skipped sector must cost strictly more than even the worst completed sector - docs/PLAN.md point 1.");
+            "A cancelled/skipped sector must cost strictly more than even the worst completed sector: a schedule that cannot fly should cost more standing than a mere delay.");
     }
 
     [Fact]

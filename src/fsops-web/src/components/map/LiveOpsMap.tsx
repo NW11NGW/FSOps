@@ -11,22 +11,45 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { buildMapStyle, readMapColors, type MapThemeMode } from '@/components/map/mapTheme'
 import { LiveFlightCard } from '@/components/map/LiveFlightCard'
 import { AtcControllerCard } from '@/components/map/AtcControllerCard'
-import { buildAtcSectorFeatures, controllerKeyFor } from '@/components/map/atcGeometry'
+import { AtcSectorCard } from '@/components/map/AtcSectorCard'
+import { AtcMapLegend } from '@/components/map/AtcMapLegend'
+import { buildAtcSectorFeatures, buildAtcTerminalFeatures, controllerKeyFor } from '@/components/map/atcGeometry'
+import type { MapBounds } from '@/components/map/atcVisibility'
 import { Button } from '@/components/ui/button'
 import { boundsForPath, sampleGreatCirclePath, splitAntimeridian } from '@/lib/geo'
 import { cn } from '@/lib/utils'
 import type { LonLat } from '@/types/route'
-import type { LiveAircraft, LiveNetworkRoute, VatsimAtcController } from '@/types/operations'
-import type { Polygon } from 'geojson'
+import type { LiveAircraft, LiveNetworkRoute, VatsimAtcController, VatsimAtcResponse } from '@/types/operations'
+import type { MultiPolygon, Polygon } from 'geojson'
 
 const NETWORK_SOURCE_ID = 'live-ops-network'
 const NETWORK_LAYER_ID = 'live-ops-network-line'
 const EMPTY_NETWORK_GEOJSON: FeatureCollection<LineString> = { type: 'FeatureCollection', features: [] }
 
+/** Real published FIR/UIR geometry: solid outline, stronger fill. */
 const ATC_SECTOR_SOURCE_ID = 'live-ops-atc-sectors'
 const ATC_SECTOR_FILL_LAYER_ID = 'live-ops-atc-sectors-fill'
 const ATC_SECTOR_LINE_LAYER_ID = 'live-ops-atc-sectors-line'
-const EMPTY_ATC_SECTOR_GEOJSON: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] }
+const EMPTY_ATC_SECTOR_GEOJSON: FeatureCollection<MultiPolygon> = { type: 'FeatureCollection', features: [] }
+
+/** Approximate range circles around airport-local positions: dashed outline, weaker fill, so a
+ *  sketch never carries the same visual weight as a published boundary. The legend names the
+ *  difference; this makes it readable before anyone consults the legend. */
+const ATC_TERMINAL_SOURCE_ID = 'live-ops-atc-terminal'
+const ATC_TERMINAL_FILL_LAYER_ID = 'live-ops-atc-terminal-fill'
+const ATC_TERMINAL_LINE_LAYER_ID = 'live-ops-atc-terminal-line'
+const EMPTY_ATC_TERMINAL_GEOJSON: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] }
+
+/** Required by CC BY-SA 4.0, and attached to the sector source rather than the basemap style so it
+ *  appears only on a map that is actually drawing this data - RouteMap and LiveFlightMap draw no
+ *  boundaries and must not credit a source they do not use. */
+const VATSPY_ATTRIBUTION =
+  'FIR boundaries &copy; <a href="https://github.com/vatsimnetwork/vatspy-data-project" target="_blank" rel="noreferrer">VAT-Spy Data Project</a>, <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">CC BY-SA 4.0</a>'
+
+/** Coalesces a pan or zoom gesture's tail (inertia, a wheel burst) into one viewport update. The
+ *  list re-filters from data already in hand, so this only exists to avoid re-running the geometry
+ *  a dozen times per flick - it never gates, delays or triggers a fetch. */
+const VIEWPORT_DEBOUNCE_MS = 150
 
 const RADIO_TOWER_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M4.9 16.1C1 20 1 20 1 20"/><path d="M7.8 13.2c-3 3-3 3-3 3"/><circle cx="12" cy="9" r="2"/><path d="M12 11v11"/><path d="M9 22h6"/><path d="M15.2 13.2c3 3 3 3 3 3"/><path d="M19.1 16.1c3.9 3.9 3.9 3.9 3.9 3.9"/></svg>'
@@ -41,19 +64,26 @@ function controllerMarkerElement(label: string): HTMLDivElement {
   return wrapper
 }
 
-/** Smooth interpolated-position transition duration - see docs/PLAN.md "update positions on a
- *  gentle interval ... with smooth transitions". Aircraft refresh about once a minute, so this
+/** Smooth interpolated-position transition duration. Positions update on a gentle interval with
+ *  smooth transitions rather than jumping. Aircraft refresh about once a minute, so this
  *  only needs to be long enough to read as motion rather than a jump, not to match real speed. */
 const MARKER_TRANSITION_MS = 1500
 
 interface LiveOpsMapProps {
   aircraft: LiveAircraft[]
   network: LiveNetworkRoute[]
-  /** Online VATSIM controllers covering the airline's own network - see docs/PLAN.md "VATSIM
-   *  integration". Omit (or pass an empty array) when the ATC layer has nothing to show; use
-   *  `atcUnavailable` to distinguish "nothing online" from "couldn't reach the feed". */
+  /** Online VATSIM controllers FSOps can place. Omit (or
+   *  pass an empty array) when the ATC layer has nothing to show; use `atcUnavailable` to
+   *  distinguish "nothing online" from "couldn't reach the feed". */
   atcControllers?: VatsimAtcController[]
+  /** Published boundary geometry, keyed by boundary id, as sent by `/operations/atc?geometry=true`.
+   *  Sector controllers whose boundary is absent here draw nothing at all rather than a guess. */
+  atcBoundaries?: VatsimAtcResponse['boundaries']
   atcUnavailable?: boolean
+  /** Reports the visible map bounds after every pan and zoom, debounced, so the controller list
+   *  beside the map can show what is genuinely on screen. Called with the initial view on load.
+   *  A consumer without a map simply never receives one, which is the panel's case. */
+  onViewportChange?: (bounds: MapBounds) => void
   className?: string
 }
 
@@ -78,8 +108,8 @@ const PLANE_SVG =
  * Player and virtual aircraft render with deliberately different weight: the player's own flight
  * is real telemetry and gets the solid, full-opacity accent treatment used everywhere else live
  * data appears; virtual (interpolated) traffic gets a lighter, outlined treatment so it visually
- * reads as "other/simulated" traffic at a glance, matching the VATSIM-traffic language planned
- * for later (docs/PLAN.md "Live traffic on the map").
+ * reads as "other/simulated" traffic at a glance, matching the visual language other people's live
+ * VATSIM traffic would use if it is ever drawn here.
  */
 function aircraftMarkerElement(kind: LiveAircraft['kind'], label: string): HTMLDivElement {
   const wrapper = document.createElement('div')
@@ -188,7 +218,15 @@ function animateMarker(entry: AircraftMarkerEntry, toLng: number, toLat: number,
  * component - it has different data shape (a whole fleet of moving markers, refreshed on a poll,
  * with smooth transitions) and a designed empty state neither of the other two needs.
  */
-export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavailable = false, className }: LiveOpsMapProps) {
+export function LiveOpsMap({
+  aircraft,
+  network,
+  atcControllers = [],
+  atcBoundaries = null,
+  atcUnavailable = false,
+  onViewportChange,
+  className,
+}: LiveOpsMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Map<string, AircraftMarkerEntry>>(new Map())
@@ -197,21 +235,25 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
   const modeRef = useRef<MapThemeMode>('dark')
   const styleReadyRef = useRef(false)
   const firedInitialFitRef = useRef(false)
-  const latestRef = useRef({ aircraft, network, atcControllers })
+  const latestRef = useRef({ aircraft, network, atcControllers, atcBoundaries })
   const navigate = useNavigate()
   const navigateRef = useRef(navigate)
+  const onViewportChangeRef = useRef(onViewportChange)
   const [tilesUnavailable, setTilesUnavailable] = useState(false)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
   const [hoveredControllerKey, setHoveredControllerKey] = useState<string | null>(null)
   const [hoveredControllerPos, setHoveredControllerPos] = useState<{ x: number; y: number } | null>(null)
+  const [hoveredSectorId, setHoveredSectorId] = useState<string | null>(null)
+  const [hoveredSectorPos, setHoveredSectorPos] = useState<{ x: number; y: number } | null>(null)
   // Mirrors hoveredKey/hoveredControllerKey for the mount-only effect's closures (sync/move
   // handler), which are created once and would otherwise only ever see the initial (null) state.
   const hoveredKeyRef = useRef<string | null>(null)
   const hoveredControllerKeyRef = useRef<string | null>(null)
 
-  latestRef.current = { aircraft, network, atcControllers }
+  latestRef.current = { aircraft, network, atcControllers, atcBoundaries }
   navigateRef.current = navigate
+  onViewportChangeRef.current = onViewportChange
   hoveredKeyRef.current = hoveredKey
   hoveredControllerKeyRef.current = hoveredControllerKey
 
@@ -242,6 +284,20 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
       setHoveredControllerPos(null)
     }
   }, [atcControllers, hoveredControllerKey])
+
+  // Controllers currently working the hovered sector. Recomputed from the latest poll rather than
+  // captured on hover, so a card left open while someone logs off updates instead of going stale.
+  const hoveredSectorControllers = hoveredSectorId
+    ? atcControllers.filter((c) => c.coverageKind === 'sector' && c.boundaryId === hoveredSectorId)
+    : []
+
+  // The last controller in a sector can log off while the pointer is still over its polygon.
+  useEffect(() => {
+    if (hoveredSectorId && hoveredSectorControllers.length === 0) {
+      setHoveredSectorId(null)
+      setHoveredSectorPos(null)
+    }
+  }, [hoveredSectorId, hoveredSectorControllers.length])
 
   useEffect(() => {
     const container = containerRef.current
@@ -285,10 +341,28 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
       setHoveredControllerPos({ x: rect.left + point.x, y: rect.top + point.y })
     }
 
+    const publishViewport = () => {
+      const current = mapRef.current
+      const report = onViewportChangeRef.current
+      if (!current || !report) return
+      const bounds = current.getBounds()
+      report({
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth(),
+      })
+    }
+
     const sync = (fitBounds: boolean) => {
       const current = mapRef.current
       if (!current) return
-      const { aircraft: currentAircraft, network: currentNetwork, atcControllers: currentAtc } = latestRef.current
+      const {
+        aircraft: currentAircraft,
+        network: currentNetwork,
+        atcControllers: currentAtc,
+        atcBoundaries: currentBoundaries,
+      } = latestRef.current
 
       const networkSource = current.getSource(NETWORK_SOURCE_ID) as GeoJSONSource | undefined
       if (networkSource) {
@@ -297,7 +371,12 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
 
       const atcSectorSource = current.getSource(ATC_SECTOR_SOURCE_ID) as GeoJSONSource | undefined
       if (atcSectorSource) {
-        atcSectorSource.setData(buildAtcSectorFeatures(currentAtc))
+        atcSectorSource.setData(buildAtcSectorFeatures(currentAtc, currentBoundaries))
+      }
+
+      const atcTerminalSource = current.getSource(ATC_TERMINAL_SOURCE_ID) as GeoJSONSource | undefined
+      if (atcTerminalSource) {
+        atcTerminalSource.setData(buildAtcTerminalFeatures(currentAtc))
       }
 
       // Controller markers - static positions (an airport doesn't move), so unlike aircraft this
@@ -448,7 +527,11 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
       }
       if (!map.getSource(ATC_SECTOR_SOURCE_ID)) {
         const colors = readMapColors()
-        map.addSource(ATC_SECTOR_SOURCE_ID, { type: 'geojson', data: EMPTY_ATC_SECTOR_GEOJSON })
+        map.addSource(ATC_SECTOR_SOURCE_ID, {
+          type: 'geojson',
+          data: EMPTY_ATC_SECTOR_GEOJSON,
+          attribution: VATSPY_ATTRIBUTION,
+        })
         map.addLayer({
           id: ATC_SECTOR_FILL_LAYER_ID,
           type: 'fill',
@@ -459,17 +542,68 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
           id: ATC_SECTOR_LINE_LAYER_ID,
           type: 'line',
           source: ATC_SECTOR_SOURCE_ID,
-          paint: { 'line-color': colors.atc, 'line-width': 1, 'line-opacity': 0.6 },
+          layout: { 'line-join': 'round' },
+          paint: { 'line-color': colors.atc, 'line-width': 1.25, 'line-opacity': 0.75 },
+        })
+
+        // Terminal circles sit above the sectors so a tower inside a busy centre stays readable,
+        // and are drawn dashed and fainter because they are an approximation, not a boundary.
+        map.addSource(ATC_TERMINAL_SOURCE_ID, { type: 'geojson', data: EMPTY_ATC_TERMINAL_GEOJSON })
+        map.addLayer({
+          id: ATC_TERMINAL_FILL_LAYER_ID,
+          type: 'fill',
+          source: ATC_TERMINAL_SOURCE_ID,
+          paint: { 'fill-color': colors.atcFillSoft },
+        })
+        map.addLayer({
+          id: ATC_TERMINAL_LINE_LAYER_ID,
+          type: 'line',
+          source: ATC_TERMINAL_SOURCE_ID,
+          paint: {
+            'line-color': colors.atc,
+            'line-width': 1,
+            'line-opacity': 0.5,
+            'line-dasharray': [2, 2],
+          },
         })
       }
       styleReadyRef.current = true
       sync(true)
+      publishViewport()
+    })
+
+    // A sector is an area, not a point, so it has no marker to hover - the polygon itself is the
+    // target and the card follows the pointer.
+    map.on('mousemove', ATC_SECTOR_FILL_LAYER_ID, (event) => {
+      const feature = event.features?.[0]
+      const boundaryId = feature?.properties?.boundaryId
+      const containerEl = containerRef.current
+      if (typeof boundaryId !== 'string' || !containerEl) return
+      const rect = containerEl.getBoundingClientRect()
+      setHoveredSectorId(boundaryId)
+      setHoveredSectorPos({ x: rect.left + event.point.x, y: rect.top + event.point.y })
+    })
+
+    map.on('mouseleave', ATC_SECTOR_FILL_LAYER_ID, () => {
+      setHoveredSectorId(null)
+      setHoveredSectorPos(null)
     })
 
     map.on('move', () => {
       if (hoveredKeyRef.current) updateHoverPosition(hoveredKeyRef.current)
       if (hoveredControllerKeyRef.current) updateControllerHoverPosition(hoveredControllerKeyRef.current)
     })
+
+    // Debounced so a flick's inertia settles into one update. This re-filters a list from data
+    // already in hand - it never fetches, so panning cannot affect the feed's cadence however hard
+    // the map is dragged.
+    let viewportTimer: ReturnType<typeof setTimeout> | undefined
+    const scheduleViewportPublish = () => {
+      clearTimeout(viewportTimer)
+      viewportTimer = setTimeout(publishViewport, VIEWPORT_DEBOUNCE_MS)
+    }
+    map.on('moveend', scheduleViewportPublish)
+    map.on('zoomend', scheduleViewportPublish)
 
     const observer = new MutationObserver(() => {
       const current = mapRef.current
@@ -488,6 +622,7 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
 
     return () => {
       observer.disconnect()
+      clearTimeout(viewportTimer)
       for (const entry of markersRef.current.values()) {
         if (entry.animationFrame !== null) cancelAnimationFrame(entry.animationFrame)
         entry.marker.remove()
@@ -509,7 +644,7 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
     if (!map || !styleReadyRef.current) return
     const resync = (map as unknown as { __fsopsResync?: () => void }).__fsopsResync
     resync?.()
-  }, [aircraft, network, atcControllers])
+  }, [aircraft, network, atcControllers, atcBoundaries])
 
   const hasNetwork = network.length > 0
   const hasAircraft = aircraft.length > 0
@@ -581,9 +716,9 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
       )}
 
       {(hasAircraft || atcControllers.length > 0) && (
-        <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex items-center gap-3 rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-elevation-2">
+        <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex flex-col gap-1 rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-elevation-2">
           {hasAircraft && (
-            <>
+            <div className="flex items-center gap-3">
               <span className="flex items-center gap-1.5">
                 <span className="size-2.5 shrink-0 rounded-full bg-accent" />
                 You
@@ -592,13 +727,17 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
                 <span className="size-2.5 shrink-0 rounded-full border-2 border-accent/70 bg-surface-elevated" />
                 Virtual
               </span>
-            </>
+            </div>
           )}
           {atcControllers.length > 0 && (
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 shrink-0 rounded-full border-2 border-warning bg-surface-elevated" />
-              ATC
-            </span>
+            <>
+              {hasAircraft && <span className="h-px bg-border" aria-hidden="true" />}
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 shrink-0 rounded-full border-2 border-warning bg-surface-elevated" />
+                ATC
+              </span>
+              <AtcMapLegend controllers={atcControllers} />
+            </>
           )}
         </div>
       )}
@@ -609,6 +748,15 @@ export function LiveOpsMap({ aircraft, network, atcControllers = [], atcUnavaila
 
       {hoveredController && hoveredControllerPos && (
         <AtcControllerCard controller={hoveredController} x={hoveredControllerPos.x} y={hoveredControllerPos.y} />
+      )}
+
+      {hoveredSectorId && hoveredSectorPos && hoveredSectorControllers.length > 0 && (
+        <AtcSectorCard
+          boundaryName={hoveredSectorControllers[0]!.boundaryName ?? hoveredSectorId}
+          controllers={hoveredSectorControllers}
+          x={hoveredSectorPos.x}
+          y={hoveredSectorPos.y}
+        />
       )}
     </div>
   )

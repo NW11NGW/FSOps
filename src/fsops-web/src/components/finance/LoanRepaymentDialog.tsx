@@ -28,7 +28,7 @@ interface LoanRepaymentDialogProps {
 type Mode = 'full' | 'partial'
 
 /**
- * docs/PLAN.md "Loans - with partial and full repayment": pay off in full (showing the payoff
+ * Loans, with partial and full repayment: pay off in full (showing the payoff
  * figure and interest saved before confirming) or overpay any amount against the principal, always
  * blocked before it would drive cash negative, always stated consistently as shortening the term
  * rather than lowering the monthly payment.

@@ -5,8 +5,8 @@ using FSOps.Core.Planning;
 namespace FSOps.Core.Tests.Balance;
 
 /// <summary>
-/// docs/PLAN.md "The aircraft catalogue must cover what people actually fly" - "Balance impact must
-/// be checked, not assumed. Widebodies change the economics - far more seats, far higher costs, and
+/// Balance impact of the widebody catalogue must be checked, not assumed. Widebodies change the
+/// economics - far more seats, far higher costs, and
 /// routes long enough to reach the demand model's 300-2,500 nm sweet spot. Adding them must not
 /// break the guardrails". This is that check, using the Boeing 777-300ER (B77W) as the
 /// representative widebody: 396 seats, 351.5t MTOW, 490kt cruise, 8,200kg/h burn - the largest,

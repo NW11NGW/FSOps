@@ -5,9 +5,10 @@ using FSOps.Core.Planning;
 namespace FSOps.Core.Tests.Balance;
 
 /// <summary>
-/// docs/PLAN.md "Playstyle - Casual vs True-life": "Both playstyles must independently satisfy
-/// every invariant... That is a genuine doubling of balance testing... the properties must be
-/// asserted for each preset, not assumed to carry over." This is that doubling.
+/// Both playstyles must independently satisfy every balance invariant. That is a genuine doubling
+/// of balance testing, and it is deliberate: the properties have to be asserted for each preset
+/// rather than assumed to carry over from one set of constants to a very different one. This is
+/// that doubling.
 ///
 /// <para>
 /// Every test here is parameterised over <see cref="AirlinePlaystyle"/> via <c>Enum.GetValues</c>
@@ -69,8 +70,9 @@ public class PlaystyleInvariantsTests
         // EVERY leasable type diverges now (2026-08-08 catalogue-wide rebalance) - not just the two
         // starter types. A320/B738 are hard-anchored at exactly 30,000 in Casual; every other type
         // (including every one added by the aircraft-catalogue expansion) is Casual's ~8% multiple
-        // of True-life's real rate - see docs/PLAN.md "Casual pricing must scale the WHOLE
-        // catalogue" and FleetEndpointsTests.Lease_ChargesThePlaystylesOwnRate_NotTheCatalogueColumn
+        // of True-life's real rate. The multiplier covers the whole catalogue precisely so that
+        // adding aircraft types can never leave them at real-world rates in Casual - see
+        // FleetEndpointsTests.Lease_ChargesThePlaystylesOwnRate_NotTheCatalogueColumn
         // for the regression test that pins the two starter types' divergence at the call site.
         foreach (var icaoType in new[] { "A319", "A320", "A321", "B737", "B738", "B739" })
         {
@@ -82,15 +84,16 @@ public class PlaystyleInvariantsTests
         Assert.True(trueLife.AirlineStartup.StartingCapital > casual.AirlineStartup.StartingCapital);
         Assert.True(trueLife.FleetFinance.MonthlyInsurancePerAircraft > casual.FleetFinance.MonthlyInsurancePerAircraft);
 
-        // Purchase price now diverges too (it never used to - see docs/PLAN.md "Purchase prices
-        // have the same disease from the other direction"): Casual applies its own small,
+        // Purchase price now diverges too. It never used to: every type sat at its full realistic
+        // value in Casual as well, so buying an A320 at ~3,016 a sector took 15,750 sectors.
+        // Casual now applies its own small,
         // catalogue-wide multiplier so a used example is affordable after roughly ten sectors'
         // profit, while True-life keeps the real transaction value throughout.
         Assert.Equal(1.0m, trueLife.PurchasePriceMultiplier);
         Assert.True(casual.PurchasePriceMultiplier < trueLife.PurchasePriceMultiplier);
 
         // The founding pilot's salary is already realistic and needs no game-balance treatment
-        // (docs/PLAN.md "The starter lease is a deliberate game-balance number") - shared, not overridden.
+        // unlike the starter lease rate beside it - shared, not overridden.
         Assert.Equal(casual.AirlineStartup.StartingPilotMonthlySalary, trueLife.AirlineStartup.StartingPilotMonthlySalary);
     }
 
@@ -123,8 +126,10 @@ public class PlaystyleInvariantsTests
     }
 
     /// <summary>
-    /// docs/PLAN.md: "the micro-sector exploit stays loss-making at the revenue-maximising fare" -
-    /// see FlightEconomicsIntegrityTests.MicroSectorLoop_EvenAtTheBestPossibleFare_IsNetNegative for
+    /// The micro-sector exploit must stay loss-making at the revenue-maximising fare, in BOTH
+    /// playstyles - fixed per-sector costs are what make a trivially short hop structurally
+    /// unprofitable, and those costs differ between the two presets.
+    /// See FlightEconomicsIntegrityTests.MicroSectorLoop_EvenAtTheBestPossibleFare_IsNetNegative for
     /// the single-playstyle version this doubles.
     /// </summary>
     [Theory]
@@ -152,7 +157,8 @@ public class PlaystyleInvariantsTests
             $"{playstyle}: a 20nm micro-sector at its best fare should lose money, but netted {result.NetProfit:F2}.");
     }
 
-    /// <summary>docs/PLAN.md: "absurd fares stay self-defeating" - see
+    /// <summary>Absurd fares must stay self-defeating in both playstyles - an empty aeroplane
+    /// teaches the lesson, where an arbitrary cap would teach nothing. See
     /// FareDemandModelExploitTests.Revenue_At3xAnd10xReference_IsStrictlyLowerThanAtTheOptimum for
     /// the single-playstyle version this doubles.</summary>
     [Theory]
@@ -182,7 +188,7 @@ public class PlaystyleInvariantsTests
     }
 
     /// <summary>
-    /// docs/PLAN.md: "the three real routes (275.2 / 276.4 / 114.0 nm) stay viable" - the actual
+    /// The three real routes (275.2 / 276.4 / 114.0 nm) must stay viable in both playstyles - the actual
     /// distances of a real airline's routes out of EGGD (see StartupTrajectoryTests' EGGD-&gt;EGPH
     /// scenario for 275.2nm specifically). Medium-Medium airports, Domestic strategy, at the suggested
     /// (reference) fare - the fare a real player actually sees by default.

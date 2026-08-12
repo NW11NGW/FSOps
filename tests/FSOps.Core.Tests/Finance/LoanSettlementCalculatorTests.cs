@@ -4,7 +4,7 @@ using FSOps.Core.Finance;
 namespace FSOps.Core.Tests.Finance;
 
 /// <summary>
-/// Exact-value coverage for docs/PLAN.md "Paying a loan back, and seeing your money at all" - the
+/// Exact-value coverage for paying a loan back early - the
 /// payoff quote, the overpayment arithmetic, and proof "borrow then immediately settle in full" is
 /// never free (the fee guarantees a loss). Pure arithmetic, no database.
 /// </summary>
@@ -33,8 +33,8 @@ public class LoanSettlementCalculatorTests
     public void TakeALoan_ImmediatelySettleInFull_IsAlwaysALoss_NeverFree()
     {
         // Zero elapsed time: no interest has accrued to "save" at all, so the ONLY thing that could
-        // possibly make this cost anything is the fee - which is exactly the point (docs/PLAN.md
-        // "Early settlement must not be exploitable... borrowing and repaying immediately").
+        // possibly make this cost anything is the fee - which is exactly the point: borrowing and
+        // repaying immediately must never be free.
         var quote = LoanSettlementCalculator.ComputeFullPayoffQuote(
             remainingBalance: 100_000m, annualRatePct: 5.0, monthlyPayment: 4_432.06m, Config);
 

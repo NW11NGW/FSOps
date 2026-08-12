@@ -2,8 +2,7 @@ namespace FSOps.Core.Economy;
 
 /// <summary>
 /// Advances <see cref="Entities.Airline.ReputationScore"/> by exactly one flight's worth of
-/// outcome, via exponential smoothing toward a per-flight "target" score - see docs/PLAN.md
-/// "Progression - reputation and pilot skill". Pure: takes the airline's current score and one
+/// outcome, via exponential smoothing toward a per-flight "target" score. Pure: takes the airline's current score and one
 /// flight's already-known outcome, returns the new score. Never reads a database, never loops over
 /// history, never touches <see cref="Entities.FlightStatus.Suspended"/> - that status is not this
 /// calculator's business to know about at all; the caller (<see cref="Server.Services.ReputationPoster"/>
@@ -71,8 +70,8 @@ public static class ReputationCalculator
     /// <summary>
     /// Advances <paramref name="currentScore"/> for a sector that could not fly at all - see
     /// <see cref="Entities.FlightStatus.Skipped"/> and <see cref="Entities.FlightStatus.Cancelled"/>,
-    /// both of which apply here identically (docs/PLAN.md point 1 names "cancelled AND skipped
-    /// sectors" together). Deliberately never called for <see cref="Entities.FlightStatus.Suspended"/> -
+    /// both of which apply here identically - from a passenger's point of view a cancelled and a
+    /// skipped sector are the same thing. Deliberately never called for <see cref="Entities.FlightStatus.Suspended"/> -
     /// a maintenance-suspended occurrence is not the schedule's fault, which is the entire reason
     /// that status exists as distinct from these two. Uses a harsher target and a larger step than
     /// an ordinary completed sector, so a cancellation always costs more standing than merely
@@ -125,8 +124,8 @@ public static class ReputationCalculator
     /// <summary>
     /// Same fpm bounds as <see cref="Scheduling.VirtualPilotPerformanceCalculator"/>'s best/worst-case
     /// landing rate - deliberately, so a player's real touchdown and a virtual pilot's simulated one
-    /// are scored on literally the same scale, per docs/PLAN.md point 1's "scored on the same scale"
-    /// requirement.
+    /// are scored on literally the same scale. That is the mitigation for the one real risk in
+    /// scoring landing quality at all: rewarding flying yourself over delegating to a hired pilot.
     /// </summary>
     private static double LandingScore(ReputationConfig config, double landingFpm)
     {

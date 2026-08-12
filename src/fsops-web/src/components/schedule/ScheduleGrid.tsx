@@ -25,8 +25,8 @@ interface ScheduleGridProps {
 /** Finds which day currently holds a leg id - used to reject a drag-move that was dropped onto a
  *  different day's column. A leg's aircraft belongs to its own duty day, so moving it across days
  *  would silently reassign it to a different airframe without going through the picker; instead of
- *  allowing that, cross-day drags are simply ignored (docs/PLAN.md "2a": aircraft is a duty-day
- *  decision, not a per-leg one). */
+ *  allowing that, cross-day drags are simply ignored: the aircraft is a duty-day decision, not a
+ *  per-leg one. */
 function findLegDay(week: DraftWeek, legId: string): DayOfWeek | null {
   for (const day of Object.values(week)) {
     if (day?.legs.some((l) => l.id === legId)) return day.dayOfWeek
@@ -37,7 +37,7 @@ function findLegDay(week: DraftWeek, legId: string): DayOfWeek | null {
 /**
  * The weekly timetable: time runs top-to-bottom, days run left-to-right, like a diary. A leg
  * occupies a block sized to its real gate-to-gate duration (see scheduleMath.layoutDay), so a
- * packed day is visibly packed. Each day column carries at most one aircraft (docs/PLAN.md "2a") -
+ * packed day is visibly packed. Each day column carries at most one aircraft -
  * its registration sits in the column header, never repeated per leg, and turnaround gaps between
  * legs are always that same airframe's own gap. The week repeats indefinitely - there is no "last
  * week of the month" concept, which is the point: set once, flies forever until changed.

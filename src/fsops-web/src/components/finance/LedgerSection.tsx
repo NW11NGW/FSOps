@@ -17,8 +17,8 @@ import { cn } from '@/lib/utils'
 const PAGE_SIZE = 25
 
 /**
- * docs/PLAN.md "The ledger itemised and filterable by category, drillable to the flight that
- * produced a line." Everything shown here IS a posted LedgerTransaction row, never a
+ * The ledger is itemised, filterable by category, and drillable to the flight that produced a
+ * line. Everything shown here IS a posted LedgerTransaction row, never a
  * recomputation, so nothing here can disagree with the cash balance shown elsewhere on the page.
  */
 export function LedgerSection() {
@@ -128,7 +128,18 @@ export function LedgerSection() {
                 {rangeStart}-{rangeEnd} of {total}
               </span>
               <div className="flex items-center gap-1">
-                <Button type="button" variant="outline" size="icon" className="size-7" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}>
+                {/* Named, not just drawn: these are the only two controls on the page whose whole
+                 *  meaning lives in an icon, so without a label a screen reader announces nothing
+                 *  but "button" twice and there is no way to tell back from forward. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-7"
+                  aria-label="Previous page"
+                  disabled={skip === 0}
+                  onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}
+                >
                   <ChevronLeft className="size-3.5" />
                 </Button>
                 <Button
@@ -136,6 +147,7 @@ export function LedgerSection() {
                   variant="outline"
                   size="icon"
                   className="size-7"
+                  aria-label="Next page"
                   disabled={skip + PAGE_SIZE >= total}
                   onClick={() => setSkip(skip + PAGE_SIZE)}
                 >

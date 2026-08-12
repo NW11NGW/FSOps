@@ -169,8 +169,23 @@ The plan panel shows, live, as soon as both airports are picked:
 
 Two kinds of message can appear under the stat tiles:
 
-- **Blocking (red)** — same departure and arrival airport, or the route is beyond the aircraft's practical operating range (about **0.85×** its published range once fuel reserves are accounted for). Either of these disables route creation until you change your airport picks.
-- **Advisory (amber)** — a runway at either airport may be too short for the aircraft, or the route doesn't match your airline's strategy (an international route on a Domestic strategy, or a short domestic hop on an International strategy). These are shown for your attention but **do not block creating the route** — you can create it anyway if you're confident it'll work.
+- **Blocking (red)** — same departure and arrival airport, or the route is beyond the range of **every aircraft in your fleet**. Either of these disables route creation until you change your airport picks or add a longer-legged aircraft.
+- **Advisory (amber)** — nothing you have reserved can fly this far but something else in your fleet can (see [Range](#range) below), a runway at either airport may be too short for the aircraft, or the route doesn't match your airline's strategy (an international route on a Domestic strategy, or a short domestic hop on an International strategy). These are shown for your attention but **do not block creating the route** — you can create it anyway if you're confident it'll work.
+
+### Range
+
+Range is always asked about your **whole airline**, never about one aircraft type. An aircraft's practical range is about **0.85×** its published range, once fuel reserves and payload are accounted for — an A320 published at 3,300 nm plans to about 2,805 nm.
+
+The route planner gives one of three answers:
+
+- **An aircraft reserved to you can fly it.** Nothing is said at all — plan the route and go.
+- **Nothing reserved to you can fly it, but something in your fleet can.** An amber advisory names the aircraft, for example *"Nothing reserved to you can fly it, but G-VSIR (Boeing 737-700) has the range — reserve it on the Fleet page to fly it yourself, or roster it to a virtual pilot as it is."* The route is still created; this is a note about who can fly it, not a refusal.
+- **Nothing in your fleet can fly it.** A red blocking message names your longest-legged aircraft and its practical range, and points you at the Fleet page. This is the only case where range stops a route being created.
+
+Elsewhere, range is a hard limit on a specific airframe rather than guidance:
+
+- On the **Fly** screen, an aircraft parked at the departure airport that can't reach the destination is still listed — never silently dropped — but shown as unflyable with the reason (*"G-DMRO (Airbus A320) can't reach KJFK — 2912 nm is beyond its practical range of about 2805 nm."*). It's reported ahead of "not reserved to you", because reserving it wouldn't help.
+- In the **schedule builder**, a route beyond the duty day's aircraft is offered as an unavailable leg with the same kind of reason, and saving a schedule containing one is refused. An A320 is never rostered onto a sector it cannot reach.
 
 ### Creating a route with a fare override
 
@@ -204,6 +219,14 @@ This means:
 - Nothing is stored anywhere else; there's no account or server involved.
 - **Backing up** your airline is as simple as copying the `%LOCALAPPDATA%\FSOps\` folder somewhere safe. Restoring is copying it back.
 - Deleting that folder (or using the settings [danger zone](#settings)) resets FSOps to a blank slate — see [Troubleshooting](troubleshooting.md) if that happens unexpectedly.
+- **FSOps copies your database before applying any change to its structure.** Updates occasionally need to alter the shape of the database, and a copy taken beforehand is what you would restore from if one ever went wrong. It's only taken when there's actually something to apply, and if the copy can't be made, FSOps stops rather than proceeding without it.
+- **If the database is ever damaged, FSOps will not try to fix it by itself.** It stops and tells you which file is affected, and asks you to copy it somewhere safe first — because a damaged file is sometimes still repairable, and a well-meant automatic "repair" is how an airline gets lost for good.
+
+### World data
+
+**Settings → World data** shows how many airports and runways FSOps knows about and when that data last changed. A newer data set arrives with an FSOps update and is applied automatically the first time you start the app afterwards; the **Refresh** button does it sooner if you want.
+
+A refresh only ever **adds and updates — it never deletes**. Airports do sometimes disappear from the upstream source, occasionally because they really closed but just as often for editorial reasons FSOps can't tell apart. Either way, anything you've built on stays: your routes, your flight history and any aircraft parked there keep pointing at somewhere real, even if the wider world data no longer lists it.
 
 ## Planning and flying a tracked flight
 
@@ -509,9 +532,17 @@ Hover any aircraft for a flight card: flight number, route, pilot name, aircraft
 
 ### Online VATSIM controllers
 
-The same map can also show who's actually controlling the airspace you fly in. If any VATSIM controller is currently online at an airport in your own route network, they show up alongside your aircraft — no setting to turn on, no account or Pilot ID required, since this only reads VATSIM's public status feed. Hover or check the accompanying list for each controller's callsign, position (Tower, Approach, Center, and so on), frequency, and how long they've been logged on.
+The same map shows who's actually controlling the airspace you fly in — no setting to turn on, no account or Pilot ID required, since this only reads VATSIM's public status feed. Each controller shows a callsign, position (Tower, Approach, Center, and so on), frequency, and how long they've been logged on.
 
-Two things are deliberate here: **only controllers covering your own network are shown**, not a global VATSIM controller list, and **other pilots' traffic is deliberately left off entirely** — this is about airspace coverage where you fly, not a full multiplayer traffic display. If VATSIM's feed is temporarily unreachable, the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected") and everything else on the map keeps working exactly as normal — nothing about your flight or the economy depends on this in any way.
+**The list follows the map.** It names what's visible in the current view, so panning and zooming changes both together — look at the UK and you get UK controllers, not a global list you have to scroll. Controllers covering one of your own airports are listed first and marked with a filled icon, so your network stands out without hiding everyone else on screen.
+
+**Coverage is drawn two ways, and the difference is real.** **Sectors** (Center and Flight Service) are drawn as their actual published FIR boundary, from data bundled with FSOps. **Terminal** positions (Tower, Ground, Delivery, and approach named after an airport) are drawn at the airport with a dashed circle showing approximate range — that circle is how far the controller's client is set to see, not the shape of anything they control. The map legend says which is which, so you never have to remember.
+
+**What isn't shown, and why.** Approach TRACONs that aren't named after an airport have no published boundary data available, so FSOps shows nothing rather than inventing a shape — a wrong boundary on a map reads as authoritative. There are **no altitude limits** in this data either, so a sector polygon says nothing about which levels are being worked, and top-down coverage is never inferred. An empty area means "FSOps can't say", not necessarily "nobody is there".
+
+**Other pilots' traffic is deliberately left off entirely** — this is about airspace coverage, not a multiplayer traffic display. If VATSIM's feed is temporarily unreachable the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. Nothing about your flight or the economy depends on any of this.
+
+FIR boundaries © VAT-Spy Data Project, CC BY-SA 4.0.
 
 ## Statistics dashboards
 

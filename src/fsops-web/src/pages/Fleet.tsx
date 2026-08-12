@@ -60,7 +60,7 @@ export function Fleet() {
     if (reservationBusyId) return
     if (aircraft.reservedForPlayer && reservedCount <= 1) {
       // Releasing the last aircraft held back for the player - allowed, but warned clearly first;
-      // see docs/PLAN.md "Releasing the last unreserved aircraft is allowed. Warn, do not forbid."
+      // it is the player's airline, so the job is to make sure they know, not to forbid it.
       setConfirmRelease(aircraft)
       return
     }

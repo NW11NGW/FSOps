@@ -49,8 +49,8 @@ public class ReferenceFareCalculatorTests
         var strategy = Config.GetStrategy(AirlineStrategyProfile.LowCost);
         var fare = ReferenceFareCalculator.Calculate(Config.ReferenceFare, strategy, 5);
 
-        // Raised from 35 to 65 as part of the fuel-honesty fix (docs/PLAN.md "Status after the
-        // fuel-honesty fix") - the old floor masked how cheap farePerNm actually was for short
+        // Raised from 35 to 65 in the same pass that stopped billing every sector for reserve and
+        // alternate fuel it never burned - the old floor masked how cheap farePerNm actually was for short
         // domestic hops, leaving them structurally unprofitable against fixed per-sector costs.
         Assert.Equal(65m, fare);
     }

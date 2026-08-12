@@ -19,8 +19,8 @@ export interface FuelBreakdown {
   costOfCarryKg: number
 }
 
-/** Advisory-only "would tankering pay off" comparison - see docs/PLAN.md "the tankering
- *  trade-off". Never automatic or enforced; the player decides. */
+/** Advisory-only "would tankering pay off" comparison, weighing the cheaper fuel against the extra
+ *  burn of carrying it. Never automatic or enforced; the player decides. */
 export interface TankeringAdvisory {
   departurePricePerKg: number
   destinationPricePerKg: number
@@ -39,12 +39,35 @@ export interface TankeringAdvisory {
   exceedsMtow: boolean
 }
 
+/**
+ * What the airline as a whole can do about this sector length - never a statement about the single
+ * aircraft type the preview figures happen to be planned with. Only `blocking` may ever stop a
+ * route being created: "nothing you have reserved can fly it, but that 787 can" is guidance, and
+ * treating it as a refusal made an otherwise perfectly good route a dead end.
+ */
+export interface RoutePreviewRange {
+  verdict: 'NotAssessed' | 'ReservedCanFly' | 'RequiresReservation' | 'BeyondFleet'
+  /** True only when NOTHING in the fleet can fly this far. */
+  blocking: boolean
+  /** The sentence to show, already written by the backend. Null when there is nothing to say. */
+  message: string | null
+  /** The aircraft the message names - to reserve, or the longest-legged one you have. */
+  aircraftRegistration: string | null
+  aircraftTypeName: string | null
+  operationalRangeNm: number | null
+}
+
 export interface RoutePreviewValidation {
+  /**
+   * Whether the aircraft type these figures were planned with can reach that far - a statement
+   * about ONE type, kept for display. Never block on it: `range` is the airline-wide verdict.
+   */
   withinRange: boolean
   departureRunwayAdequate: boolean
   arrivalRunwayAdequate: boolean
   sameAirport: boolean
   warnings: string[]
+  range: RoutePreviewRange
 }
 
 /** Longitude/latitude pair, matching the backend's [lon, lat] point order (not [lat, lon]). */
@@ -72,7 +95,8 @@ export interface RoutePreviewResponse {
   cruiseAltitudeFt: number
   blockFuelKg: number
   fuelBreakdown: FuelBreakdown | null
-  /** Current price per kg at the departure airport - see docs/PLAN.md "Persistent fuel state and tankering". */
+  /** Current price per kg at the departure airport - visible before departure so tankering is an
+   *  informed decision rather than a guess. */
   fuelPricePerKg: number | null
   /** Current price per kg at the destination airport - compare against fuelPricePerKg for the tankering hint. */
   destinationFuelPricePerKg: number | null
@@ -88,8 +112,8 @@ export interface RoutePreviewRequest {
   arrivalIcao: string
   aircraftTypeId?: string
   /** Base-currency fare to price the live economics readout against. Omitted (or non-positive)
-   *  falls back to the suggested fare server-side - no validation beyond that, per
-   *  docs/PLAN.md "Fare setting and demand response": the simulation is the guardrail. */
+   *  falls back to the suggested fare server-side - no validation beyond that, on purpose:
+   *  the simulation is the guardrail, not an input cap. */
   fare?: number
 }
 

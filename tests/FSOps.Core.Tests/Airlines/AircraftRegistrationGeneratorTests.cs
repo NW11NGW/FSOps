@@ -157,8 +157,9 @@ public class AircraftRegistrationGeneratorTests
     }
 
     /// <summary>
-    /// Does NOT enforce a country's own format on a custom entry - docs/PLAN.md is explicit that a
-    /// player matching a repaint knows what they want. A US-shaped "N-number-looking" string typed
+    /// Does NOT enforce a country's own format on a custom entry: liveries vary wildly and a
+    /// player matching a specific repaint knows what they want better than a validator does, so
+    /// only what would break the app is rejected. A US-shaped "N-number-looking" string typed
     /// in for a UK-hubbed airline (or vice versa) must still validate.
     /// </summary>
     [Fact]

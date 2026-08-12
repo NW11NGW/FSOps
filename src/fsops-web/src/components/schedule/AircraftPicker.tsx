@@ -15,8 +15,8 @@ interface AircraftPickerProps {
   onNavigateAway: () => void
 }
 
-/** The backend's reason already ends in the fix, worded per docs/PLAN.md "2b" ("one short reason
- *  ... ending in an action that fixes it"). This only decides whether that fix is a Fleet-page
+/** The backend's reason already ends in the fix - one short reason ending in an action the player
+ *  can take. This only decides whether that fix is a Fleet-page
  *  link worth turning into an actual `<Link>` rather than plain text - a grounded aircraft's
  *  reason has no such action (nothing to click, only time fixes it). */
 function fleetPageFix(reason: string | null): boolean {
@@ -24,7 +24,8 @@ function fleetPageFix(reason: string | null): boolean {
 }
 
 /**
- * Step one of the redesigned two-step picker (docs/PLAN.md "2a"/"2b"): "pick the aircraft first".
+ * Step one of the redesigned two-step picker: pick the aircraft first, then the leg. The original
+ * route x aircraft cross-product could not be scanned - six near-identical paragraphs for one slot.
  * Every aircraft is always listed - reserved or grounded ones too, disabled with the backend's own
  * one-line reason - never hidden, since silent omission is exactly the bug this design replaces.
  */

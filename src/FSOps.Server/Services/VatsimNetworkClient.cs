@@ -8,7 +8,7 @@ namespace FSOps.Server.Services;
 /// <summary>
 /// One controller currently logged on to the VATSIM network, trimmed down to what the dashboard's
 /// ATC layer needs to answer "is anyone controlling where I am flying right now" - see
-/// docs/PLAN.md "VATSIM integration". The raw feed's much larger controller/pilot payload is
+/// VATSIM's public, keyless JSON feed. The raw feed's much larger controller/pilot payload is
 /// parsed and discarded here; nothing beyond this shape is retained, and pilot entries are never
 /// read at all.
 /// </summary>
@@ -39,8 +39,9 @@ public interface IVatsimNetworkClient
 /// vatsim.dev, regenerates roughly every 15 seconds). Registered as a singleton so every request
 /// for /operations/atc, from every connected client, shares one cache and one in-flight fetch
 /// rather than each poll or each browser tab hitting VATSIM's infrastructure independently - see
-/// docs/PLAN.md "Engineering and etiquette": poll no more often than the 15-second regeneration
-/// interval, cache between polls, share one fetch across all features, and back off on errors.
+/// this is etiquette toward third-party infrastructure FSOps does not pay for: poll no more often
+/// than the 15-second regeneration interval, cache between polls, share one fetch across all
+/// features, and back off on errors.
 ///
 /// A failed fetch (timeout, non-success status, malformed JSON) is cached exactly like a
 /// successful one: as an "unavailable" snapshot stamped with the attempt time. That is what makes
@@ -59,7 +60,7 @@ public sealed class VatsimNetworkClient : IVatsimNetworkClient
     // "is a controller online" should be true for someone who is just watching the network.
     private const int ObserverFacilityId = 0;
 
-    // VATSIM regenerates the feed roughly every 15 seconds (see docs/PLAN.md). A margin above
+    // VATSIM regenerates the feed roughly every 15 seconds. A margin above
     // that keeps this client from ever being the one polling faster than the feed actually changes.
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);

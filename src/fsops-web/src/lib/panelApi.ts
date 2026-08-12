@@ -27,6 +27,9 @@ export interface PanelPathValidation {
 export interface PanelOperationResult {
   success: boolean
   reason: string | null
+  /** True only when a COMPLETE package is on disk - not merely that a manifest is there. A package
+   *  that is present but missing files reports false here with a non-empty `missingFiles`, which is
+   *  the pair the UI reads as its needs-repair state. */
   installed: boolean
   installedPath: string | null
   installedVersion: string | null
@@ -42,6 +45,10 @@ export interface PanelOperationResult {
    *  the sim - comparing these two is the only thing that catches it. */
   installedPort: string | null
   expectedPort: string | null
+  /** Package-relative paths that should be on disk and are not. Empty whenever nothing is wrong, and
+   *  non-empty only for a package that IS there but incomplete - a folder with no FSOps package at
+   *  all is "not installed", not "missing everything". */
+  missingFiles: string[]
 }
 
 export interface PanelMoveResult {

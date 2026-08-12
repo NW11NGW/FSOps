@@ -20,8 +20,9 @@ public enum AirlineStrategyProfile
 }
 
 /// <summary>
-/// Chosen once, at airline creation, and permanent for the airline's life (see docs/PLAN.md
-/// "Playstyle - Casual vs True-life"). A playstyle is a named set of overrides in
+/// Chosen once, at airline creation, and permanent for the airline's life: switching mid-game
+/// would either bankrupt a healthy airline overnight or trivialise everything already earned, and
+/// either way its history would have been earned under rules that no longer apply. A playstyle is a named set of overrides in
 /// economy-config.json (starter lease, insurance, lease deposit, starting capital) - never a code
 /// path, so nothing in the economy engine itself branches on this value. It is resolved once, at
 /// the point a config is needed for a specific airline, via EconomyConfigCatalog.
@@ -62,8 +63,8 @@ public enum FlightStatus
 
     /// <summary>
     /// A virtual pilot's scheduled flight that could not fly (aircraft in maintenance, still away,
-    /// or otherwise unavailable) and the airline's Playstyle is Casual - see docs/PLAN.md
-    /// "Playstyle is not only numbers - it changes behaviour". Recorded and visible in history so a
+    /// or otherwise unavailable) and the airline's Playstyle is Casual: the airline forgives a
+    /// schedule the player has not perfected yet. Recorded and visible in history so a
     /// silent skip can never hide a scheduling bug, but no ledger lines are posted at all: no lost
     /// revenue (nothing was ever booked) and no penalty. See VirtualFlightResolverService.
     /// </summary>
@@ -71,7 +72,7 @@ public enum FlightStatus
 
     /// <summary>
     /// A virtual pilot's scheduled flight that could not fly and the airline's Playstyle is
-    /// True-life - see docs/PLAN.md "Playstyle is not only numbers - it changes behaviour". Unlike
+    /// True-life, where a schedule that cannot fly costs real money and is clearly reported. Unlike
     /// <see cref="Skipped"/>, this posts a single <see cref="LedgerCategory.CancellationFee"/>
     /// ledger line (see EconomyConfig.UnflyableSchedule) so a badly-planned schedule genuinely
     /// bites. Whether an unflyable occurrence resolves to Skipped or Cancelled is entirely
@@ -83,8 +84,8 @@ public enum FlightStatus
     /// <summary>
     /// A virtual pilot's scheduled occurrence that could not fly because its aircraft is grounded
     /// for a maintenance check, on a schedule with <see cref="PilotSchedule.AutoSuspendOnMaintenance"/>
-    /// set - see docs/PLAN.md "A schedule option: suspend during maintenance and resume
-    /// automatically". Recorded and visible in history exactly like <see cref="Skipped"/> (no
+    /// set, so the schedule suspends while the aircraft is unavailable and resumes automatically
+    /// when it returns. Recorded and visible in history exactly like <see cref="Skipped"/> (no
     /// ledger lines at all - never a <see cref="LedgerCategory.CancellationFee"/>, because the
     /// schedule isn't at fault), but distinct from Skipped so the reason ("suspended for
     /// maintenance" vs. "the schedule genuinely can't be flown as built") is never conflated in the
@@ -146,7 +147,7 @@ public enum LedgerCategory
 
     /// <summary>
     /// Posted for a virtual pilot's flight that couldn't fly under a True-life airline - see
-    /// <see cref="FlightStatus.Cancelled"/> and docs/PLAN.md's Playstyle behaviour table. Never
+    /// <see cref="FlightStatus.Cancelled"/>. Never
     /// posted for a Casual airline (see <see cref="FlightStatus.Skipped"/>) and never posted
     /// alongside a <see cref="TicketRevenue"/> line for the same flight - a cancelled sector never
     /// flew, so it never earns revenue.

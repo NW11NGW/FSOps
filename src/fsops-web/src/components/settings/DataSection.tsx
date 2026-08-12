@@ -12,9 +12,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { WorldDataSection } from '@/components/settings/WorldDataSection'
 import { ApiError, del } from '@/lib/api'
 
+/**
+ * Everything about the data FSOps holds: the world airport/runway data it ships with, and the one
+ * irreversible action that throws the player's own data away. They sit together, in that order,
+ * because both are "data" to someone scanning the page — but the world-data card is a separate
+ * component so its refresh action can never be mistaken for part of the danger zone. Refreshing
+ * world data deletes nothing; deleting an airline deletes everything.
+ */
 export function DataSection() {
+  return (
+    <>
+      <WorldDataSection />
+      <DangerZone />
+    </>
+  )
+}
+
+function DangerZone() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
 

@@ -40,7 +40,7 @@ export interface SpilloverBlock {
 }
 
 /** The gap between two consecutive legs on the SAME duty day - always the same airframe, since a
- *  day carries exactly one aircraft (docs/PLAN.md "2a"). Purely for the "is this day over-stuffed"
+ *  day carries exactly one aircraft. Purely for the "is this day over-stuffed"
  *  visual - see TIGHT_TURNAROUND_MINUTES. */
 export interface TurnaroundGap {
   top: number

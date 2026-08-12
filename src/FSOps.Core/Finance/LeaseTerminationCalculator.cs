@@ -3,8 +3,8 @@ using FSOps.Core.Economy;
 namespace FSOps.Core.Finance;
 
 /// <summary>
-/// Pure early-lease-termination arithmetic - see docs/PLAN.md "Returning a lease early must cost
-/// something" and <see cref="LeaseEarlyTerminationConfig"/>'s own doc for the two components this
+/// Pure early-lease-termination arithmetic. Returning early has to cost something, or leasing is a
+/// free rental rather than a commitment - see <see cref="LeaseEarlyTerminationConfig"/>'s own doc for the two components this
 /// combines. No I/O, no ambient clock read - the caller supplies <c>now</c> and the airline's
 /// <c>EconomyState.LastProcessedUtc</c>/<c>periodLength</c>, same pattern as every other pure
 /// calculator in this namespace (<see cref="LoanCalculator"/>, <see cref="AircraftDepreciationCalculator"/>).
@@ -18,8 +18,8 @@ public static class LeaseTerminationCalculator
     /// <paramref name="monthlyRate"/> at the same period boundary regardless of when within it the
     /// lease itself started). The pro-rata charge is what's owed for the days elapsed in THIS
     /// unbilled period, so returning the aircraft one day after taking it out still costs a day's
-    /// rent, not zero - closing the "lease, fly, return before the tick lands" loophole docs/PLAN.md
-    /// calls out.
+    /// rent, not zero. That closes the "lease it, fly it, return it before the billing tick lands"
+    /// loophole, which would otherwise be free capacity with no commitment.
     /// </summary>
     public static LeaseTerminationSettlement ComputeSettlement(
         decimal monthlyRate,
@@ -50,8 +50,8 @@ public static class LeaseTerminationCalculator
 }
 
 /// <summary>Result of <see cref="LeaseTerminationCalculator.ComputeSettlement"/>. Both amounts are
-/// posted as separate itemised ledger lines by the caller - see docs/PLAN.md "Post it as an
-/// itemised ledger line", not folded into one figure the player can't decompose.</summary>
+/// posted as separate itemised ledger lines by the caller, not folded into one figure the player
+/// can't decompose.</summary>
 public sealed record LeaseTerminationSettlement(
     double DaysIntoCurrentPeriod,
     decimal ProRataAmount,

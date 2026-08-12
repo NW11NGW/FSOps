@@ -10,7 +10,7 @@ interface MaintenanceSuspendToggleProps {
 }
 
 /**
- * A property of the WHOLE weekly schedule, not any one day or leg (docs/PLAN.md) - deliberately
+ * A property of the WHOLE weekly schedule, not any one day or leg - deliberately
  * placed outside the day/leg editing flow, alongside the save toolbar. Mirrors
  * `PilotSchedule.AutoSuspendOnMaintenance`, defaults to true, and must always be sent explicitly
  * on save (see hooks/useSchedule.ts's `save`) - the backend resets an omitted value to true, so a

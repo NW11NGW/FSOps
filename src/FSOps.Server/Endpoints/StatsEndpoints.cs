@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Endpoints;
 
 /// <summary>
-/// Backs the Stats page - docs/PLAN.md's statistics dashboards. Everything here is derived
+/// Backs the Stats page. Everything here is derived
 /// straight from posted <see cref="Flight"/> rows (never a cached total), same discipline
 /// <see cref="FinanceEndpoints"/> already applies to money: on-time performance and load factor use
 /// exactly the same delay/measurability rules as <c>AirlineEndpoints.GetReputationAsync</c>
@@ -33,8 +33,7 @@ public static class StatsEndpoints
     private static int ResolvePeriodDays(int? days) => days is > 0 and <= MaxPeriodDays ? days.Value : DefaultPeriodDays;
 
     /// <summary>
-    /// On-time performance and load factor, bucketed by the local completion day - docs/PLAN.md
-    /// "On-time performance over time, and load factor over time". A day is only present in
+    /// On-time performance and load factor, bucketed by the local completion day. A day is only present in
     /// <c>points</c> if at least one sector completed that day, so a quiet stretch never renders as
     /// a fabricated zero. <c>onTimePercent</c> mirrors <c>AirlineEndpoints.GetReputationAsync</c>'s
     /// own delay/measurability rule exactly (Completed, InUtc set, not SimRateElevated - a
@@ -115,8 +114,8 @@ public static class StatsEndpoints
     }
 
     /// <summary>
-    /// Fleet utilisation - docs/PLAN.md "hours flown per aircraft, idle time, and how close each
-    /// airframe is to its next check". <c>hoursFlownInPeriod</c> is summed from completed flights'
+    /// Fleet utilisation: hours flown per aircraft, idle time, and how close each airframe is to
+    /// its next check. <c>hoursFlownInPeriod</c> is summed from completed flights'
     /// own OOOI times (<see cref="BlockTimeCalculator"/>), not the lifetime
     /// <see cref="FleetAircraft.AirframeHours"/> counter, so it actually reflects the requested
     /// window. <c>hoursToNextACheck</c>/<c>hoursToNextCCheck</c> mirror
@@ -188,8 +187,8 @@ public static class StatsEndpoints
     }
 
     /// <summary>
-    /// Pilot logbook - docs/PLAN.md "sectors, hours and performance per pilot, including the
-    /// player". <c>hoursFlown</c> is summed from completed flights' own OOOI times, exactly like
+    /// Pilot logbook: sectors, hours and performance per pilot, the player included.
+    /// <c>hoursFlown</c> is summed from completed flights' own OOOI times, exactly like
     /// <see cref="FleetAsync"/> above, never from the lifetime <see cref="Pilot.HoursFlown"/>
     /// counter - that figure is not windowed and this page's whole premise is "over the requested
     /// period". <c>onTimePercent</c> uses the same rule as <see cref="PerformanceAsync"/>;

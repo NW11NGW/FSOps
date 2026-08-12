@@ -11,7 +11,7 @@ namespace FSOps.Server.Endpoints;
 
 /// <summary>
 /// Getting rid of an aircraft - selling an owned one, or ending a leased one's lease early - see
-/// docs/PLAN.md "Getting rid of an aircraft - returning a lease and selling". Acquisition
+/// so the fleet stops being a one-way ratchet. Acquisition
 /// (<see cref="FleetEndpoints.BuyAsync"/>/<see cref="FleetEndpoints.LeaseAsync"/>) was a one-way
 /// ratchet before this; both actions here are deliberately never free (see
 /// <see cref="AircraftDepreciationCalculator"/>/<see cref="LeaseTerminationCalculator"/>'s own docs
@@ -22,7 +22,7 @@ namespace FSOps.Server.Endpoints;
 /// condition, which a virtual pilot's background flight can move) and a lease-termination charge
 /// (depends on wall-clock time) can legitimately drift between a quote being shown and the player
 /// clicking confirm - the world keeps moving even while a confirmation dialog is open (see
-/// docs/PLAN.md's "while you were away"). Both actions are irreversible, so a mismatch refuses the
+/// billing and virtual flights both resolve against real time, not app-open time). Both actions are irreversible, so a mismatch refuses the
 /// action and returns the new figure rather than silently posting a different number than the one
 /// on screen. All time reads go through <see cref="IClock"/> rather than
 /// <see cref="DateTimeOffset.UtcNow"/> directly, so this is deterministically testable.
@@ -348,7 +348,7 @@ public static class FleetDisposalEndpoints
     }
 
     /// <summary>
-    /// Shared blocking rules for both disposal actions - docs/PLAN.md "Rules for both": never while
+    /// Shared blocking rules for both disposal actions: never while
     /// flying, never while on a virtual pilot's standing schedule (say which pilot and which
     /// schedule rather than silently unassigning), and the right ownership kind for the action
     /// requested (sell needs Owned, end-lease needs Leased). Grounded-for-maintenance is

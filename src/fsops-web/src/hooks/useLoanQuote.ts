@@ -13,7 +13,7 @@ interface UseLoanQuoteResult {
 /**
  * Live, server-computed preview for a specific amount/term (GET /fleet/loan-quote) - the rate,
  * monthly repayment and total interest a loan of exactly this shape would actually carry if taken
- * right now. See docs/PLAN.md "Show the rate before the player commits" - the rate is always
+ * right now, shown before the player commits so borrowing is an informed decision. The rate is always
  * computed server-side (LoanRateCalculator), never guessed client-side, so this can never disagree
  * with what POST /fleet/loans actually charges.
  *

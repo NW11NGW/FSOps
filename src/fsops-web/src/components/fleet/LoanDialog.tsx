@@ -36,7 +36,7 @@ export function LoanDialog({ open, onOpenChange, onSuccess }: LoanDialogProps) {
   const parsedTerm = Number(termMonths)
 
   // The rate, monthly repayment and total interest are ALWAYS server-computed - see
-  // docs/PLAN.md "Loan interest is set by the simulation, never by the player". There is no
+  // the simulation sets the rate, never the player. There is no
   // client-side rate input or preview formula to keep in sync: this dialog shows exactly what
   // POST /fleet/loans will charge if submitted unchanged.
   const { status: quoteStatus, quote } = useLoanQuote(parsedAmount, parsedTerm)

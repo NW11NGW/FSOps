@@ -15,8 +15,9 @@ export interface UseAwaySummaryResult {
 }
 
 /**
- * Fetches GET /away-summary once on mount - docs/PLAN.md "'While you were away' - the app must
- * explain catch-up". `summary` is null (not an empty object) whenever there is genuinely nothing
+ * Fetches GET /away-summary once on mount, so the app can explain catch-up rather than leaving a
+ * returning player to reconstruct it from a transaction list.
+ * `summary` is null (not an empty object) whenever there is genuinely nothing
  * to show (a normal reload, or a brand-new airline), so callers can gate rendering on
  * `summary !== null` rather than inspecting `hasSummary` themselves.
  */

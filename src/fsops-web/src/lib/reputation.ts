@@ -24,8 +24,8 @@ const LANDING_QUALITY_TEXT: Record<NonNullable<ReputationSummary['landingQuality
 }
 
 /**
- * Plain-language sentences for "what is moving it" - docs/PLAN.md "Show what is driving it in the
- * player's own words". Never invents a driver the data can't support: on-time and landing are
+ * Plain-language sentences for "what is moving it" - a number that silently governs demand and is
+ * never explained is indistinguishable from a bug. Never invents a driver the data can't support: on-time and landing are
  * omitted (not shown as 0%) when the backend couldn't measure them, and a brand-new airline gets an
  * honest "no sectors yet" line rather than a blank card.
  */

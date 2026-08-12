@@ -9,8 +9,8 @@ export interface PilotSkillStatus {
 }
 
 /** Once grace-remaining days fall to this or below (and decay hasn't started yet), the status
- *  switches from a plain "flew on X" line to an explicit countdown - docs/PLAN.md "Idle decay must
- *  be visible and understandable before it bites": the warning has to land before the number
+ *  switches from a plain "flew on X" line to an explicit countdown. Idle decay has to be visible
+ *  and understandable before it bites: the warning has to land before the number
  *  actually starts moving, not only once it has. */
 const GRACE_WARNING_DAYS = 5
 

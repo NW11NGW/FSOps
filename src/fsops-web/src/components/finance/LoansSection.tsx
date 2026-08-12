@@ -17,7 +17,7 @@ interface LoansSectionProps {
 }
 
 /**
- * docs/PLAN.md "Loans - with partial and full repayment": original amount, outstanding principal,
+ * Loans, with partial and full repayment: original amount, outstanding principal,
  * rate, monthly repayment, remaining term and total interest still to pay for every loan. Paid-off
  * loans are shown (so the player can see they're no longer being charged) but visually
  * de-emphasised rather than hidden.

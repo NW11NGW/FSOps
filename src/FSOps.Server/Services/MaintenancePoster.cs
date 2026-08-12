@@ -24,8 +24,8 @@ public static class MaintenancePoster
     /// hours belong to both the airframe that flew them and the pilot who flew them, and putting the
     /// accrual here (where the airframe side already lives) is what makes it impossible for a future
     /// caller to add a fourth completion path and forget the pilot side the way two of the three
-    /// existing paths already had (docs/PLAN.md "Known gap - pilot hours never accrue from player
-    /// flights"). Null is accepted rather than required so a caller that genuinely cannot resolve the
+    /// existing paths already had, which left the player's own HoursFlown sitting at zero however
+    /// much they flew. Null is accepted rather than required so a caller that genuinely cannot resolve the
     /// pilot (a dangling/deleted PilotId) still posts the airframe and maintenance effects instead of
     /// throwing - the airframe wore the same either way.
     /// </param>
@@ -43,8 +43,8 @@ public static class MaintenancePoster
             // cannot be decaying at the same instant. Applies to every pilot, player included: see
             // PilotSkillCalculator's own doc for why growing this number is harmless for a player
             // (their real flights are always judged by real telemetry, never by SkillRating) and
-            // why it can never DECREASE the player's number - the one requirement docs/PLAN.md
-            // actually makes non-negotiable.
+            // why it can never DECREASE the player's number, which is the one non-negotiable rule
+            // here: the player's own pilot record never decays.
             pilot.SkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, completionUtc, completionUtc, economyConfig.PilotSkill);
             pilot.LastFlewUtc = completionUtc;
         }

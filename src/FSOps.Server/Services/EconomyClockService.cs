@@ -10,8 +10,8 @@ namespace FSOps.Server.Services;
 /// <summary>
 /// Posts the monthly fixed costs that Chunk D's balance rebalance assumed but nothing ever
 /// charged: aircraft lease payments, pilot salaries, and insurance per aircraft (see
-/// docs/PLAN.md "Status after the progression-loop rebalance" - "Chunk E must post these monthly
-/// lines, or the balance is fiction"). Also amortises every outstanding <see cref="Loan"/> - the
+/// without these lines the balance is fiction, since the monthly pressure the whole economy is
+/// tuned around would be validated in tests but never applied in play). Also amortises every outstanding <see cref="Loan"/> - the
 /// founding loan Chunk B could create at airline creation, and any mid-game loan FleetEndpoints
 /// now offers, are both repaid monthly right here (see <see cref="LoanCalculator.ApplyMonthlyPayment"/>);
 /// this was the one piece of the loan feature that never actually existed before E1. Runs once at
@@ -36,7 +36,8 @@ namespace FSOps.Server.Services;
 /// that timing happens to work out.
 /// </para>
 /// <para>
-/// <b>Wall-clock integrity (docs/PLAN.md "Wall-clock manipulation").</b>
+/// <b>Wall-clock integrity.</b> Winding the system clock forward would otherwise be the single
+/// most lucrative exploit in the design, and the easiest to perform.
 /// <see cref="EconomyState.LastProcessedUtc"/> only ever advances forward, in whole
 /// <see cref="PeriodLength"/> steps, and never past <see cref="IClock.UtcNow"/> - so winding the
 /// clock forward cannot mint more than <see cref="MaxPeriodsPerPass"/> months of charges in one
@@ -68,31 +69,88 @@ public sealed class EconomyClockService : BackgroundService
     private readonly ILogger<EconomyClockService> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// Where a failed pass is recorded so the UI can tell the player, rather than the failure
+    /// living only in a log file. Optional so tests can construct this service directly without
+    /// standing one up; in the running app DI always supplies it.
+    /// </summary>
+    private readonly StartupReconciliationState? _startupState;
+
     // Every config-derived charge is resolved per-airline from this catalog (see
     // PostMonthlyChargesAsync) rather than from a single flat EconomyConfig - insurance differs by
-    // AirlinePlaystyle (Casual 6,000 vs True-life 50,000; see docs/PLAN.md "Playstyle - Casual vs
-    // True-life"), so a flat config would silently bill every True-life airline the Casual rate.
+    // AirlinePlaystyle (Casual 6,000 vs True-life 50,000), so a flat config would silently bill
+    // every True-life airline the Casual rate.
     // Lease and salary amounts are unaffected by this - both are read from the stored Lease.MonthlyRate
     // and Pilot.MonthlySalary rows, which were already set per-playstyle at creation time.
     public EconomyClockService(
-        IServiceScopeFactory scopeFactory, EconomyConfigCatalog economyConfigCatalog, IClock clock, ILogger<EconomyClockService> logger)
+        IServiceScopeFactory scopeFactory,
+        EconomyConfigCatalog economyConfigCatalog,
+        IClock clock,
+        ILogger<EconomyClockService> logger,
+        StartupReconciliationState? startupState = null)
     {
         _scopeFactory = scopeFactory;
         _economyConfigCatalog = economyConfigCatalog;
         _clock = clock;
         _logger = logger;
+        _startupState = startupState;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Run once immediately so a startup catch-up (the app having been closed for days) happens
         // before the first 60s tick, not up to a minute after.
-        await RunOnceAsync(stoppingToken);
+        //
+        // This first pass MUST NOT be allowed to throw. It runs before ExecuteAsync has yielded, so
+        // BackgroundService.StartAsync hands the host an already-faulted task and the exception
+        // propagates straight out of Host.StartAsync() -> Run() -> Main. That path never reaches
+        // BackgroundServiceExceptionBehavior, so the host's own "BackgroundService failed" critical
+        // log never runs either: the process simply died with nothing in the app's log. That was
+        // observed for real - a malformed database took the whole process down from this exact
+        // line, leaving only EF's routine "Failed executing DbCommand" behind.
+        //
+        // Killing the app is also the wrong answer on its own terms. FSOps is perfectly usable with
+        // the catch-up not yet done - the airline, fleet and history are all still readable - and
+        // the timer below retries a minute later. A transient database hiccup must not cost the
+        // player the entire application. So: log loudly, record it where the UI can see it, carry
+        // on. See StartupReconciliationState.CatchUpFailures for why silence is not an option
+        // either - a failed pass means money movements are missing.
+        await RunGuardedPassAsync(stoppingToken, isStartupPass: true);
 
         using var timer = new PeriodicTimer(TickInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await RunGuardedPassAsync(stoppingToken, isStartupPass: false);
+        }
+    }
+
+    /// <summary>
+    /// One pass with the failure policy applied. A pass that throws is logged at Critical, recorded
+    /// for the UI, and swallowed so the service survives to try again on the next tick. Shutdown
+    /// cancellation is not a failure and is rethrown so the timer loop ends normally.
+    /// </summary>
+    private async Task RunGuardedPassAsync(CancellationToken stoppingToken, bool isStartupPass)
+    {
+        try
+        {
             await RunOnceAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var when = isStartupPass ? "startup catch-up" : "scheduled";
+            _logger.LogCritical(
+                ex,
+                "The economy clock's {When} pass failed. Monthly lease, salary and insurance charges may not have been " +
+                "posted; the next tick in {TickSeconds}s will retry. The app is still usable, but any cash balance shown " +
+                "until then may be missing charges.",
+                when,
+                TickInterval.TotalSeconds);
+
+            _startupState?.RecordCatchUpFailure(nameof(EconomyClockService), ex, _clock.UtcNow);
         }
     }
 

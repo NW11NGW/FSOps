@@ -17,7 +17,7 @@ interface LeasesSectionProps {
 }
 
 /**
- * docs/PLAN.md "Leases - with dates and an exit": every active lease, its monthly cost, and when
+ * Leases, with dates and an exit: every active lease, its monthly cost, and when
  * the next payment is actually due - a real date derived from the airline's rolling 30-day billing
  * clock, never "the 1st of the month". End-lease opens the shared EndLeaseDialog (components/fleet).
  */

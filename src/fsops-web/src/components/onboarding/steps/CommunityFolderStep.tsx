@@ -22,8 +22,9 @@ interface CommunityFolderStepProps {
 type DetectStatus = 'loading' | 'ready' | 'error'
 
 /**
- * "MSFS panel" onboarding step - docs/PLAN.md "The Community folder is captured at onboarding and
- * reused to install the panel". This step ONLY captures and validates the path; the actual install
+ * "MSFS panel" onboarding step. The Community folder is captured once here and reused to install,
+ * update and repair the panel, so the player is never asked for the same path twice and never told
+ * to copy a folder by hand. This step ONLY captures and validates the path; the actual install
  * (and saving it to UserSettings via PUT /settings) happens once in OnboardingWizard's submit
  * handler, after the airline itself is created - so a install hiccup here never blocks founding an
  * airline, and the path is never asked for twice.

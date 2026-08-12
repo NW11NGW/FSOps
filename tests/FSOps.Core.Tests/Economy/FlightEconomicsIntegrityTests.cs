@@ -4,7 +4,7 @@ using FSOps.Core.Entities;
 namespace FSOps.Core.Tests.Economy;
 
 /// <summary>
-/// Covers docs/PLAN.md's "Integrity - you must not be able to cheat your way to money" section,
+/// Covers the integrity rules - the game's own mechanics must never reward a shortcut -
 /// specifically the two rules that are architectural to the pure economy engine (the third,
 /// punctuality windows, belongs to the telemetry layer once it exists - see the class doc on
 /// FlightEconomicsResult for why revenue can never respond to timing here).

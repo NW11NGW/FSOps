@@ -32,8 +32,8 @@ interface EndLeaseDialogProps {
 }
 
 /**
- * Ending a lease early moves real money and can't be undone - docs/PLAN.md "Returning a lease
- * early must cost something" (pro-rata rent for days already used, plus an early-termination fee)
+ * Ending a lease early moves real money and can't be undone: returning early has to cost something
+ * (pro-rata rent for days already used, plus an early-termination fee), or leasing is a free rental
  * and the project rule that a disposal action needs an explicit confirmation naming the aircraft
  * by registration. Shared between the Fleet page (per-aircraft dispose action) and the Finances
  * page's Leases section (per-lease "end lease" action) - both just need a fleet aircraft id and

@@ -4,8 +4,8 @@ using FSOps.Core.Scheduling;
 namespace FSOps.Core.Tests.Scheduling;
 
 /// <summary>
-/// Exercises PilotSkillCalculator against docs/PLAN.md "Progression - reputation and pilot skill",
-/// point 3: growth with diminishing returns capped below perfect, idle decay driven only by time
+/// Exercises PilotSkillCalculator against the three things that define it: growth with diminishing
+/// returns capped below perfect, idle decay driven only by time
 /// since the pilot last flew, and the player's own record never decaying.
 /// </summary>
 public class PilotSkillCalculatorTests
@@ -61,8 +61,8 @@ public class PilotSkillCalculatorTests
         // underflow to a literal 0.0, at which point the formula's output becomes indistinguishable
         // from the cap in floating point - a representation limit of an enormous, unreachable test
         // input, not evidence that the model's true asymptote (1 - 0.5^x < 1 for every finite x) is
-        // wrong. Docs/PLAN.md's requirement is that variance never fully disappears "even for the
-        // most experienced hire" - no real pilot in this game reaches 10,000 hours, let alone
+        // wrong. The requirement is that variance never fully disappears even for the most
+        // experienced hire - no real pilot in this game reaches 10,000 hours, let alone
         // 1,000,000, so this input is already far past what matters.
         var now = DateTimeOffset.UtcNow;
         var result = PilotSkillCalculator.Compute(hoursFlown: 10_000, lastFlewUtc: now, now, Config);
@@ -126,9 +126,9 @@ public class PilotSkillCalculatorTests
     {
         // Two pilots with identical hours and identical "now", but different LastFlewUtc - one flew
         // recently (short idle gap), one hasn't flown in a long time (long idle gap). Only the gap
-        // to LastFlewUtc should matter, never "now" on its own - docs/PLAN.md's explicit requirement
-        // that a standing schedule (which keeps LastFlewUtc fresh) must never decay just because the
-        // app itself was closed for a long time.
+        // to LastFlewUtc should matter, never "now" on its own. This is what keeps decay fair to a
+        // casual player: a standing schedule keeps LastFlewUtc fresh, so a pilot must never decay
+        // just because the app itself was closed for a long time.
         var now = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var recentlyFlown = now.AddDays(-1);
         var longIdle = now.AddDays(-90);

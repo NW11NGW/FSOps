@@ -24,8 +24,8 @@ export interface DraftLeg {
 /**
  * The grid's working copy of one duty day: the ONE aircraft chosen for it, plus its legs in
  * arrival order. A day with `fleetAircraftId` set and `legs: []` is a real, meaningful state - the
- * player picked an aircraft but hasn't added a leg yet (docs/PLAN.md "2a"/"2b": aircraft first,
- * then legs).
+ * player picked an aircraft but hasn't added a leg yet, since the picker is deliberately aircraft
+ * first, then legs.
  */
 export interface DraftDay {
   dayOfWeek: DayOfWeek

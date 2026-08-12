@@ -13,7 +13,12 @@ export interface MapColors {
    *  player's own aircraft already use) so controller sector shading never reads as "more
    *  network" at a glance. Legible against both the light and dark CARTO basemaps. */
   atc: string
+  /** Fill for a real published sector boundary. */
   atcFill: string
+  /** Fill for an approximate terminal range circle - deliberately weaker than `atcFill`, and
+   *  paired with a dashed outline, so a sketch never carries the same visual weight as a fact.
+   *  The legend names the difference; this makes it legible before anyone reads the legend. */
+  atcFillSoft: string
 }
 
 /**
@@ -79,7 +84,8 @@ export function readMapColors(): MapColors {
     foreground: tokenToRgb(foreground),
     mutedForeground: tokenToRgb(mutedForeground),
     atc: tokenToRgb(warning),
-    atcFill: tokenToRgb(warning, 0.12),
+    atcFill: tokenToRgb(warning, 0.14),
+    atcFillSoft: tokenToRgb(warning, 0.06),
   }
 }
 

@@ -44,6 +44,32 @@ public sealed class SimConnectSource : ISimSource
     /// <summary>Last connection-failure type+message, so an unchanging failure is only reported once.</summary>
     private string? _lastFailureSignature;
 
+    /// <summary>
+    /// Non-zero once <see cref="DisposeAsync"/> has run. Disposal here MUST be idempotent, and so
+    /// must a <see cref="StopAsync"/> that arrives after it, because this instance is captured for
+    /// disposal by the DI container more than once: Program.cs registers it as the
+    /// <c>ISimSource</c> singleton, and <c>SimTelemetryService</c> - itself registered both as a
+    /// singleton and as a hosted service resolving that same singleton - disposes it as well. The
+    /// container adds an instance to its disposal list once per service descriptor, so the same
+    /// object really is disposed twice on shutdown.
+    ///
+    /// <para>Before this guard existed, the second pass reached <c>_cts.Cancel()</c> on a
+    /// <see cref="CancellationTokenSource"/> the first pass had already disposed.
+    /// <see cref="CancellationTokenSource.Cancel()"/> throws <see cref="ObjectDisposedException"/>
+    /// in that state, and it threw from inside <c>Host.DisposeAsync()</c> - past the last catch
+    /// block in the process - so every clean exit terminated with an unhandled exception. Nine of
+    /// those were recorded in the Windows Application event log across three days. Worse, the
+    /// throw aborted the container's disposal loop part-way, so the remaining disposables -
+    /// Serilog's logger among them - were never flushed, and the death left nothing in the app's
+    /// own log.</para>
+    ///
+    /// <para>This is a flag over the whole method rather than a null-out of <c>_cts</c> on
+    /// purpose: double disposal is a property of how the class is registered, not of this one
+    /// field, so the class has to tolerate it outright. Guarding only the field that happened to
+    /// throw would leave the next field added here to reintroduce exactly the same crash.</para>
+    /// </summary>
+    private int _disposed;
+
     public SimConnectSource(SimConnectSourceOptions options, ILogger<SimConnectSource> logger)
     {
         _options = options;
@@ -84,6 +110,13 @@ public sealed class SimConnectSource : ISimSource
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // Already disposed means already stopped - there is no loop left to cancel and the token
+        // source is gone. See _disposed for why this is reachable at all.
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         _cts?.Cancel();
 
         if (_connectionLoopTask is not null)
@@ -101,7 +134,28 @@ public sealed class SimConnectSource : ISimSource
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync(CancellationToken.None);
+        // Claim disposal exactly once. Everything after this point runs on the first call only,
+        // so a second (or third) DisposeAsync is a no-op rather than a process-killing throw.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        // StopAsync would now short-circuit on the flag, so do its work here instead.
+        _cts?.Cancel();
+
+        if (_connectionLoopTask is not null)
+        {
+            try
+            {
+                await _connectionLoopTask.WaitAsync(CancellationToken.None);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected on shutdown.
+            }
+        }
+
         _cts?.Dispose();
     }
 

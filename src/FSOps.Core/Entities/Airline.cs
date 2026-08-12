@@ -13,8 +13,10 @@ public class Airline
     public AirlineStrategyProfile StrategyProfile { get; set; }
 
     /// <summary>
-    /// Chosen at creation, permanent for the airline's life - see docs/PLAN.md "Playstyle - Casual
-    /// vs True-life". There is deliberately no way to change this after creation (see
+    /// Chosen at creation, permanent for the airline's life. Switching mid-game would either
+    /// multiply an existing airline's fixed costs roughly twelvefold overnight or trivialise
+    /// everything already earned, leaving its whole history earned under rules that no longer
+    /// apply. There is deliberately no way to change this after creation (see
     /// AirlineEndpoints.UpdateAsync, which never touches it); switching means deleting the airline
     /// and starting a new one, since a mid-game change would either bankrupt a healthy airline
     /// (Casual -&gt; True-life) or trivialise everything already earned (the reverse).

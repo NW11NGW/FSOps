@@ -24,6 +24,20 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     private Task? _pumpTask;
     private DateTimeOffset _lastBroadcastUtc = DateTimeOffset.MinValue;
 
+    /// <summary>
+    /// Non-zero once <see cref="DisposeAsync"/> has run. This service is deliberately registered
+    /// twice - <c>AddSingleton&lt;SimTelemetryService&gt;()</c> so the heartbeat and the sim status
+    /// endpoint can inject it directly, and <c>AddHostedService(sp =&gt; sp.GetRequiredService&lt;
+    /// SimTelemetryService&gt;())</c> so the host runs it - and the DI container captures an
+    /// instance for disposal once per service descriptor. The same object therefore appears twice
+    /// in the container's disposal list and <see cref="DisposeAsync"/> genuinely runs twice on
+    /// every clean shutdown. That is not a bug in the registration; it is a contract this class
+    /// has to honour, so disposal is idempotent and a <see cref="StopAsync"/> arriving afterwards
+    /// is a no-op rather than a <see cref="ObjectDisposedException"/> thrown out of
+    /// <c>Host.DisposeAsync()</c>, where nothing can catch it and the process dies.
+    /// </summary>
+    private int _disposed;
+
     public SimTelemetryService(ISimSource source, IHubContext<LiveHub> hub, ILogger<SimTelemetryService> logger)
     {
         _source = source;
@@ -80,6 +94,12 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // Already disposed means already stopped. See _disposed for why this is reachable.
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         _cts?.Cancel();
         await _source.StopAsync(cancellationToken);
 
@@ -98,6 +118,12 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Claim disposal exactly once - the container will call this twice. See _disposed.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _cts?.Dispose();
         await _source.DisposeAsync();
     }

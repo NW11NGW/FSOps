@@ -8,8 +8,10 @@ namespace FSOps.Server.Services;
 /// <summary>
 /// One-time-per-boot repair for a contradiction the OLD soft-preference reservation model could
 /// produce: a <see cref="FleetAircraft"/> with <see cref="FleetAircraft.ReservedForPlayer"/> true
-/// that ALSO has active <see cref="PilotScheduleEntry"/> rows referencing it - see docs/PLAN.md
-/// "3a" and the reservation hard-invariant work (2026-08-09). Before 3a, the old
+/// that ALSO has active <see cref="PilotScheduleEntry"/> rows referencing it. Reservation became a
+/// hard, two-way invariant on 2026-08-09 - the player may only fly a reserved aircraft, and a
+/// reserved aircraft is never offered to the scheduler - because two independent actors were
+/// otherwise claiming the same airframes with no arbiter. Before that, the old
 /// <c>FleetEndpoints.SetReservationAsync</c> set the flag with no check against an aircraft's
 /// existing schedule, and <c>PilotScheduleValidator</c> only ever rejected saving NEW legs onto an
 /// aircraft reserved AT THAT MOMENT - neither stopped a player from building a schedule on an

@@ -1,0 +1,39 @@
+VAT-Spy Data Project — FIR/UIR boundary data bundled with FSOps
+================================================================
+
+The two files in this folder are redistributed here unmodified:
+
+    Boundaries.geojson.gz   FIR/UIR boundary polygons (RFC7946 GeoJSON)
+    VATSpy.dat.gz           the directory that maps a controller callsign to a boundary
+
+Source:   https://github.com/vatsimnetwork/vatspy-data-project
+Licence:  Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+          https://creativecommons.org/licenses/by-sa/4.0/
+
+Required attribution, which FSOps also shows in the map's own attribution control:
+
+    FIR boundaries © VAT-Spy Data Project, CC BY-SA 4.0
+
+Downloaded 2026-08-12. SHA-256 of the uncompressed originals:
+
+    Boundaries.geojson  B37D654278264AA6CFB3314820157564353B278CDEA81AC40D327F347D8166BC
+    VATSpy.dat          BFCE7F6F6715A31231F8B3257FCB4F7A163D1521EB99C6312D9EA1229CC7EC6E
+
+
+PLEASE READ BEFORE "OPTIMISING" THESE FILES
+-------------------------------------------
+
+These are shipped verbatim and parsed at runtime on purpose. Gzip is a compression
+container, not a modification, so the bytes above round-trip exactly and what FSOps
+distributes is still the published file.
+
+It would be faster to pre-process them into a trimmed, FSOps-shaped index at build time.
+Do not. CC BY-SA 4.0 is a share-alike licence: a derived database built from this data
+would itself have to be released under CC BY-SA, which would pull the obligation inward
+from "two clearly third-party files in a data folder" to "a file FSOps generates and
+ships as part of itself". Redistributing the originals with attribution carries no such
+consequence. The parsing cost this avoids is a few hundred milliseconds, once, lazily,
+on the first request that needs a boundary.
+
+To update to a newer AIRAC cycle: download both files from the repository above, gzip
+them into this folder under the same names, and update the hashes and date here.

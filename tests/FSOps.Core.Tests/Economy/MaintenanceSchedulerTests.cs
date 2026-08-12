@@ -122,8 +122,8 @@ public class MaintenanceSchedulerTests
         Assert.True(casualOutcome.CheckTriggered);
         Assert.True(trueLifeOutcome.CheckTriggered);
 
-        // Same cycle (both triggered at exactly 500h) and same cost (docs/PLAN.md's behaviour
-        // table: "same cycle... and same costs") - only downtime differs.
+        // Same cycle (both triggered at exactly 500h) and same cost - what differs between the
+        // playstyles is how long a check grounds the aircraft, never what the work costs.
         Assert.Equal(casualOutcome.Cost, trueLifeOutcome.Cost);
         Assert.Equal(casual.Maintenance.ACheckDowntimeHours, casualOutcome.DowntimeHours);
         Assert.Equal(trueLife.Maintenance.ACheckDowntimeHours, trueLifeOutcome.DowntimeHours);

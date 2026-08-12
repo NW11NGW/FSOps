@@ -24,8 +24,8 @@ function legsByDay(legs: OverviewLeg[]) {
   return byDay
 }
 
-/** One coloured, clickable-nowhere chip for a leg - the overview is read-only (docs/PLAN.md "2a":
- *  "editing stays in the per-pilot and per-aircraft views"). */
+/** One coloured, clickable-nowhere chip for a leg - the overview is read-only, because editing
+ *  stays in the per-pilot and per-aircraft views. */
 function LegChip({ leg, colourClass, subtitle }: { leg: OverviewLeg; colourClass: string; subtitle: string }) {
   return (
     <div
@@ -210,8 +210,8 @@ function ByPilotView({ pilots }: { pilots: OverviewPilotRow[] }) {
 }
 
 /**
- * Read-only, airline-wide view of the whole week - "is my fleet actually being used" (docs/PLAN.md
- * "2a"). Two toggleable views of the same underlying data: every aircraft as a row with its legs
+ * Read-only, airline-wide view of the whole week - the answer to "is my fleet actually being
+ * used", which the per-pilot views cannot give. Two toggleable views of the same underlying data: every aircraft as a row with its legs
  * colour-coded by pilot, or every pilot as a row with their own duty days. Nothing here is
  * editable - go to a pilot's own schedule (Pilots roster -> Schedule) to change anything.
  */

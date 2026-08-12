@@ -10,7 +10,9 @@ namespace FSOps.Core.Flights;
 /// <see cref="FlightPhaseStateMachine.Advance"/>, so the server's flight lifecycle service can
 /// drive both off the same samples with no extra plumbing.
 /// <para>
-/// What each finding means downstream (see docs/PLAN.md, "Integrity"): an elevated simulation
+/// What each finding means downstream. The governing rule is that the game's own mechanics never
+/// reward a shortcut, and that where something genuinely cannot be verified FSOps says so and pays
+/// nothing for it rather than guessing generously. So: an elevated simulation
 /// rate does NOT invalidate the flight - accelerating a long cruise is normal single-player
 /// behaviour - it only means anything measured in wall-clock time (block-time variance, on-time
 /// performance) is meaningless and must be reported as "not measured" rather than scored. Landing

@@ -132,8 +132,9 @@ export interface WizardData {
   loanEnabled: boolean
   loanAmount: number
   loanTermMonths: number
-  /** null = skipped ("MSFS panel" step is genuinely optional - see docs/PLAN.md "The Community
-   *  folder is captured at onboarding..."). Never required to finish founding an airline. */
+  /** null = skipped. The "MSFS panel" step is genuinely optional: the panel is an addition, not a
+   *  prerequisite, and the app stays fully usable with no Community folder configured at all.
+   *  Never required to finish founding an airline. */
   communityFolderPath: string | null
 }
 
@@ -206,7 +207,7 @@ export const STEP_VALIDATORS: Record<WizardStepKey, (data: WizardData) => boolea
   strategy: isStrategyValid,
   aircraft: isAircraftValid,
   currency: isCurrencyValid,
-  // Always valid - "skippable, and offered again later rather than nagged" (docs/PLAN.md). An
+  // Always valid - genuinely skippable, and offered again later from Settings rather than nagged. An
   // unconfirmed or empty path never blocks founding an airline.
   communityFolder: () => true,
   review: isFinanceValid,
@@ -240,8 +241,8 @@ export function buildCreateAirlineInput(data: WizardData): CreateAirlineInput {
 /**
  * Standard amortising-loan monthly payment estimate for the live preview on the review step.
  * annualRatePct is always the server-computed figure from GET /airline/playstyles
- * (startingLoanAnnualRatePct) - never player-supplied - see docs/PLAN.md "Loan interest is set by
- * the simulation, never by the player".
+ * (startingLoanAnnualRatePct) - never player-supplied, because a rate the player controls can be
+ * set to zero and makes borrowing free.
  */
 export function estimateMonthlyPayment(amount: number, termMonths: number, annualRatePct: number): number {
   if (amount <= 0 || termMonths <= 0) return 0

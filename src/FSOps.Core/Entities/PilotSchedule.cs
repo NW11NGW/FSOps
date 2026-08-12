@@ -2,8 +2,8 @@ namespace FSOps.Core.Entities;
 
 /// <summary>
 /// One virtual pilot's standing weekly schedule - the aggregate root that owns their
-/// <see cref="PilotScheduleEntry"/> rows. See docs/PLAN.md "Virtual pilot scheduling - standing
-/// assignments and the schedule builder": each pilot gets exactly one week-long calendar that
+/// <see cref="PilotScheduleEntry"/> rows. Assignment is something you set once and leave: each
+/// pilot gets exactly one week-long calendar that
 /// repeats indefinitely (there is no end date - the week IS the repeating unit), so this row exists
 /// purely to give the entries a stable owner and a place to hang audit timestamps; all the actual
 /// schedule content lives on the entries. Created lazily (the first successful
@@ -29,8 +29,7 @@ public class PilotSchedule
     /// When true (the default), an occurrence on this schedule whose aircraft is grounded for a
     /// maintenance check is recorded as <see cref="FlightStatus.Suspended"/> instead of being
     /// skipped or cancelled - no ledger line, and the schedule simply resumes on its own once the
-    /// aircraft comes out of maintenance. See docs/PLAN.md "A schedule option: suspend during
-    /// maintenance and resume automatically" - without this, a 14-day True-life C-check against a
+    /// aircraft comes out of maintenance. Without this, a 14-day True-life C-check against a
     /// daily schedule would charge fourteen cancellation fees for something the player could not
     /// have avoided. Defaulted ON (see PilotScheduleConfiguration's explicit
     /// <c>HasDefaultValue(true)</c> - a plain EF-scaffolded bool default would otherwise land on
@@ -40,7 +39,7 @@ public class PilotSchedule
     /// because the aircraft is still away from an earlier leg, or already airborne, is a scheduling
     /// problem the player caused and still skips/cancels normally either way - "the distinction
     /// that matters: a cancellation fee is for a schedule the player built badly, not for
-    /// maintenance the simulation imposed" (docs/PLAN.md, same section).
+    /// maintenance the simulation imposed". Keep the fee where it teaches something.
     /// </para>
     /// </summary>
     public bool AutoSuspendOnMaintenance { get; set; } = true;
@@ -75,9 +74,9 @@ public class PilotScheduleEntry
     /// <summary>Time of day (UTC) this leg departs.</summary>
     public TimeSpan DepartureTimeUtc { get; set; }
 
-    /// <summary>The directional route leg this entry flies (see docs/PLAN.md "Routes are always
-    /// bidirectional pairs" - this references one specific directional Route row, e.g. EGGD-&gt;EGPH,
-    /// not the round-trip pair).</summary>
+    /// <summary>The directional route leg this entry flies. Routes are created as bidirectional
+    /// pairs, but each leg stays a separate directional row underneath, and this references one
+    /// specific such row (e.g. EGGD-&gt;EGPH), not the round-trip pair.</summary>
     public Guid RouteId { get; set; }
 
     public Guid FleetAircraftId { get; set; }

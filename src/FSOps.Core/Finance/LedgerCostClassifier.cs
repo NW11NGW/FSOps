@@ -3,8 +3,8 @@ using FSOps.Core.Entities;
 namespace FSOps.Core.Finance;
 
 /// <summary>
-/// Pure fixed-vs-variable classification of a <see cref="LedgerCategory"/> - see docs/PLAN.md "Full
-/// breakdown of airline costs": "Split fixed (leases, salaries, insurance, loan repayments) from
+/// Pure fixed-vs-variable classification of a <see cref="LedgerCategory"/>, for the Finances
+/// page's cost breakdown: split fixed (leases, salaries, insurance, loan repayments) from
 /// variable (fuel, landing, handling, parking, passenger charges, turnaround, maintenance, crew),
 /// because they behave completely differently - one is owed whether or not you fly."
 /// <para>

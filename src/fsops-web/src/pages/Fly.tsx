@@ -148,7 +148,7 @@ export function Fly() {
   const selectedPair = routePairs.find((pair) => pair.pairId === selectedPairId) ?? null
   const selectedRow = selectedPair?.active ?? null
 
-  // The player may only ever fly a RESERVED aircraft (docs/PLAN.md "3a") - aircraftOptions lists
+  // The player may only ever fly a RESERVED aircraft - aircraftOptions lists
   // every aircraft at the departure airport, flyable or not, so the default pick (and the only
   // ones selectable at all) must be restricted to the flyable subset. Unflyable ones are still
   // shown in the brief, disabled, with their reason (see FlightBrief.tsx).
@@ -219,7 +219,7 @@ export function Fly() {
         ...(selectedAircraft ? { fleetAircraftId: selectedAircraft.fleetAircraftId } : {}),
       })
       toast.success(`Flight ${selectedRow.departureIcao} → ${selectedRow.arrivalIcao} started.`)
-      // Say so plainly (docs/PLAN.md "Flight plan import"): the pre-flight banner already covered
+      // Say so plainly: the pre-flight banner already covered
       // this for the common case, but a fallback that happened right at the moment of starting
       // (e.g. SimBrief timed out) still deserves its own word, not just a silent substitution.
       if (planSource !== 'SimBrief' && planMessage) {

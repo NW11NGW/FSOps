@@ -4,7 +4,8 @@ namespace FSOps.Core.Finance;
 
 /// <summary>
 /// Pure sale-value arithmetic for disposing of an owned <see cref="Entities.FleetAircraft"/> - see
-/// docs/PLAN.md "Selling an owned aircraft must lose money on the spread". No I/O, no randomness,
+/// selling must lose money on the spread, or buying and selling is a free round trip and cash
+/// stops meaning anything. No I/O, no randomness,
 /// same convention as <see cref="LoanCalculator"/> and the rest of the economy engine.
 /// <para>
 /// <b>Formula.</b> Starting from <see cref="AircraftDepreciationConfig.NewAircraftResaleFactor"/>,

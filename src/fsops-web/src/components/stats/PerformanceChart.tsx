@@ -33,7 +33,7 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
 }
 
 /**
- * On-time performance and load factor over time - docs/PLAN.md dashboards brief. Lazy-loaded (see
+ * On-time performance and load factor over time. Lazy-loaded (see
  * Stats.tsx) so recharts is only ever fetched by a player who opens this page, exactly like
  * maplibre-gl only loads for Dashboard/Routes/Fly. Only days with at least one measurable sector
  * are plotted - a quiet stretch is simply absent from the line rather than rendered as a

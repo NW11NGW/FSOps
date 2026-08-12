@@ -5,7 +5,7 @@ namespace FSOps.Core.Scheduling;
 /// generated instead - deterministically, from the pilot's <c>SkillRating</c> (0-100) via a seeded
 /// hash, exactly like <see cref="FSOps.Core.Economy.FuelPricing"/>'s price walk: same world seed,
 /// schedule entry and occurrence always produce exactly the same result, so the same flight always
-/// resolves identically (docs/PLAN.md "Virtual pilots on the wall clock"). Hand-rolled FNV-1a
+/// resolves identically, including after the app has been closed for days. Hand-rolled FNV-1a
 /// rather than System.Random for the same reason FuelPricing gives - no dependency on any
 /// particular .NET random-number implementation staying stable across versions.
 /// <para>
@@ -14,7 +14,8 @@ namespace FSOps.Core.Scheduling;
 /// FlightEconomicsCalculator) - never revenue, which stays exactly <c>paxBooked x fare</c> per
 /// FlightEconomicsResult's own invariant. This is what makes a virtual pilot earn LESS per sector
 /// than an engaged player on average (delay variance eats into cost, and there is no equivalent of
-/// a player's landing-quality upside - see docs/PLAN.md "The progression loop"), without ever
+/// a player's landing-quality upside). Passive income has to be real but not trivial: hiring
+/// should be attractive without making flying yourself pointless. All of it achieved without ever
 /// touching the "revenue comes from passengers, never from the clock" integrity rule.
 /// </para>
 /// </summary>

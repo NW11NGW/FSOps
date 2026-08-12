@@ -9,8 +9,8 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Endpoints;
 
 /// <summary>
-/// Backs the dashboard's live operations map - see docs/PLAN.md "Live operations map (Dashboard,
-/// Chunk E - needs virtual pilots to exist)". Everything about a virtual pilot's "airborne" aircraft
+/// Backs the dashboard's live operations map, so opening the app answers "what is my airline doing
+/// right now" at a glance. Everything about a virtual pilot's "airborne" aircraft
 /// here is computed on the fly from the schedule template plus the wall clock - nothing extra is
 /// persisted for it, which is what keeps it automatically consistent with
 /// <see cref="VirtualFlightResolverService"/>'s own eventual resolution: this endpoint never decides

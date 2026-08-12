@@ -11,7 +11,8 @@ namespace FSOps.Server.Services;
 /// folder.
 ///
 /// <para>
-/// docs/PLAN.md "The Community folder is captured at onboarding and reused to install the panel":
+/// The Community folder is captured once at onboarding and reused to install the panel, so the
+/// player is never asked for the same path twice and never told to copy a folder by hand:
 /// detect first, ask second; validate what the player chooses and explain a refusal; install,
 /// update and repair are one operation, safe to run repeatedly; a version stamp in the package lets
 /// the app tell whether what's on disk matches what it expects; never write outside the folder the
@@ -48,7 +49,8 @@ public static class PanelPackageInstaller
 
     /// <summary>
     /// Best-effort scan for MSFS 2024 Community folders. Returns an empty list rather than
-    /// throwing when nothing is found - "detection will not always succeed" (docs/PLAN.md), and a
+    /// throwing when nothing is found. MSFS 2024 installs to different places for Microsoft Store,
+    /// Steam and custom installs, so detection will not always succeed, and a
     /// missing MSFS install is not an error, it's the honest answer.
     ///
     /// Two independent, conflicting descriptions of the Microsoft Store package family name turned
@@ -159,7 +161,8 @@ public static class PanelPackageInstaller
     /// <summary>
     /// Validates a player-chosen path is genuinely a Community folder before anything is ever
     /// written to it. Refuses with a plain-English reason rather than accepting and breaking
-    /// silently later (docs/PLAN.md: "this looks like the sim's install folder, not Community").
+    /// silently later - "this looks like the sim's install folder, not Community" is a reason the
+    /// player can act on; a panel that simply never appears is not.
     /// </summary>
     public static PanelPathValidation ValidateCommunityFolder(string? path)
     {
@@ -367,7 +370,17 @@ public static class PanelPackageInstaller
     // Status (read-only - never writes)
     // ---------------------------------------------------------------------------------------
 
-    public static PanelOperationResult GetStatus(string? path, string port)
+    /// <summary>
+    /// What is actually on disk in <paramref name="path"/> right now.
+    ///
+    /// <para>
+    /// <paramref name="templateDirectory"/> is what the install is measured against: every file the
+    /// template would write must still be present, or the package is reported as incomplete. Passing
+    /// null skips only that completeness check (version, .spb and port are still read), which keeps
+    /// the older two-argument callers working; the server always passes it.
+    /// </para>
+    /// </summary>
+    public static PanelOperationResult GetStatus(string? path, string port, string? templateDirectory = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -405,21 +418,73 @@ public static class PanelPackageInstaller
         var upToDate = string.Equals(installedVersion, ExpectedPanelVersion, StringComparison.Ordinal);
         var installedPort = ReadInstalledPort(target);
         var portMatches = installedPort is null || string.Equals(installedPort, port, StringComparison.Ordinal);
+        var missingFiles = FindMissingPackageFiles(target, templateDirectory);
+        var complete = missingFiles.Count == 0;
 
-        // Port drift leads the message because it is the one of these that leaves the panel blank
-        // in the sim while looking perfectly installed from here.
-        var message = !portMatches
-            ? $"The installed panel is still calling port {installedPort}, but FSOps is now on port {port} - " +
-              "reinstall to point it at the right one, or the panel will show nothing in the sim."
-            : !upToDate
-                ? "An older panel version is installed - reinstall to update."
-                : !spbPresent
-                    ? "Panel files are installed, but the toolbar button will not appear - this build's panel component isn't compiled yet."
-                    : "Installed and up to date.";
+        // Whether the .spb is absent because this BUILD never shipped one, or because the player's
+        // copy lost it, decides which of two opposite things to tell them: wait for a future update,
+        // or press repair now. Getting that the wrong way round sends them away to wait for
+        // something that will never arrive, so it is worth asking the template rather than guessing.
+        var templateHasSpb = templateDirectory is not null
+            && File.Exists(Path.Combine(templateDirectory, "InGamePanels", "FSOpsPanel.spb"));
+
+        // Missing files lead the message, then port drift: both leave the panel blank in the sim
+        // while it looks perfectly installed from here, and a repair is the fix for either.
+        var message = !complete
+            ? $"{DescribeMissing(missingFiles)} from the installed panel - reinstall to put them back."
+            : !portMatches
+                ? $"The installed panel is still calling port {installedPort}, but FSOps is now on port {port} - " +
+                  "reinstall to point it at the right one, or the panel will show nothing in the sim."
+                : !upToDate
+                    ? "An older panel version is installed - reinstall to update."
+                    : !spbPresent
+                        ? templateHasSpb
+                            ? "The compiled panel component is missing from your copy - reinstall to put it back."
+                            : "Panel files are installed, but the toolbar button will not appear - this build's panel component isn't compiled yet."
+                        : "Installed and up to date.";
 
         return new PanelOperationResult(
-            true, null, true, target, installedVersion, ExpectedPanelVersion, spbPresent, spbPresent, 0, message,
-            installedPort, port);
+            true, null, complete, target, installedVersion, ExpectedPanelVersion, spbPresent, spbPresent, 0, message,
+            installedPort, port, missingFiles);
+    }
+
+    private static string DescribeMissing(IReadOnlyList<string> missing) =>
+        missing.Count == 1 ? $"{missing[0]} is missing" : $"{missing.Count} files are missing";
+
+    /// <summary>
+    /// Package-relative paths the template would have written that are not on disk.
+    ///
+    /// <para>
+    /// The expected set is read from the template every time rather than hardcoded, so a file added
+    /// to the package later is covered with no change here - a hardcoded list would drift silently
+    /// and reproduce the very bug this check exists to catch. layout.json is the one addition: it is
+    /// generated at install time by WriteLayoutJson rather than copied, so it is not in the template,
+    /// but MSFS needs it and its absence is just as much a broken install as any copied file's.
+    /// </para>
+    ///
+    /// <para>
+    /// Returns empty when no template is available to compare against - an unknown answer must not
+    /// masquerade as "nothing is missing", but neither can it condemn a perfectly good install.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<string> FindMissingPackageFiles(string target, string? templateDirectory)
+    {
+        if (templateDirectory is null || !Directory.Exists(templateDirectory))
+        {
+            return Array.Empty<string>();
+        }
+
+        var expected = Directory
+            .EnumerateFiles(templateDirectory, "*", SearchOption.AllDirectories)
+            .Select(file => Path.GetRelativePath(templateDirectory, file))
+            .Append("layout.json")
+            .ToList();
+
+        return expected
+            .Where(relative => !File.Exists(Path.Combine(target, relative)))
+            .Select(relative => relative.Replace(Path.DirectorySeparatorChar, '/'))
+            .OrderBy(relative => relative, StringComparer.Ordinal)
+            .ToList();
     }
 
     // ---------------------------------------------------------------------------------------
@@ -687,6 +752,20 @@ public record PanelMoveResult(
     string OldCopyMessage);
 
 /// <summary>Result of an install, repair, uninstall, or status read.</summary>
+/// <param name="Installed">
+/// True only when a COMPLETE FSOps package is present in the folder. This deliberately no longer
+/// means merely "manifest.json is there": a status read that decided from the manifest alone
+/// reported a green "Installed, up to date" over an install whose FSOpsPanel.js had been deleted,
+/// which is worse than no status at all because it argues against the one action that would fix it.
+/// When a package is present but incomplete this is false and <paramref name="MissingFiles"/> is
+/// non-empty - the two together are what the UI reads as its needs-repair state.
+/// </param>
+/// <param name="MissingFiles">
+/// Package-relative paths that should be on disk and are not, empty whenever nothing is wrong.
+/// Non-empty only for a package that IS present but incomplete; a folder with no FSOps package at
+/// all is "not installed", not "missing every file". Presence only - contents and sizes are not
+/// compared, because deletion is by far the commoner failure and a status read has to stay cheap.
+/// </param>
 /// <param name="InstalledPort">
 /// The port baked into the installed FSOpsPanel.config.js, or null when nothing is installed. The
 /// panel talks to FSOps over HTTP on a fixed port written at install time, so if FSOps later moves
@@ -707,8 +786,12 @@ public record PanelOperationResult(
     int FilesWritten,
     string Message,
     string? InstalledPort = null,
-    string? ExpectedPort = null)
+    string? ExpectedPort = null,
+    IReadOnlyList<string>? MissingFiles = null)
 {
+    /// <summary>Never null, so neither the SPA nor a test has to special-case the empty case.</summary>
+    public IReadOnlyList<string> MissingFiles { get; init; } = MissingFiles ?? Array.Empty<string>();
+
     public static PanelOperationResult Refused(string reason) =>
         new(false, reason, false, null, null, PanelPackageInstaller.ExpectedPanelVersion, false, false, 0, reason);
 }

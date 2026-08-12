@@ -126,8 +126,8 @@ export function useSchedule(pilotId: string | null): UseScheduleResult {
 }
 
 /**
- * POST /pilots/{id}/schedule/aircraft-options - step one of the picker (docs/PLAN.md "2b"): "pick
- * the aircraft first". Not a subscription, called on demand when the player opens a duty day that
+ * POST /pilots/{id}/schedule/aircraft-options - step one of the picker: pick the aircraft first,
+ * then the leg. Not a subscription, called on demand when the player opens a duty day that
  * doesn't have an aircraft chosen yet (or wants to change it).
  */
 export function fetchAircraftOptions(pilotId: string, day: DayOfWeek): Promise<AircraftOptionsResponse> {
@@ -179,7 +179,7 @@ interface UseScheduleOverviewResult {
 }
 
 /** GET /pilots/schedule/overview - the read-only, airline-wide "is my fleet actually being used"
- *  view (docs/PLAN.md "2a"). */
+ *  view. */
 export function useScheduleOverview(): UseScheduleOverviewResult {
   const [status, setStatus] = useState<ScheduleOverviewStatus>('loading')
   const [overview, setOverview] = useState<ScheduleOverviewResponse | null>(null)

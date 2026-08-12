@@ -199,7 +199,7 @@ public sealed class FlightLifecycleService : IHostedService
         tracker.LastFuelKg = sample.TotalFuelKg;
 
         // A rise in total fuel while on the ground is a refuelling event; a fall is defuelling -
-        // see docs/PLAN.md "Persistent fuel state and tankering" and FuelUpliftDetector's doc for
+        // see FuelUpliftDetector's doc for
         // why defuelling is a non-event rather than a credit. Only evaluated on the ground -
         // airborne fuel loss is just normal burn, not a ground event. tracker.LastGroundFuelKg is
         // seeded by BeginTracking from FlightEndpoints.StartAsync's own reconciliation, so the
@@ -351,8 +351,9 @@ public sealed class FlightLifecycleService : IHostedService
             return;
         }
 
-        // The persisted asset always tracks reality exactly, regardless of direction - see the
-        // "never let the tracked figure silently drift" reconciliation rule in docs/PLAN.md.
+        // The persisted asset always tracks reality exactly, regardless of direction: the tracked
+        // figure must never be allowed to drift silently from what the sim actually reports, or
+        // every later fuel charge is computed against a number that is quietly wrong.
         fleetAircraft.FuelOnBoardKg = sample.TotalFuelKg;
 
         if (kind == GroundFuelChangeKind.Uplift)
@@ -504,7 +505,9 @@ public sealed class FlightLifecycleService : IHostedService
         if (fleetAircraft is not null)
         {
             // The last position telemetry ever reported for this flight - where it actually ended
-            // up, which is not always the planned arrival (see the diversion rule in docs/PLAN.md).
+            // up, which is not always the planned arrival. Landing somewhere else entirely is a
+            // diversion, not a payment failure: the flight completes, pays for the sector actually
+            // operated, and leaves the aircraft where it really parked.
             (double LatitudeDeg, double LongitudeDeg)? finalPosition = tracker.LatestSnapshot is { } snapshot
                 ? (snapshot.LatitudeDeg, snapshot.LongitudeDeg)
                 : null;
@@ -531,7 +534,8 @@ public sealed class FlightLifecycleService : IHostedService
 
             // Resolved regardless of whether airline lookup succeeds below - a flight's pilot
             // accrues the hours they flew either way, same as the airframe does in the fallback
-            // branch (see docs/PLAN.md "Known gap - pilot hours never accrue from player flights").
+            // branch. Pilot.HoursFlown once accrued for virtual pilots and never for the player,
+            // so the player's own record sat at zero however much they flew; this closes that.
             var pilot = await db.Pilots.FirstOrDefaultAsync(p => p.Id == flight.PilotId);
 
             if (airline is not null)
@@ -539,7 +543,7 @@ public sealed class FlightLifecycleService : IHostedService
                 var economyConfigForCompletion = _economyConfigCatalog.Get(airline.Playstyle);
                 MaintenancePoster.PostFlightHours(db, fleetAircraft, pilot, airline, economyConfigForCompletion, flightHours, completionUtc);
 
-                // Reputation - see docs/PLAN.md "Progression - reputation and pilot skill", point 1.
+                // Reputation, from on-time performance and landing quality.
                 // Excluded entirely (no event at all) for a slew/position-jump-detected flight, same
                 // "structurally invalid sector" gate FlightEconomicsPoster applies to revenue - see
                 // Flight.SlewDetected/PositionJumpDetected's own docs. On-time is additionally
@@ -562,7 +566,8 @@ public sealed class FlightLifecycleService : IHostedService
             }
 
             // The persisted fuel asset the NEXT flight (or this aircraft's return leg) starts
-            // from - see docs/PLAN.md "Persistent fuel state and tankering". Prefers the live
+            // from: an aircraft that lands with 3,000 kg starts its next sector with 3,000 kg,
+            // already paid for. Prefers the live
             // snapshot's last reported reading (what a real telemetry-tracked flight leaves
             // behind); falls back to tracker.LastFuelKg for a synthetic/test tracker built
             // without ever running a sample through ProcessSample.

@@ -86,8 +86,8 @@ export interface LoanEligibility {
 
 /**
  * A live preview for a specific amount/term - see GET /fleet/loan-quote. annualRatePct is always
- * computed server-side (see docs/PLAN.md "Loan interest is set by the simulation, never by the
- * player"); the same figures POST /fleet/loans will actually charge if submitted unchanged.
+ * computed server-side, never client-side; the same figures POST /fleet/loans will actually charge
+ * if submitted unchanged.
  */
 export interface LoanQuote {
   annualRatePct: number
@@ -100,8 +100,8 @@ export interface LoanQuote {
 }
 
 /**
- * Getting rid of an aircraft - see docs/PLAN.md "Getting rid of an aircraft - returning a lease
- * and selling". Present when this aircraft is on a virtual pilot's standing weekly schedule; when
+ * Getting rid of an aircraft, by selling it or ending its lease.
+ * Present when this aircraft is on a virtual pilot's standing weekly schedule; when
  * non-null the disposal is blocked (`canSell`/`canEndLease` is false) and `blockReason` says which
  * pilot and how many legs/week, rather than silently unassigning it.
  */

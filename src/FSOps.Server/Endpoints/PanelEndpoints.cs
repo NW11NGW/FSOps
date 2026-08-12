@@ -54,11 +54,11 @@ public static class PanelEndpoints
 
         if (!string.IsNullOrWhiteSpace(path))
         {
-            return Results.Ok(PanelPackageInstaller.GetStatus(path, port));
+            return Results.Ok(PanelPackageInstaller.GetStatus(path, port, TemplateDirectory));
         }
 
         var settings = await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == currentUser.UserId, ct);
-        var status = PanelPackageInstaller.GetStatus(settings?.CommunityFolderPath, port);
+        var status = PanelPackageInstaller.GetStatus(settings?.CommunityFolderPath, port, TemplateDirectory);
         return Results.Ok(status);
     }
 

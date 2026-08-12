@@ -44,8 +44,7 @@ public class BlockFuelEstimatorTests
     }
 
     /// <summary>
-    /// ChargedFuelKg (docs/PLAN.md "Persistent fuel state and tankering" - the interim per-sector
-    /// billing figure) is trip + taxi + contingency only. Alternate and final reserve are loaded
+    /// ChargedFuelKg is trip + taxi + contingency only. Alternate and final reserve are loaded
     /// for safety and normally stay in the tanks unburned, so they must never be billed - see
     /// FuelBreakdown.ChargedFuelKg's own doc for why.
     /// </summary>

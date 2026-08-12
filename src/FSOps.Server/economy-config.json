@@ -20,16 +20,17 @@
     "minDistanceFactor": 0.12,
     "baseDemandPerCatchmentPoint": 45.0,
     "reputationBaselineScore": 50.0,
-    // 0.25, not 0.5: solves 1 + (100-50)/50 x S = 1.25 (docs/PLAN.md "reputation 100 carries about
-    // 1.25x the passengers of reputation 50") for S. At reputation 0 this gives exactly 0.75x, also
-    // matching the plan's stated figure, comfortably above reputationFloor.
+    // 0.25, not 0.5: solves 1 + (100-50)/50 x S = 1.25 for S, 1.25x being the chosen magnitude -
+    // reputation 100 carries about 1.25x the passengers of reputation 50. At reputation 0 this
+    // gives exactly 0.75x, the matching figure at the other end, comfortably above reputationFloor.
     "reputationSensitivity": 0.25,
     "reputationFloor": 0.3,
     "monthlySeasonality": [0.90, 0.88, 0.95, 1.00, 1.05, 1.15, 1.22, 1.20, 1.02, 0.95, 0.88, 1.05],
     "dayOfWeekMultiplier": [0.95, 1.05, 0.95, 0.90, 1.00, 1.15, 1.10]
   },
-  // See ReputationConfig's own doc for every figure's derivation - docs/PLAN.md "Progression -
-  // reputation and pilot skill", point 1 (what moves it) and point 2 (magnitude).
+  // See ReputationConfig's own doc for every figure's derivation. What moves reputation: on-time
+  // performance (primary), cancelled and skipped sectors (a bigger hit than a delay), and landing
+  // quality (smallest weight). Magnitude is "noticeable but slow" - 40-60 sectors from 50 to 75.
   "reputation": {
     "baselineScore": 50.0,
     "alpha": 0.0137672955,
@@ -48,8 +49,9 @@
     "manualCompletionTargetScore": 0.0,
     "manualCompletionAlphaMultiplier": 0.3333333333
   },
-  // See PilotSkillConfig's own doc for every figure's derivation - docs/PLAN.md "Progression -
-  // reputation and pilot skill", point 3.
+  // See PilotSkillConfig's own doc for every figure's derivation. Skill climbs with hours flown
+  // with diminishing returns and decays when a pilot is left idle, so keeping a pilot becomes an
+  // investment and hiring cheap juniors becomes a real strategy.
   "pilotSkill": {
     "startingSkill": 50.0,
     "skillCap": 87.0,
@@ -75,8 +77,10 @@
     "noiseWindowDays": 5,
     // "Cost of carry" - real-world rule of thumb for extra burn from hauling extra fuel: ~3% of
     // the EXTRA mass (carried beyond a sector's own normal requirement) burned per hour it's on
-    // board. Fuel tankering's counterweight alongside weight-based landing fees - see
-    // docs/PLAN.md "Persistent fuel state and tankering", "the trade-off". Applied only to fuel
+    // board. This is the ONLY counterweight to fuel tankering and has to do the whole job alone:
+    // landing fees are charged on the airframe's fixed certificated MTOW, not the weight on the
+    // day, so a tankered sector pays the same landing fee as an empty one. Without a cost of carry
+    // the optimal strategy would always be "fill up at the cheapest airport". Applied only to fuel
     // carried beyond a sector's own requirement, so a normal (non-tankering) flight's figures are
     // completely unaffected - see BlockFuelEstimatorWeightPenaltyTests.
     "costOfCarryRatePerHour": 0.03
@@ -91,15 +95,17 @@
     "crewCostPerHour": 340,
     "minimumCrewDutyHours": 1.0
   },
-  // A-checks every 500 airframe hours, C-checks every 4,000 - see docs/PLAN.md "Maintenance" and
-  // the Playstyle behaviour table. Interval/cost/condition figures are shared across both
-  // playstyles ("same cycle... and same costs"); only aCheckDowntimeHours/cCheckDowntimeHours
+  // A-checks every 500 airframe hours, C-checks every 4,000. Interval/cost/condition figures are
+  // shared across both playstyles - they run the same cycle at the same cost, because what differs
+  // between them is how long a check grounds the aircraft, not what the work costs. Only
+  // aCheckDowntimeHours/cCheckDowntimeHours
   // differ, and come from each playstyle's own "maintenance" override block below.
   // aCheckCost/cCheckCost are DELIBERATE GAME-BALANCE FIGURES, not real A/C-check bills (which run
   // into six and seven figures) - sized to stay a genuine but affordable hit against a casually
   // flown airline's accumulated monthly surplus by the time the hours come due. Do not "correct"
-  // them toward realistic figures for the same reason the starter lease rate isn't corrected - see
-  // docs/PLAN.md "The starter lease is a deliberate game-balance number".
+  // them toward realistic figures for the same reason the starter lease rate isn't corrected: a
+  // real A-check bill runs into six figures on its own, which would make casual play a losing
+  // position again. These are deliberate game-balance numbers, labelled so nobody "fixes" them.
   "maintenance": {
     "aCheckIntervalHours": 500,
     "cCheckIntervalHours": 4000,
@@ -108,7 +114,7 @@
     "conditionDecayPerHour": 0.12,
     "aCheckConditionRestorePercent": 35
   },
-  // Buying a used airframe - see docs/PLAN.md "Used aircraft - cheap to buy, expensive to run".
+  // Buying a used airframe: cheap to buy, expensive to run.
   // Shared across playstyles: the used-aircraft market doesn't depend on which playstyle the buyer
   // chose. priceMultiplier 0.55 = 45% cheaper than new; the saving is repaid by starting 70% of the
   // way into both maintenance cycles and 30 condition points below a fresh airframe.
@@ -119,8 +125,9 @@
     "startingConditionPercent": 70,
     "startingAirframeHours": 18000
   },
-  // Selling an owned aircraft - see docs/PLAN.md "Selling an owned aircraft must lose money on the
-  // spread". Shared across playstyles: what a worn airframe is worth on the secondhand market
+  // Selling an owned aircraft, which must lose money on the spread - if an aircraft sold for what
+  // it cost, buying and selling would be a free round trip and cash would stop meaning anything.
+  // Shared across playstyles: what a worn airframe is worth on the secondhand market
   // doesn't depend on how realistically the SELLING airline chose to be billed elsewhere. Anchored,
   // not guessed - with these defaults a used aircraft bought at exactly usedAircraft's starting
   // state (70% condition, 70% into both maintenance cycles) and immediately resold values at
@@ -135,10 +142,9 @@
     "minResaleFactor": 0.10
   },
   // Shared across both playstyles - the founding pilot's salary is already a realistic figure and
-  // needs no game-balance treatment (see docs/PLAN.md "The starter lease is a deliberate
-  // game-balance number"). Everything else that differs by playstyle (starting capital, lease
-  // deposit term, starter lease rate, insurance) lives in the "casual"/"trueLife" blocks below -
-  // see docs/PLAN.md "Playstyle - Casual vs True-life". A playstyle is a named set of overrides,
+  // needs no game-balance treatment, unlike the starter lease rate beside it. Everything else that
+  // differs by playstyle (starting capital, lease deposit term, starter lease rate, insurance)
+  // lives in the "casual"/"trueLife" blocks below. A playstyle is a named set of overrides,
   // not a code path: EconomyConfigCatalog resolves one fully-merged EconomyConfig per playstyle at
   // load time, and nothing downstream branches on which one an airline chose.
   "airlineStartup": {
@@ -147,8 +153,8 @@
   "casual": {
     // Exactly what Chunk D shipped - unchanged by the playstyle split. Starting capital, the
     // 1-month lease deposit and the game-balance starter lease/insurance are what let one aircraft
-    // flown casually (~1 leg/day) be genuinely profitable - see docs/PLAN.md "The progression
-    // loop" and "Status after the progression-loop rebalance". DELIBERATE GAME-BALANCE FIGURES,
+    // flown casually (~1 leg/day) be genuinely profitable - which it has to be, or the second
+    // aircraft never arrives and the game has no progression at all. DELIBERATE GAME-BALANCE FIGURES,
     // NOT REAL-WORLD RATES - do NOT "correct" leaseRates.A320/B738 or monthlyInsurancePerAircraft
     // toward realistic numbers, that reopens the unplayable-grind problem the 2026-08-08 rebalance
     // fixed. leaseDepositMonths itself is a pacing decision, not a fictional-number label - a
@@ -174,7 +180,8 @@
     // is never eleven times cheaper to lease than an A321 just because one happened to be the
     // starter type. A320/B738 are the two exceptions: hard-anchored at exactly 30,000 (not 8% of
     // their real rate, which would be ~30,400/31,200) because the whole Casual balance is anchored
-    // to that one figure - see docs/PLAN.md "Casual pricing must scale the WHOLE catalogue". Do NOT
+    // to that one figure. The multiplier covers the WHOLE catalogue on purpose, so that adding new
+    // aircraft types can never leave them at real-world rates in Casual mode. Do NOT
     // "correct" any of these toward trueLife's figures, for the same reason as A320/B738 - that
     // reopens the unplayable-grind problem the rebalance fixed, just for every OTHER type instead.
     "leaseRates": [
@@ -209,7 +216,7 @@
     // Casual's purchase-price multiplier - see EconomyConfig.PurchasePriceMultiplier's own doc.
     // Applied to AircraftType.PurchasePrice (the shared realistic figure, unchanged by playstyle)
     // to get what THIS playstyle actually charges. 0.00116 lands the starter A320 at ~55,100 new -
-    // "near £55,000 new" per docs/PLAN.md - so a Used example (55% of that, see UsedAircraft below)
+    // the chosen "near £55,000 new" - so a Used example (55% of that, see UsedAircraft below)
     // is ~30,305: affordable after roughly ten sectors' profit, matching the lease deposit it sits
     // beside. Unlike leaseRates above (a per-type list, since real lease rates vary too much
     // relative to their own value to derive from a single column), this is a SINGLE scalar derived
@@ -225,13 +232,14 @@
       "monthlyInsurancePerAircraft": 6000
     },
     // Downtime measured in hours, not days - "a nuisance and a bill, not a fortnight of not
-    // playing" (docs/PLAN.md's Playstyle behaviour table). Same cycle and cost as True-life above.
+    // playing". Same cycle and cost as True-life above; only the downtime is compressed.
     "maintenance": {
       "aCheckDowntimeHours": 4,
       "cCheckDowntimeHours": 24
     },
-    // Risk-based loan pricing - see docs/PLAN.md "Loan interest is set by the simulation, never by
-    // the player". The player NEVER supplies a rate; LoanRateCalculator scales linearly from
+    // Risk-based loan pricing. Interest is set by the simulation, never by the player: a rate the
+    // player controls can be set to zero, which makes borrowing free and turns loans from a
+    // strategic trade-off into an exploit. LoanRateCalculator scales linearly from
     // baseAnnualRatePct (a loan that barely touches the airline's borrowing capacity) up to
     // capAnnualRatePct (a loan borrowed right up to the limit) - the cap is a hard ceiling that can
     // never be exceeded, asserted by a boundary test. Casual's friendlier 2.5%-5.0% band matches its
@@ -249,25 +257,28 @@
     },
     // A virtual pilot's flight that can't fly (aircraft in maintenance, still away, or otherwise
     // unavailable) is skipped quietly under Casual - recorded in history, no financial penalty at
-    // all. See docs/PLAN.md's Playstyle behaviour table and FlightStatus.Skipped.
+    // all. The airline forgives a schedule the player has not perfected yet. See FlightStatus.Skipped.
     "unflyableSchedule": {
       "cancellationFee": 0
     },
-    // Ending a lease before it would otherwise have been billed - see docs/PLAN.md "Returning a
-    // lease early must cost something". A flat fee in months' rent on top of the pro-rata charge
+    // Ending a lease before it would otherwise have been billed. It has to cost something, or the
+    // optimal play is to lease an aircraft, fly it, and hand it back before the monthly charge
+    // lands - free capacity with no commitment. A flat fee in months' rent on top of the pro-rata charge
     // for the current billing period already used - see LeaseEarlyTerminationConfig's own doc.
     "leaseEarlyTermination": {
       "feeMonths": 0.5
     },
-    // Paying off a loan's full remaining balance early - see docs/PLAN.md "Paying a loan back...
-    // Charge a modest early-settlement fee". Only closing a loan entirely carries this fee (never a
+    // Paying off a loan's full remaining balance early. The fee is modest by design: real lenders
+    // price in the interest they lose, and without one there is no trade-off in clearing debt
+    // early at all. Only closing a loan entirely carries this fee (never a
     // partial overpayment) - see LoanEarlySettlementConfig's own doc.
     "loanEarlySettlement": {
       "feePercentOfRemainingBalance": 0.02
     }
   },
   "trueLife": {
-    // Real-world figures - see docs/PLAN.md "Playstyle - Casual vs True-life". leaseRates.A320/B738
+    // Real-world figures throughout - this is the playstyle that trades playability for realism.
+    // leaseRates.A320/B738
     // are the realistic rates the Casual figures above were deliberately cut from (see
     // AircraftTypeSeeder.cs's class doc); the other four types are unchanged from Casual since they
     // were already realistic. leaseDepositMonths is the standard 2-month real-world lease deposit
@@ -277,7 +288,7 @@
     // salary = 449,000/month) as runway - "a deposit plus a few months of runway", per the plan, not
     // the ~44 months Casual affords while flying nothing. At real lease/insurance rates a single
     // aircraft flown casually (~1 leg/day) is deeply loss-making (break-even lands near 4-5
-    // sectors/day - see docs/PLAN.md's "Before" column), so True-life's progression genuinely
+    // sectors/day at a fixed cost near 439,000 per aircraft per month), so True-life's progression genuinely
     // depends on virtual pilots flying standing schedules, not on this starting capital alone.
     "airlineStartup": {
       "startingCapital": 2500000,
@@ -314,20 +325,20 @@
       { "icaoType": "AT72", "monthlyRate": 115000 },
       { "icaoType": "DH8D", "monthlyRate": 130000 }
     ],
-    // True-life keeps real figures throughout (docs/PLAN.md) - purchase price is charged exactly
+    // True-life keeps real figures throughout - purchase price is charged exactly
     // as AircraftType.PurchasePrice reads, unmodified.
     "purchasePriceMultiplier": 1.0,
     "fleetFinance": {
       "monthlyInsurancePerAircraft": 50000
     },
-    // Realistic downtime - A-check about a day, C-check about a fortnight (docs/PLAN.md's
-    // Playstyle behaviour table: "A second aircraft becomes genuinely necessary"). Same cycle and
+    // Realistic downtime - A-check about a day, C-check about a fortnight, which is what makes a
+    // second aircraft genuinely necessary rather than merely nice to have. Same cycle and
     // cost as Casual above.
     "maintenance": {
       "aCheckDowntimeHours": 24,
       "cCheckDowntimeHours": 336
     },
-    // Realistic borrowing costs - hard-capped at 8% per docs/PLAN.md's playstyle table, above
+    // Realistic borrowing costs - hard-capped at 8%, above
     // Casual's 5% the same way every other True-life figure is realistic rather than game-balanced.
     // maxStartingLoanPrincipal: see the "casual" block's own comment above for why this exists
     // separately from the cash-flow-based mid-game cap. 5,000,000 -> £101,381.97/month over 60
@@ -340,8 +351,8 @@
       "maxStartingLoanPrincipal": 5000000
     },
     // A virtual pilot's flight that can't fly is CANCELLED under True-life, with a real cost -
-    // "clearly reported", per docs/PLAN.md's Playstyle behaviour table (see
-    // FlightStatus.Cancelled). Sized as a modest multiple of a typical sector's fixed per-sector
+    // clearly reported, so that a badly-planned schedule genuinely bites and the builder's
+    // warnings carry weight (see FlightStatus.Cancelled). Sized as a modest multiple of a typical sector's fixed per-sector
     // costs (turnaround/handling), not punitive - it needs to bite a badly-planned schedule, not
     // bankrupt one bad week.
     "unflyableSchedule": {
@@ -356,8 +367,8 @@
       "feePercentOfRemainingBalance": 0.04
     }
   },
-  // Pilot rest/duty and minimum turnaround for the weekly schedule builder - see docs/PLAN.md
-  // "Virtual pilot scheduling". Shared across playstyles: a duty day and a legal rest period are
+  // Pilot rest/duty and minimum turnaround for the weekly schedule builder.
+  // Shared across playstyles: a duty day and a legal rest period are
   // working-time facts, not something that should differ by how realistically the player wants to
   // be billed. 10h rest / 13h max duty are ordinary short-haul crewing figures; 45 minutes covers a
   // realistic minimum turnaround (deplane, clean, board).

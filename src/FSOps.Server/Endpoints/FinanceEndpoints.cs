@@ -9,8 +9,9 @@ using Microsoft.EntityFrameworkCore;
 namespace FSOps.Server.Endpoints;
 
 /// <summary>
-/// Backs the Finances page - see docs/PLAN.md "What the Finances page must contain (specified by
-/// the user, 2026-08-08)": cash and the headline P&amp;L, leases with real payment dates and an
+/// Backs the Finances page - not a ledger dump, but a screen the airline can actually be run from,
+/// because an economy the player cannot inspect is one they cannot learn from and "why am I losing
+/// money?" has to be answerable inside the app: cash and the headline P&amp;L, leases with real payment dates and an
 /// exit, loans with full/partial early repayment, per-pilot revenue vs cost, a fixed/variable cost
 /// breakdown, and P&amp;L per route. Every figure here is read from posted
 /// <see cref="LedgerTransaction"/>/<see cref="Flight"/> rows rather than recomputed from scratch, so
@@ -331,7 +332,8 @@ public static class FinanceEndpoints
     };
 
     /// <summary>
-    /// Per-pilot revenue vs cost - docs/PLAN.md "Virtual pilots - are they worth it?". `revenue` and
+    /// Per-pilot revenue vs cost - this is the screen that answers "should I keep this pilot", so
+    /// the comparison is made directly rather than left as arithmetic across two tables. `revenue` and
     /// `operatingCost` are ledger-derived (summed straight from posted <see cref="LedgerTransaction"/>
     /// rows for the pilot's flights in the window - real money that actually moved). `totalCost`/
     /// `netContribution` are NOT: they add the pilot's <see cref="Pilot.MonthlySalary"/>, prorated to
@@ -507,8 +509,8 @@ public static class FinanceEndpoints
         transactions.Count(t => t.Category == LedgerCategory.Salary && t.FlightId is not null);
 
     /// <summary>
-    /// P&amp;L per directional route - docs/PLAN.md "Profit and loss per route ... given every real
-    /// cost". <c>revenue</c>/<c>cost</c>/<c>profit</c> are entirely ledger-derived: summed straight
+    /// P&amp;L per directional route - which routes actually make money, given every real cost.
+    /// <c>revenue</c>/<c>cost</c>/<c>profit</c> are entirely ledger-derived: summed straight
     /// from posted <see cref="LedgerTransaction"/> rows for each route's flights in the window (see
     /// <see cref="FlightOperatingCostCategories"/>), never from the <see cref="Flight.Revenue"/>/
     /// <see cref="Flight.TotalCost"/> cache columns - so this can never disagree with what actually

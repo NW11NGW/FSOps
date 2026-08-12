@@ -93,9 +93,17 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Symptom:** The plan panel shows a red "This route can't be created yet" message and the **Create route** button stays disabled.
 
-**Cause:** This happens for one of two reasons: departure and arrival are the same airport, or the route is beyond your aircraft's **practical operating range** — roughly **0.85×** its published range once fuel reserves are accounted for, not the raw catalogue figure. A route just over the raw range but under the 0.85× cutoff will still be refused.
+**Cause:** Only two things actually block a route: departure and arrival being the same airport, or **nothing in your entire fleet** being able to fly the sector. Range is measured as **practical** operating range — roughly **0.85×** the published figure once fuel reserves are accounted for — so a sector just inside the catalogue number can still be out of reach.
 
-**Solution:** Pick a different airport pair, or add an aircraft with more range to your fleet from the Fleet page (see the [user guide](user-guide.md#buying-leasing-and-financing-aircraft)). Amber advisory warnings (short runway, strategy mismatch) look similar but don't block creation — only the red message does.
+Range on its own is rarely the blocker, and it's worth knowing the three outcomes apart:
+
+| What you have | What happens |
+| --- | --- |
+| A reserved aircraft that can fly it | Nothing — the route is created normally. |
+| Nothing reserved can, but something in the fleet can | **Not a refusal.** You get guidance to reserve a suitable aircraft. |
+| Nothing in the fleet can fly it at all | The red message, and the route is genuinely blocked. |
+
+**Solution:** If you're being pointed at reserving an aircraft, reserve one that can fly the sector — the route itself is fine. If the route is genuinely blocked, pick a different airport pair or add an aircraft with more range from the Fleet page (see [Range](user-guide.md#range) and [Buying, leasing and financing aircraft](user-guide.md#buying-leasing-and-financing-aircraft)). Amber advisory warnings (short runway, strategy mismatch) look similar but don't block creation — only the red message does.
 
 ## My currency looks wrong
 
@@ -197,7 +205,7 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Symptom:** The Fleet page shows a virtual pilot's aircraft at a different airport than you expected, or a route you thought was flyable for that aircraft shows as not flyable.
 
-**Cause:** A completed virtual-pilot flight moves its aircraft's recorded location to wherever it actually landed, exactly the same rule as a player flight — see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is). If a pilot's schedule doesn't bring an aircraft back to where the next day's chain expects it to start, that next occurrence won't be flyable — see [above](#a-virtual-pilots-flight-was-skipped-or-cancelled-instead-of-flown).
+**Cause:** A completed virtual-pilot flight moves its aircraft's recorded location to wherever it actually landed, exactly the same rule as a player flight — see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is). If a pilot's schedule doesn't bring an aircraft back to where the next day's chain expects it to start, that next occurrence won't be flyable — see [above](#a-virtual-pilots-flight-was-skipped-cancelled-or-suspended-instead-of-flown).
 
 **Solution:** Check the aircraft's current location on the Fleet page against what the pilot's schedule assumes for each day, and adjust the schedule so a day's chain always starts from wherever the aircraft's previous chain actually left it.
 
@@ -229,11 +237,42 @@ The most common cause is a pilot who was hired but never given a schedule, or on
 
 ## No controllers are showing
 
-**Symptom:** The Dashboard's live operations map (or the controller list alongside it) reads "No controllers online near your network right now," even though you know someone is controlling on VATSIM.
+**Symptom:** The Dashboard's controller list reads "No controllers online in this part of the map," even though you know someone is controlling on VATSIM.
 
-**Cause:** This is very likely correct, not a bug — FSOps only ever shows controllers currently covering an airport that's actually in **your own route network** (see [Online VATSIM controllers](user-guide.md#online-vatsim-controllers)), not a global VATSIM controller list, and it never shows other pilots' traffic at all. A controller online somewhere else entirely — even a busy real-world hub — simply won't appear if it isn't one of your own network's airports. En-route and oceanic controllers (Center, FSS) and TRACON-style callsigns (like `NY_APP`) don't map to a single airport at all and are deliberately left out rather than guessed at.
+**Cause:** The list follows the map. It shows the controllers whose coverage is **currently on screen**, so that the list and the map can never disagree while you're looking at both — if you've panned to somewhere quiet, or zoomed in past the sector you were expecting, the list empties out even though plenty of people are online elsewhere.
 
-**Solution:** Confirm the airport you expected to see is genuinely the departure or arrival airport of one of your active routes. If it is, and nothing's showing, check whether the list instead reads "ATC data unavailable right now" — that means VATSIM's own feed couldn't be reached at all, not that nobody's online; try again shortly, since FSOps only refreshes its cached copy of the feed periodically rather than on every request.
+**Solution:** Zoom out or pan back. The wording tells you which situation you're in:
+
+| Message | What it means |
+| --- | --- |
+| "No controllers online in this part of the map" | Somebody is online somewhere — just not in this view. Zoom out. |
+| "No controllers online in this area right now" | Nothing FSOps can place is online anywhere. |
+| "ATC data unavailable right now" | VATSIM's feed couldn't be read at all. Not the same as nobody being online — try again shortly, as FSOps refreshes its cached copy periodically rather than on every request. |
+
+Controllers covering one of **your own** airports are listed first and marked with a filled icon, so they stay easy to pick out now that the list isn't restricted to them.
+
+## A controller is online but never appears anywhere on the map
+
+**Symptom:** You can see someone controlling on VATSIM — often an approach position like `NY_APP` or `SCT_APP` — but no amount of panning makes them show up in FSOps.
+
+**Cause:** FSOps only draws a controller when it can say honestly where their coverage is, and there are two ways it can know that:
+
+- **Sectors** (Center and FSS) are drawn as their **real published FIR boundary**, from boundary data bundled with FSOps.
+- **Terminal** positions (Tower, Ground, Delivery, and approach named after an airport like `EGLL_APP`) are drawn at the airport, with a **dashed circle showing approximate range** — that circle is the range the controller's client is set to see, not the shape of anything they control.
+
+Anything else is left out on purpose. **Approach TRACONs that aren't named after an airport have no published boundary data available anywhere**, so FSOps has nothing truthful to draw and shows nothing rather than inventing a plausible circle. A wrong shape on a map reads as authoritative, which is worse than an absence.
+
+Two related limits worth knowing, since neither is visible on screen: coverage is **lateral only** — the boundary data carries no altitude limits, so a sector polygon says nothing about which levels are actually being worked — and **top-down coverage is never inferred**, so a centre controller working an airport with nobody local won't show at that airport.
+
+**Solution:** None needed; this is working as intended. The map legend states the same distinction, and the frequency is still available in the VATSIM client itself.
+
+## En-route sectors never appear, only airport circles
+
+**Symptom:** Tower and ground controllers show up fine, but no Center or FSS position ever appears, anywhere in the world.
+
+**Cause:** The bundled boundary data is missing or unreadable. FSOps ships two files in `data/vatspy/` beside the application (`Boundaries.geojson.gz` and `VATSpy.dat.gz`); without them it can't resolve any en-route callsign to a shape, so it shows none — the same behaviour it had before boundary data existed. This never affects anything else: terminal controllers, the map, your flights and your airline are all unaffected.
+
+**Solution:** Reinstall FSOps, which restores the data files. If you're running from a build you made yourself, confirm both files are present in the `data/vatspy` folder next to the executable.
 
 ## The toolbar button isn't there
 

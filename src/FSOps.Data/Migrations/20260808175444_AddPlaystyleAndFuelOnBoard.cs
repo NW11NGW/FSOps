@@ -19,7 +19,8 @@ namespace FSOps.Data.Migrations
 
             // Existing airlines predate the playstyle split entirely - Casual is what Chunk D
             // shipped and is the only honest default for a row that was created under those rules
-            // (see docs/PLAN.md "Playstyle - Casual vs True-life"). The column is stored as the
+            // - migrating them to True-life would multiply their fixed costs roughly twelvefold
+            // overnight. The column is stored as the
             // enum's string name (HasConversion<string>() in AirlineConfiguration), so the default
             // must be a real, parseable member name, not an empty string.
             migrationBuilder.AddColumn<string>(
