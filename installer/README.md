@@ -121,8 +121,58 @@ update checker compares the two. An installer named `0.2.0` containing an assemb
 would offer every user on 0.2.0 an endless upgrade to 0.2.0. Bump the property, and the installer
 name follows.
 
-A release therefore needs, in order:
+### The procedure
 
-1. `<Version>` in `Directory.Build.props` bumped to match the release tag.
-2. `.\installer\build-installer.ps1`
-3. Both files from `artifacts\installer` attached to the GitHub release.
+`.github/workflows/release.yml` does the building. It runs on any tag matching `v*.*.*`, and it
+stops at a **draft** — it never publishes anything.
+
+1. **Bump `<Version>` in `Directory.Build.props`** to the version you are about to release, and
+   commit that. Do this first; step 4 refuses to build if it is not done.
+2. **Optional dry run.** Run the Release workflow manually from the Actions tab against `main`,
+   putting the tag you intend to use in the `tag` box. It checks the version, builds the installer
+   and smoke-tests it, and creates no release. Worth doing if anything about the packaging has
+   changed.
+3. **Tag and push.**
+
+   ```
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+4. **The workflow runs.** In order: it checks the tag against `<Version>` and stops immediately if
+   they disagree; installs Inno Setup; runs `build-installer.ps1`; installs the result silently;
+   asserts the real SPA is present and that the installed server actually serves it; uninstalls;
+   asserts `%LOCALAPPDATA%\FSOps` survived. Both files are uploaded as workflow artifacts whether
+   or not that passes, so a failed run can still be inspected.
+5. **A draft release appears**, titled `FSOps <version>`, with the installer and its `.sha256`
+   attached and the checksum written into the notes.
+6. **Fly it.** Install the draft's installer on a real machine and fly a sector end to end in MSFS.
+   Nothing in CI can do this, which is the entire reason the release stops at a draft.
+7. **Publish by hand** from the Releases page, editing the notes first. Until you click Publish,
+   the release does not exist as far as users are concerned: the updater reads
+   `/releases/latest`, which excludes drafts.
+
+To back out before step 7, delete the draft and the tag. After step 7, you cannot — the version is
+compiled into an assembly people have installed.
+
+### Why the workflow checks the tag against `Directory.Build.props`
+
+It is the first thing it does, before it installs or builds anything, and a mismatch fails the run.
+
+A `v0.2.0` tag with `<Version>0.1.0</Version>` would produce a release called 0.2.0 containing an
+installer named `FSOps-Setup-0.1.0.exe` and an app that reports itself as 0.1.0. Every user who
+installed it would then be offered 0.2.0 on every check, permanently, because the app it installed
+never claims to be the version the release advertises. Editing the release afterwards does not fix
+it; the wrong version is already inside the assembly on their disk.
+
+The tag may be written with or without the leading `v`.
+
+### Why the release is only ever a draft
+
+Two reasons, and neither is squeamishness. FSOps ships unsigned, so an installer that reaches users
+without a human deciding it should is not a thing this project does. And the test that decides
+whether a build is good — flying a sector end to end in the simulator — is one no CI runner can
+perform, so "all checks green" is not the same as "ready".
+
+The workflow creates no tags of its own either: `gh release create` will invent a missing tag, so
+it is called with `--verify-tag`.

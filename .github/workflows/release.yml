@@ -1,0 +1,399 @@
+name: Release
+
+# Builds the installer for a version tag, proves it installs and runs, and leaves a DRAFT release
+# behind for a human to publish.
+#
+# Nothing here publishes anything. The release is created with --draft and stays that way until
+# somebody clicks Publish in the GitHub UI, and that is deliberate: FSOps ships unsigned, an
+# unsigned installer going out on its own is not a thing this project does, and the only test that
+# actually matters - flying a sector end to end in the simulator - is one no CI runner can perform.
+# A draft is also invisible to existing users: the updater reads /releases/latest, which GitHub
+# documents as excluding drafts, so an unpublished draft cannot reach anyone by accident.
+#
+# See installer/README.md for the procedure a human follows around this workflow.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Dry run only: a tag to check against Directory.Build.props. No release is created unless this workflow is run on an actual tag.'
+        required: false
+        type: string
+
+# Least privilege. contents: write is needed for one thing only - creating the draft release and
+# attaching its two files. Uploading workflow artifacts uses the runner's own token and needs no
+# permission here, so nothing else is granted.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-draft:
+    # Windows for the same reasons as CI and the installer workflow: Inno Setup is Windows-only, and
+    # the solution does not restore on Linux because FSOps.Sim references SimConnect's native x64
+    # libraries and the net461-targeted FsConnect wrapper.
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------------------------
+      # The version gate. Hoisted above every setup step on purpose: it needs nothing but the
+      # checked-out file, and a mismatch should cost ten seconds rather than forty minutes of
+      # publishing, compiling and installing.
+      #
+      # Why it exists at all: the installer is named FSOps-Setup-<version>.exe from <Version> in
+      # Directory.Build.props, the running app reports that same property as its own version, and
+      # UpdateChecker compares the two. A v0.2.0 tag that built an installer from
+      # <Version>0.1.0</Version> would produce a release called 0.2.0 containing an app that says
+      # it is 0.1.0 - so every user who installed it would be offered 0.2.0 again, forever, with
+      # no way out but a manual reinstall. There is no recovering from that by editing the release
+      # afterwards; the bad version is baked into the assembly people already installed.
+      # ---------------------------------------------------------------------------------------
+      - name: The tag must match <Version> in Directory.Build.props
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          # Read it exactly the way build-installer.ps1 does. SelectSingleNode, not dotted property
+          # access: Directory.Build.props has more than one <PropertyGroup> and only one carries
+          # <Version>, which under StrictMode makes the dotted form a terminating error.
+          [xml]$props = Get-Content 'Directory.Build.props' -Raw
+          $versionNode = $props.SelectSingleNode('/Project/PropertyGroup/Version')
+          if (-not $versionNode) { throw 'No <Version> element found in Directory.Build.props.' }
+          $propsVersion = $versionNode.InnerText.Trim()
+          if (-not $propsVersion) { throw 'The <Version> element in Directory.Build.props is empty.' }
+          "Directory.Build.props says : $propsVersion"
+
+          $tag = ''
+          if ($env:REF_TYPE -eq 'tag') { $tag = $env:REF_NAME }
+          elseif ($env:INPUT_TAG)      { $tag = $env:INPUT_TAG }
+
+          if (-not $tag) {
+            # A manual run on a branch. Nothing is being released, so there is no tag to agree
+            # with - this path builds and smoke-tests the installer and stops there.
+            'No tag for this run (manual dispatch on a branch). Dry run: no release will be created.'
+            "APP_VERSION=$propsVersion" >> $env:GITHUB_ENV
+            return
+          }
+
+          # The trigger filter 'v*.*.*' is a glob, not a pattern - it would happily match
+          # "vanilla.thing.1". Check the shape properly here.
+          if ($tag -notmatch '^[vV]?\d+\.\d+\.\d+$') {
+            throw "Tag '$tag' is not a plain version tag. Expected something like v0.2.0."
+          }
+
+          # Accept the tag with or without the leading v; v0.2.0 and 0.2.0 mean the same release.
+          $tagVersion = $tag -replace '^[vV]', ''
+          "tag says                   : $tagVersion"
+
+          if ($tagVersion -ne $propsVersion) {
+            throw @"
+          Tag/version mismatch. Refusing to build.
+
+            tag                    : $tag  (reads as $tagVersion)
+            Directory.Build.props  : $propsVersion
+
+          These have to agree. The installer would be named FSOps-Setup-$propsVersion.exe while the
+          release said $tagVersion, and the app inside it would report $propsVersion as its own
+          version. UpdateChecker compares the release version against the running app's, so every
+          user who installed it would be offered this release again on every check, permanently.
+
+          Fix it by bumping <Version> in Directory.Build.props to $tagVersion, committing that, and
+          re-tagging - not by editing the release afterwards. Nothing downstream can undo a version
+          that is already compiled into an assembly someone installed.
+          "@
+          }
+
+          "tag and <Version> agree on $propsVersion"
+          "APP_VERSION=$propsVersion" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Node 24, in step with ci.yml and with the version the project is developed on. Not
+      # arbitrary: jsdom's bundled undici calls webidl.util.markAsUncloneable, which does not exist
+      # on Node 20. publish.ps1 builds the SPA, so this job needs that same runtime.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/fsops-web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: src/fsops-web
+        run: npm ci
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # Publishes self-contained, compiles the .iss, and writes the SHA-256 sidecar. The version it
+      # stamps comes from Directory.Build.props - the same property the step above just checked the
+      # tag against, which is what makes that check meaningful.
+      - name: Build the installer
+        shell: pwsh
+        run: .\installer\build-installer.ps1
+
+      - name: Record what was built
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem artifacts\installer\FSOps-Setup-*.exe | Select-Object -First 1
+          $checksum  = Get-ChildItem artifacts\installer\FSOps-Setup-*.exe.sha256 | Select-Object -First 1
+          if (-not $installer) { throw 'No installer was produced.' }
+          if (-not $checksum)  { throw 'No .sha256 sidecar was produced - every user''s in-app updater would degrade to a link.' }
+          "installer : $($installer.Name) ($([math]::Round($installer.Length/1MB,1)) MB)"
+          "checksum  : $(Get-Content $checksum.FullName -Raw)"
+          "INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
+          "CHECKSUM_PATH=$($checksum.FullName)" >> $env:GITHUB_ENV
+
+      # -------------------------------------------------------------------------------------------
+      # Smoke test. These steps are lifted from .github/workflows/installer.yml, which has been
+      # green since it was written, and they are here for a blunt reason: this is the last moment
+      # before an installer is offered to a human being. An installer that compiles is not an
+      # installer that works.
+      #
+      # They are duplicated rather than shared because sharing them would mean editing
+      # installer.yml (to add a workflow_call trigger, or to point it at a composite action), and
+      # that file is proven and working. If these two ever drift, installer.yml is the reference.
+      # -------------------------------------------------------------------------------------------
+
+      # A sentinel standing in for the user's airline. Uninstalling must never remove this: the data
+      # directory holds the database, and someone's whole airline lives in it.
+      - name: Plant a sentinel in the data directory
+        shell: pwsh
+        run: |
+          $dataDir = Join-Path $env:LOCALAPPDATA 'FSOps'
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          'do not delete me' | Out-File (Join-Path $dataDir 'sentinel.txt') -Encoding ascii
+          "planted in $dataDir"
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath $env:INSTALLER_PATH `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with $($p.ExitCode)." }
+          'setup completed'
+
+      # Assert on real content, never on the fact that a file exists with the right name. The SPA
+      # fallback page returns a perfectly good HTTP 200 saying "UI not built yet", and a wwwroot
+      # containing that instead of the app is exactly the failure this has to catch.
+      - name: Check what actually landed
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          if (-not (Test-Path $installDir)) { throw "Nothing was installed at $installDir." }
+
+          $required = @(
+            'FSOps.Desktop.exe',
+            'FSOps.Server.exe',
+            'WebView2Loader.dll',
+            'economy-config.json',
+            'wwwroot\index.html',
+            'PanelTemplate\manifest.json',
+            'PanelTemplate\InGamePanels\FSOpsPanel.spb'
+          )
+          foreach ($rel in $required) {
+            $full = Join-Path $installDir $rel
+            if (-not (Test-Path $full)) { throw "Missing from the install: $rel" }
+          }
+
+          # WebView2Loader.dll at the ROOT is load-bearing and separate from the copy under
+          # runtimes\. It ships as plain content, never appears in .deps.json, and a self-contained
+          # build has no NuGet cache to fall back on - omitting it fails before a window exists.
+          $loader = Get-Item (Join-Path $installDir 'WebView2Loader.dll')
+          if ($loader.Length -lt 1000) { throw 'WebView2Loader.dll at the root looks truncated.' }
+
+          $index = Get-Content (Join-Path $installDir 'wwwroot\index.html') -Raw
+          if ($index -notmatch 'id="root"') { throw 'wwwroot\index.html is not the real SPA.' }
+          if ($index -match 'UI not built yet') { throw 'wwwroot contains the placeholder page.' }
+
+          "installed files verified ($installDir)"
+
+      # Launch the SERVER from the installed location, not from a build output. A bug invisible
+      # under "dotnet run" once broke the direct-exe launch and would have shipped a blank app,
+      # because the content root resolves differently. The desktop shell is deliberately not
+      # launched here - it opens a real window, and a GUI on a CI runner proves little while
+      # failing unpredictably.
+      - name: Run the installed server and check it serves the real UI
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          $env:FSOPS_DATA_DIR  = Join-Path $env:RUNNER_TEMP 'fsops-release-data'
+          $env:FSOPS_NO_BROWSER = '1'
+          $env:FSOPS_PORT = '5987'
+
+          $server = Start-Process -FilePath (Join-Path $installDir 'FSOps.Server.exe') `
+                                  -WorkingDirectory $installDir -PassThru
+          try {
+            $ok = $false
+            foreach ($attempt in 1..40) {
+              Start-Sleep -Seconds 3
+              try {
+                $r = Invoke-WebRequest -Uri 'http://localhost:5987/' -UseBasicParsing -TimeoutSec 10
+                if ($r.Content -match 'id="root"' -and $r.Content -notmatch 'UI not built yet') {
+                  $ok = $true
+                  break
+                }
+              } catch { }
+            }
+            if (-not $ok) { throw 'The installed server never served the real SPA.' }
+
+            $health = (Invoke-WebRequest -Uri 'http://localhost:5987/api/v1/health' -UseBasicParsing -TimeoutSec 10).Content
+            "health: $health"
+            if ($health -notmatch '"status":"ok"') { throw 'Health endpoint did not report ok.' }
+          }
+          finally {
+            # Only ever stop the process this step started, by the PID it captured.
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: Uninstall silently
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          $uninstaller = Get-ChildItem (Join-Path $installDir 'unins*.exe') | Select-Object -First 1
+          if (-not $uninstaller) { throw "No uninstaller found in $installDir." }
+
+          $p = Start-Process -FilePath $uninstaller.FullName `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall exited with $($p.ExitCode)." }
+
+          # Inno's uninstaller returns as soon as it has handed off, so the folder can linger briefly.
+          foreach ($attempt in 1..20) {
+            if (-not (Test-Path (Join-Path $installDir 'FSOps.Desktop.exe'))) { break }
+            Start-Sleep -Seconds 2
+          }
+          if (Test-Path (Join-Path $installDir 'FSOps.Desktop.exe')) {
+            throw 'FSOps.Desktop.exe is still present after uninstalling.'
+          }
+          'uninstall completed'
+
+      # The single most important assertion in the smoke test. An installer that removes the user's
+      # airline on uninstall is the one mistake here with no recovery.
+      - name: The user's data must have survived
+        shell: pwsh
+        run: |
+          $sentinel = Join-Path $env:LOCALAPPDATA 'FSOps\sentinel.txt'
+          if (-not (Test-Path $sentinel)) {
+            throw 'UNINSTALL DELETED THE DATA DIRECTORY. On a real machine that is somebody''s airline.'
+          }
+          'data directory survived the uninstall'
+
+      # Uploaded whether or not the smoke test passed. If something above failed, the exact bytes
+      # that failed it are the first thing anyone will want, and rebuilding to get them back wastes
+      # forty minutes and may not reproduce.
+      - name: Upload the installer and its checksum as artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: FSOps-Setup-${{ env.APP_VERSION }}
+          path: |
+            artifacts/installer/FSOps-Setup-*.exe
+            artifacts/installer/FSOps-Setup-*.exe.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
+      # -------------------------------------------------------------------------------------------
+      # The draft release. Only on a real tag, and only ever a draft.
+      #
+      # Publishing is a human decision and stays one. Shipping means somebody has flown a sector
+      # end to end in MSFS, and no runner can do that. --verify-tag is not decoration either: gh
+      # release create will happily invent a tag that does not exist, and this workflow must never
+      # create one.
+      # -------------------------------------------------------------------------------------------
+      - name: Create the draft release with both files attached
+        # success() is written out rather than left implicit. GitHub does insert it for you, but
+        # the consequence of being wrong about that is a release drafted from an installer that
+        # failed its smoke test, so it is spelled out.
+        if: success() && github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          $installer = $env:INSTALLER_PATH
+          $checksum  = $env:CHECKSUM_PATH
+
+          # Both files or neither. Without the .sha256, UpdateChecker.SelectChecksumAsset finds
+          # nothing, CanDownload returns false, and the in-app updater silently degrades to "there
+          # is a new version, here is a link" for every single user. That reads like the updater
+          # being broken, not like a missing file, so nobody would report it as one - which is
+          # exactly why it is asserted here rather than left to be noticed.
+          if (-not (Test-Path $installer)) { throw "The installer is missing: $installer" }
+          if (-not (Test-Path $checksum))  { throw "The .sha256 sidecar is missing: $checksum. Refusing to create a release with the installer alone - the in-app updater would degrade to a link for every user." }
+
+          $hashLine = (Get-Content $checksum -Raw).Trim()
+          $installerName = Split-Path $installer -Leaf
+
+          $notes = @"
+          FSOps $env:APP_VERSION
+
+          **This draft has not been tested in the simulator.** Do not publish it until a full flight
+          has been flown end to end against this build.
+
+          ### Downloads
+
+          - ``$installerName`` - the installer. Per-user, no administrator rights needed.
+          - ``$installerName.sha256`` - the checksum. Both files must stay attached: the in-app
+            updater fetches the sidecar before it downloads anything and will not offer an in-app
+            download without it.
+
+          ### Verifying the download
+
+          ``````
+          Get-FileHash .\$installerName -Algorithm SHA256
+          ``````
+
+          Expected:
+
+          ``````
+          $hashLine
+          ``````
+
+          FSOps is unsigned, so Windows SmartScreen will warn on first run. That hash is the only
+          thing distinguishing this build from a file off the internet.
+          "@
+
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $notes | Out-File -FilePath $notesPath -Encoding utf8
+
+          # --draft: never published automatically. --verify-tag: fail rather than create a tag.
+          gh release create $env:RELEASE_TAG `
+            $installer `
+            $checksum `
+            --draft `
+            --verify-tag `
+            --title "FSOps $env:APP_VERSION" `
+            --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
+
+          ''
+          "Draft release created for $env:RELEASE_TAG. It is NOT published."
+          'Publish it by hand, after a real flight, from the Releases page.'
+
+      - name: Say what happens next
+        if: success() && github.ref_type != 'tag'
+        shell: pwsh
+        run: |
+          'Dry run complete. The installer was built and smoke-tested; no release was created.'
+          'Run this workflow on a version tag to produce a draft release.'
