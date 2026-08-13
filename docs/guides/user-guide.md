@@ -112,6 +112,8 @@ Switch between light and dark theme at any time.
 
 Your SimBrief Pilot ID — find it on SimBrief under Account → Pilot ID. Set it and the Fly screen's flight brief pulls your latest OFP's fuel, cruise altitude, block time and filed route instead of FSOps' own estimate, but only when that plan matches the exact route you're about to fly — see [Plan in SimBrief](#plan-in-simbrief) below. Leave it blank (the default) and FSOps always uses its own built-in plan; nothing about your flight is sent anywhere without it, and it's entirely optional.
 
+You can also set this from the setup wizard's "Online flying" step when you first found an airline — this Settings field and the wizard's stay in sync either way, and setting or changing it here works exactly the same after onboarding.
+
 ### MSFS in-game panel
 
 One section covering both your MSFS 2024 Community folder and the [in-game panel](#in-game-panel) FSOps installs into it. The two are deliberately together: the folder only matters because of what's installed in it, and keeping them apart is what used to let the two quietly disagree.
@@ -574,6 +576,8 @@ FIR boundaries © VAT-Spy Data Project, CC BY-SA 4.0.
 ### Your VATSIM CID
 
 Settings, next to your SimBrief Pilot ID, has a field for your VATSIM CID. It's entirely optional and only ever read by FSOps' own server — **nothing about you is sent to VATSIM**, and leaving it blank changes nothing else: the ATC layer and the traffic above both work with no CID at all.
+
+You can also set this from the setup wizard's "Online flying" step when you first found an airline, with a one-line reminder of what it unlocks — this Settings field and the wizard's stay in sync either way.
 
 Setting it unlocks two things. First, **while a flight is tracked**, FSOps checks the public feed for your CID's reported position against its own telemetry every so often — never presence alone, always corroborated against where FSOps independently knows you to be. A flight found genuinely online earns a **"Flown online"** badge on its report card. Second, the Dashboard gets a **Flown online** card listing which of your flights were corroborated this way.
 

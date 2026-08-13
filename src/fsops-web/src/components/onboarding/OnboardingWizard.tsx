@@ -13,6 +13,7 @@ import { AircraftStep } from './steps/AircraftStep'
 import { CommunityFolderStep } from './steps/CommunityFolderStep'
 import { HomeBaseStep } from './steps/HomeBaseStep'
 import { IdentityStep } from './steps/IdentityStep'
+import { OnlinePresenceStep } from './steps/OnlinePresenceStep'
 import { PlaystyleStep } from './steps/PlaystyleStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { StrategyStep } from './steps/StrategyStep'
@@ -43,7 +44,11 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Seed sensible defaults from the app's existing settings the first time they load,
-  // without clobbering anything the user has already typed.
+  // without clobbering anything the user has already typed. simBriefPilotId/vatsimCid are
+  // normally null here - the wizard only ever shows with no airline on file - but seeding them
+  // too means the one path where they're not (an airline re-founded after being deleted from
+  // Settings' danger zone) shows the existing value straight away rather than a blank field; see
+  // OnlinePresenceStep for how it's then shown locked, not re-editable.
   useEffect(() => {
     if (seededFromSettings.current || settingsStatus !== 'ready') return
     seededFromSettings.current = true
@@ -55,6 +60,8 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
       weightUnit: settings.weightUnit,
       timeDisplay: settings.timeDisplay,
       use24HourClock: settings.use24HourClock,
+      simBriefPilotId: settings.simBriefPilotId,
+      vatsimCid: settings.vatsimCid,
     }))
   }, [settingsStatus, settings])
 
@@ -109,6 +116,18 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
           await installPanel(data.communityFolderPath)
         } catch {
           // Non-fatal - see comment above.
+        }
+      }
+
+      // Same best-effort posture as the Community folder save above, and safe to send even when
+      // a field arrived here locked (see OnlinePresenceStep): a locked field's value is always
+      // an unedited echo of what settings.simBriefPilotId/vatsimCid already were, so this can
+      // never overwrite or clear a value the player didn't just type themselves.
+      if (data.simBriefPilotId || data.vatsimCid) {
+        try {
+          await updateSettings({ simBriefPilotId: data.simBriefPilotId, vatsimCid: data.vatsimCid })
+        } catch {
+          // Non-fatal - see comment above. Both are always settable later from Settings.
         }
       }
 
@@ -196,6 +215,7 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
               {step.key === 'aircraft' && <AircraftStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'currency' && <CurrencyStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'communityFolder' && <CommunityFolderStep data={data} onChange={update} />}
+              {step.key === 'onlinePresence' && <OnlinePresenceStep data={data} onChange={update} />}
               {step.key === 'review' && (
                 <ReviewStep
                   data={data}

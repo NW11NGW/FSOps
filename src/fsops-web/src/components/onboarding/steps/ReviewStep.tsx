@@ -74,6 +74,16 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
       value: data.communityFolderPath ? data.communityFolderPath : 'Skipped — set up later in Settings',
       stepKey: 'communityFolder',
     },
+    {
+      label: 'SimBrief Pilot ID',
+      value: data.simBriefPilotId ? data.simBriefPilotId : 'Skipped — set up later in Settings',
+      stepKey: 'onlinePresence',
+    },
+    {
+      label: 'VATSIM CID',
+      value: data.vatsimCid ? data.vatsimCid : 'Skipped — set up later in Settings',
+      stepKey: 'onlinePresence',
+    },
   ]
 
   return (
