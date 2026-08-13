@@ -47,7 +47,7 @@ public static class PanelUninstallCommand
     /// one UserSettings row to look at. Spelled out as a constant, rather than referencing LocalUser
     /// itself, because constructing that would mean pulling in ICurrentUser/DI machinery this command
     /// deliberately runs without. Every character is a digit, so the SQLite
-    /// stored-GUIDs-are-upper-case gotcha (see AGENTS/CLAUDE conventions) genuinely cannot bite this
+    /// stored-GUIDs-are-upper-case gotcha genuinely cannot bite this
     /// particular value - there is no hex letter in it to differ by case - but the query below still
     /// compares case-insensitively so this stays true if that ID is ever revisited.
     /// </summary>
