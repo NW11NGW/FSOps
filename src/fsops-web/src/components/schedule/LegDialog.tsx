@@ -271,25 +271,47 @@ export function LegDialog({
               </p>
             )}
 
+            {/* Lead with where the aircraft actually is, before either list - real-use defect fix,
+             *  2026-08-12: a slot's options used to read as an unexplained wall of "not available"
+             *  reasons with no context for why. aircraftPosition is informational only (see
+             *  types/schedule.ts) - it never changes which routes were tested. */}
+            {legStatus === 'ready' && legOptions?.aircraftPosition && (legalOptions.length > 0 || illegalOptions.length > 0) && (
+              <p className="text-xs text-muted-foreground">
+                {currentDay?.registration ?? 'This aircraft'} is at <span className="font-mono">{legOptions.aircraftPosition}</span> for
+                this slot.
+              </p>
+            )}
+
+            {legStatus === 'ready' && legalOptions.length === 0 && illegalOptions.length > 0 && (
+              <p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+                Nothing is legal in this slot yet - see why below.
+              </p>
+            )}
+
             {legStatus === 'ready' &&
               legalOptions.map((option) => (
                 <LegOptionRow key={option.routeId} option={option} onPick={() => handlePickLeg(option)} />
               ))}
 
+            {/* K35's heading is gone - collapsed behind a disclosure instead (real-use defect fix,
+             *  2026-08-12). The reasons are still complete and still verbatim (never re-worded or
+             *  truncated - same rule as ConflictList), but four-plus stacked paragraphs read as a
+             *  dead end even when several legal options sit right above them; a player who wants the
+             *  detail can still get every word of it on demand. */}
             {legStatus === 'ready' && illegalOptions.length > 0 && (
-              <div className="space-y-1">
-                {/* K35: this heading must show whenever there's a wall of reasons below it, even
-                 *  when NO leg is legal in this slot (legalOptions.length === 0) - it used to be
-                 *  gated on legalOptions.length > 0, so a fully-blocked slot lost its heading
-                 *  entirely and read as an unlabelled list of reasons with no empty state. */}
-                <p className="pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Not available in this slot</p>
-                {illegalOptions.map(({ routeId, reason }) => (
-                  <div key={routeId} className="flex items-start gap-2 rounded-md border border-dashed border-border p-2 text-sm text-muted-foreground">
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-                    <span className="min-w-0 break-words">{reason}</span>
-                  </div>
-                ))}
-              </div>
+              <details className="group rounded-md border border-dashed border-border p-2">
+                <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Why can't I fly the others? ({illegalOptions.length})
+                </summary>
+                <div className="mt-2 space-y-1">
+                  {illegalOptions.map(({ routeId, reason }) => (
+                    <div key={routeId} className="flex items-start gap-2 rounded-md border border-dashed border-border p-2 text-sm text-muted-foreground">
+                      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+                      <span className="min-w-0 break-words">{reason}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
           </div>
         )}
@@ -342,7 +364,7 @@ function LegOptionRow({ option, onPick }: { option: LegalLegOption; onPick: () =
       type="button"
       onClick={onPick}
       className={cn(
-        'flex w-full items-center justify-between gap-3 rounded-md border border-border p-2.5 text-left text-sm transition-colors hover:border-ring hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'flex w-full flex-col gap-1.5 rounded-md border border-border p-2.5 text-left text-sm transition-colors hover:border-ring hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -355,6 +377,17 @@ function LegOptionRow({ option, onPick }: { option: LegalLegOption; onPick: () =
           {blockMinutes != null && <span className="ml-2 text-muted-foreground">{fmt.duration(blockMinutes)}</span>}
         </span>
       </span>
+      {/* Selectable but not consequence-free (real-use defect fix, 2026-08-12) - the warning is the
+       *  backend's own conflict sentence, verbatim, describing what picking this leg leaves unfinished
+       *  (e.g. a later already-drafted day the aircraft won't be in position for). It never blocks the
+       *  pick; it is a promise the player is taking on that still has to be kept before the week can
+       *  be saved (PUT /schedule keeps its own full check regardless). */}
+      {option.warnings.length > 0 && (
+        <span className="flex items-start gap-2 pl-6 text-xs text-warning">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 break-words">{option.warnings[0]}</span>
+        </span>
+      )}
     </button>
   )
 }

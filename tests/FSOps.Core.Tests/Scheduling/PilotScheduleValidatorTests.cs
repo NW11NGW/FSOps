@@ -15,11 +15,14 @@ public class PilotScheduleValidatorTests
     private static readonly Guid RouteBack = Guid.NewGuid(); // EGPH -> EGGD
     private static readonly Guid RouteElsewhere = Guid.NewGuid(); // EGSS -> EGPF
 
+    // Mirrors economy-config.json's shared "scheduling" block exactly (see its own comment for the
+    // 2026-08-12 correction from 45 to 30) rather than an arbitrary independent figure, so this
+    // file's expectations can never quietly drift from what the app actually enforces.
     private static readonly SchedulingConfig Config = new()
     {
         MinRestHoursBetweenDutyDays = 10,
         MaxDutyHoursPerDay = 13,
-        MinTurnaroundMinutes = 45,
+        MinTurnaroundMinutes = 30,
     };
 
     private static Dictionary<Guid, Route> Routes() => new()
@@ -208,12 +211,12 @@ public class PilotScheduleValidatorTests
     [Fact]
     public void Validate_TooLittleTurnaround_ReportsConflict()
     {
-        // 65-minute block, next departure only 20 minutes after landing - below the 45-minute
-        // minimum turnaround.
+        // 65-minute block (lands 09:05), next departure only 15 minutes after landing - below the
+        // 30-minute minimum turnaround.
         var entries = new[]
         {
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
-            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(9, 45, 0), RouteBack, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, new TimeSpan(9, 20, 0), RouteBack, AircraftX),
         };
 
         var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
