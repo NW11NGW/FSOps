@@ -109,6 +109,67 @@ public class FlightIntegrityFalsePositiveTests
     }
 
     [Theory]
+    [InlineData(40.0, 90)]
+    [InlineData(95.0, 90)]
+    [InlineData(5505.0, 180)]
+    [InlineData(40.0, 300)]
+    public void WrongOpeningFixCarryingOrdinaryNoise_ThenTheTruePosition_DoesNotVoidTheSector(
+        double wrongByNm, double heldSeconds)
+    {
+        // Case 5, and it is case 1 and case 2 again with one detail changed: the bad reading is not
+        // bit-identical every sample. A metre of wander is nothing - a tenth of a knot - but a
+        // running SUM of per-sample hops is path length, not displacement, and path length grows
+        // without bound while the aircraft goes nowhere at all. Ten seconds of it is enough to look
+        // like an aircraft that has "covered ground", which spends the departure-correction
+        // exemption before the brakes have come off.
+        var pipeline = new Pipeline(Stand);
+        var wrong = South(Stand, wrongByNm);
+
+        pipeline.Wander(wrong, heldSeconds, metresPerSample: 1.0);
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        pipeline.Fly(Stand, seconds: 600);
+
+        // Guard: the wander really does add up to many times the ~93 m of movement the monitor asks
+        // for before it believes an aircraft has gone somewhere, while displacing it by one metre.
+        // Without this the theory could pass by being too gentle to reproduce anything.
+        var pathLengthMetres = heldSeconds / SampleIntervalSeconds * 1.0;
+        Assert.True(pathLengthMetres > 300,
+            $"the wander only accumulates {pathLengthMetres:N0} m of path length, which proves nothing");
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
+    [InlineData(30, 90)]
+    [InlineData(60, 90)]
+    [InlineData(60, 150)]
+    public void ReconnectFollowedByJitterThenAStaleFreeze_DoesNotVoidTheSector(
+        double jitterSeconds, double staleSeconds)
+    {
+        // Case 6. The link comes back thrashing between absurd positions before it settles. Jitter
+        // is nothing but implausible transitions - the opposite of evidence that a feed is healthy -
+        // so it must not be allowed to satisfy "the feed has proved itself" and hand back the right
+        // to rebuild dwell out of a freeze that follows.
+        //
+        // Only reachable past the acquisition gate's own timeout: jitter cannot corroborate itself,
+        // so a shorter burst is withheld in its entirety and never reaches the monitor at all.
+        var pipeline = new Pipeline(Stand);
+
+        var atOutage = pipeline.Fly(Stand, seconds: 1200);
+        pipeline.Reconnect(outageSeconds: 120);
+        pipeline.Jitter((0.0, 90.0), (0.0, -90.0), jitterSeconds);
+        pipeline.Hold(atOutage, staleSeconds);
+
+        var truth = North(atOutage, Pipeline.CruiseKt / 3600.0 * 120);
+        pipeline.Fly(truth, seconds: 600);
+
+        Assert.True(jitterSeconds > PositionAcquisitionGate.AcquisitionTimeout.TotalSeconds,
+            "a burst shorter than the gate's timeout never reaches the monitor, so this would prove nothing");
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
     [InlineData(1.0, 64.0, 64.0, 640.0, 0.2)]
     [InlineData(1.0, 128.0, 128.0, 640.0, 0.2)]
     [InlineData(1.0, 128.0, 128.0, 700.0, 0.2)]
@@ -372,6 +433,35 @@ public class FlightIntegrityFalsePositiveTests
             for (var i = 0; i < SampleCount(seconds); i++)
             {
                 Sample(position, onGround: onGround);
+            }
+        }
+
+        /// <summary>
+        /// A position that is not going anywhere, but is not bit-identical either: it alternates
+        /// between two points <paramref name="metresPerSample"/> apart. Every transition is
+        /// perfectly plausible (a metre at 5 Hz is a tenth of a knot), the aircraft's DISPLACEMENT
+        /// stays about a metre for as long as this runs, and its PATH LENGTH grows without bound.
+        /// A real reading carrying ordinary noise looks like this; nothing says a garbage one is
+        /// noise-free.
+        /// </summary>
+        public void Wander((double Lat, double Lon) position, double seconds, double metresPerSample)
+        {
+            var offsetDegrees = metresPerSample / 1852.0 / 60.0;
+
+            for (var i = 0; i < SampleCount(seconds); i++)
+            {
+                Sample(i % 2 == 0 ? position : (position.Lat + offsetDegrees, position.Lon));
+            }
+        }
+
+        /// <summary>Thrashing between two absurd positions - readings nothing can vouch for, and
+        /// which cannot vouch for each other either, so every transition through this is
+        /// implausible.</summary>
+        public void Jitter((double Lat, double Lon) a, (double Lat, double Lon) b, double seconds)
+        {
+            for (var i = 0; i < SampleCount(seconds); i++)
+            {
+                Sample(i % 2 == 0 ? a : b);
             }
         }
 
