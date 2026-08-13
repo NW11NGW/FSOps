@@ -6,10 +6,10 @@ import { CalendarClock, Info, Loader2, RotateCcw, Save, Sparkles } from 'lucide-
 import { ConflictList } from './ConflictList'
 import {
   addLegToDay,
-  clearDay,
   draftWeekToInput,
+  findLegsOrphanedByRemoval,
   findOverlappingLeg,
-  removeLegFromDay,
+  removeLegAndOrphans,
   scheduleToDraftWeek,
   setDayAircraft,
   updateLegTime,
@@ -20,6 +20,7 @@ import {
 import { FleetAvailabilityPanel } from './FleetAvailabilityPanel'
 import { LegDialog } from './LegDialog'
 import { MaintenanceSuspendToggle } from './MaintenanceSuspendToggle'
+import { OrphanedLegsDialog, type PendingRemoval } from './OrphanedLegsDialog'
 import { ScheduleGrid } from './ScheduleGrid'
 import { buildStarterSchedule, type StarterScheduleIssue } from './starterSchedule'
 import { WeeklySummary } from './WeeklySummary'
@@ -109,6 +110,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   const [suggesting, setSuggesting] = useState(false)
   const [saveFailure, setSaveFailure] = useState<{ error: string; conflicts: string[] } | null>(null)
   const [suggestionIssue, setSuggestionIssue] = useState<StarterScheduleIssue | null>(null)
+  const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null)
   const initializedForPilot = useRef<string | null>(null)
 
   // Initialise (or re-initialise, on pilot switch) the editable draft once the schedule has
@@ -122,6 +124,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setAutoSuspendOnMaintenance(schedule.autoSuspendOnMaintenance)
     setSavedAutoSuspendOnMaintenance(schedule.autoSuspendOnMaintenance)
     setSuggestionIssue(null)
+    setPendingRemoval(null)
     initializedForPilot.current = pilot.id
   }, [schedule.status, schedule.dutyDays, schedule.autoSuspendOnMaintenance, pilot.id])
 
@@ -160,14 +163,39 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setWeek((current) => updateLegTime(current, day, legId, time))
   }
 
+  // Real-use defect, 2026-08-13: deleting only the outbound half of an out-and-back left the return
+  // sitting in the grid looking perfectly scheduled, and the player only found out it could never
+  // actually fly from a Save-time refusal worded around "the first leg of the week" - no mention of
+  // the delete that caused it. findLegsOrphanedByRemoval (draftEntry.ts) walks the whole chain for
+  // this aircraft and reports every leg the removal would strand, not just the one next to it - see
+  // its own doc. The common case (removing a leg nothing else depends on) still removes immediately,
+  // exactly as before; only a removal with real consequences elsewhere in the week stops for a
+  // choice, via OrphanedLegsDialog below.
   function handleRemove(day: DayOfWeek, legId: string) {
-    setWeek((current) => {
-      const withoutLeg = removeLegFromDay(current, day, legId)
-      // Clearing the last leg of a day leaves its aircraft chosen but idle - harmless, but a day
-      // with nothing on it and no aircraft either is one fewer stray state to reason about, so an
-      // emptied day's aircraft is released too.
-      return (withoutLeg[day]?.legs.length ?? 0) === 0 ? clearDay(withoutLeg, day) : withoutLeg
-    })
+    const dayEntry = week[day]
+    const leg = dayEntry?.legs.find((candidate) => candidate.id === legId)
+    if (!dayEntry || !leg) return
+
+    const aircraftLocationIcao = fleetQuery.fleet.find((aircraft) => aircraft.id === dayEntry.fleetAircraftId)?.locationIcao
+    const orphans = findLegsOrphanedByRemoval(week, day, legId, aircraftLocationIcao)
+
+    if (orphans.length === 0) {
+      setWeek((current) => removeLegAndOrphans(current, day, legId, []))
+      return
+    }
+
+    setPendingRemoval({ day, leg, orphans })
+  }
+
+  function confirmPendingRemoval() {
+    if (!pendingRemoval) return
+    const { day, leg, orphans } = pendingRemoval
+    setWeek((current) => removeLegAndOrphans(current, day, leg.id, orphans))
+    setPendingRemoval(null)
+  }
+
+  function cancelPendingRemoval() {
+    setPendingRemoval(null)
   }
 
   function handleDiscard() {
@@ -324,6 +352,8 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
         onConfirmRetime={handleConfirmRetime}
         onRemove={handleRemove}
       />
+
+      <OrphanedLegsDialog pending={pendingRemoval} onCancel={cancelPendingRemoval} onConfirm={confirmPendingRemoval} />
     </div>
   )
 }

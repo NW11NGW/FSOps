@@ -7,6 +7,7 @@ import {
   draftWeekToInput,
   findLegsOrphanedByRemoval,
   findOverlappingLeg,
+  removeLegAndOrphans,
   removeLegFromDay,
   scheduleToDraftWeek,
   setDayAircraft,
@@ -329,6 +330,90 @@ describe('findLegsOrphanedByRemoval', () => {
     }
     const snapshot = JSON.parse(JSON.stringify(week))
     findLegsOrphanedByRemoval(week, 1, 'out', 'EGLL')
+    expect(week).toEqual(snapshot)
+  })
+})
+
+describe('removeLegAndOrphans', () => {
+  it('removes only the requested leg when nothing is orphaned', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'ret', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const next = removeLegAndOrphans(week, 1, 'ret', [])
+    expect(next[1]?.legs.map((l) => l.id)).toEqual(['out'])
+  })
+
+  it('removes the requested leg AND every orphan it was handed, in one step', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'ret', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const orphans = findLegsOrphanedByRemoval(week, 1, 'out', 'EGLL')
+    const next = removeLegAndOrphans(week, 1, 'out', orphans)
+    // Both legs gone, and since the day now has none left, its aircraft is released too - the whole
+    // day disappears from the draft rather than sitting around with an aircraft and nothing on it.
+    expect(next[1]).toBeUndefined()
+  })
+
+  it('only clears a day whose own legs all got removed, not every day the aircraft touches', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'a', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'b', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGPH' }),
+        ],
+      },
+      2: {
+        dayOfWeek: 2,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'c', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGPH', arrivalIcao: 'EGCC' }),
+          leg({ id: 'd', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGCC', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const orphans = findLegsOrphanedByRemoval(week, 1, 'b', 'EGLL')
+    expect(orphans.map((o) => o.leg.id)).toEqual(['c', 'd'])
+    const next = removeLegAndOrphans(week, 1, 'b', orphans)
+    // Day 1 loses 'b' but keeps 'a' - not cleared. Day 2 loses both its legs - fully cleared.
+    expect(next[1]?.legs.map((l) => l.id)).toEqual(['a'])
+    expect(next[2]).toBeUndefined()
+  })
+
+  it('does not mutate the input week', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'ret', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const snapshot = JSON.parse(JSON.stringify(week))
+    const orphans = findLegsOrphanedByRemoval(week, 1, 'out', 'EGLL')
+    removeLegAndOrphans(week, 1, 'out', orphans)
     expect(week).toEqual(snapshot)
   })
 })

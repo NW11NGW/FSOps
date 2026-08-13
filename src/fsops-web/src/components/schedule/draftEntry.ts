@@ -236,6 +236,37 @@ export function findLegsOrphanedByRemoval(week: DraftWeek, day: DayOfWeek, legId
   return orphaned
 }
 
+/**
+ * Removes the requested leg AND every leg `findLegsOrphanedByRemoval` reported for that same
+ * removal, in one step. Not a second policy layered on top of that helper - it is the "yes, do it"
+ * half of the same decision: the player has already been shown, leg by leg, exactly what this
+ * strands (see OrphanedLegsDialog for the UI that gets them to this point), so leaving those legs
+ * behind once they confirm would just hand back a draft that is guaranteed to fail at save for a
+ * reason they were already told - a delete they would have to come back and make by hand a moment
+ * later, not a state worth defending. `orphans` is taken as given (the caller's own, already-shown
+ * `findLegsOrphanedByRemoval` result) rather than recomputed here, so what gets removed is always
+ * exactly what was described.
+ *
+ * Any day left with zero legs afterwards has its aircraft released too - same tidy-up a plain
+ * single-leg removal already does, just applied to every day this touches instead of only the one
+ * the requested leg happened to be on.
+ */
+export function removeLegAndOrphans(week: DraftWeek, day: DayOfWeek, legId: string, orphans: OrphanedLeg[]): DraftWeek {
+  let next = removeLegFromDay(week, day, legId)
+  for (const orphan of orphans) {
+    next = removeLegFromDay(next, orphan.day, orphan.leg.id)
+  }
+
+  const touchedDays = new Set<DayOfWeek>([day, ...orphans.map((orphan) => orphan.day)])
+  for (const touchedDay of touchedDays) {
+    if ((next[touchedDay]?.legs.length ?? 0) === 0) {
+      next = clearDay(next, touchedDay)
+    }
+  }
+
+  return next
+}
+
 export function updateLegTime(week: DraftWeek, day: DayOfWeek, legId: string, departureTimeUtc: string): DraftWeek {
   const existing = week[day]
   if (!existing) return week
