@@ -1,0 +1,465 @@
+﻿using FSOps.Core.Flights;
+using FSOps.Core.Planning;
+
+namespace FSOps.Core.Tests.Flights;
+
+/// <summary>
+/// Three ways an honestly-flown sector could still be voided, driven through the REAL pipeline order
+/// rather than against the monitor alone: <see cref="PositionAcquisitionGate.Accept"/> first, then
+/// <see cref="FlightIntegrityMonitor.Observe"/>, at the sim's own ~5 Hz, with the flight's real
+/// departure position supplied exactly as <c>FlightEndpoints</c> supplies it.
+/// <para>
+/// Every case here is bad DATA, not a cheat: a first fix that is wrong but nearby, a first fix that
+/// is wrong and stuck, and a sim link that drops mid-flight and comes back replaying the position it
+/// last had. None of them gains the player a single mile, and none of them may cost a sector. The
+/// companion assertions at the bottom hold the other side of the line: everything that IS a cheat is
+/// still caught.
+/// </para>
+/// </summary>
+public class FlightIntegrityFalsePositiveTests
+{
+    private static readonly DateTimeOffset Base = new(2026, 8, 13, 9, 0, 0, TimeSpan.Zero);
+
+    /// <summary>The sim source's normal cadence - five samples a second.</summary>
+    private const double SampleIntervalSeconds = 0.2;
+
+    /// <summary>Bristol's stand, as the first real flight's own second (first believable) fix recorded it.</summary>
+    private static readonly (double Lat, double Lon) Stand = (51.38526, -2.71770);
+
+    /// <summary>Roughly one nautical mile of latitude, so a test can say "wrong by 8 nm" and mean it.</summary>
+    private static (double Lat, double Lon) North((double Lat, double Lon) from, double nm) =>
+        (from.Lat + nm / 60.0, from.Lon);
+
+    /// <summary>The opposite of <see cref="North"/>. Every flight here departs northbound, so a bad
+    /// opening fix is placed to the SOUTH deliberately: put it north and the sector flies straight
+    /// back through it, which dismisses the suspicion by accident and would make the test pass for a
+    /// reason that has nothing to do with the rule being tested.</summary>
+    private static (double Lat, double Lon) South((double Lat, double Lon) from, double nm) =>
+        (from.Lat - nm / 60.0, from.Lon);
+
+    [Theory]
+    [InlineData(2.0)]
+    [InlineData(8.0)]
+    [InlineData(40.0)]
+    [InlineData(95.0)]
+    public void OpeningFixWrongButNearby_ThenTheTruePosition_DoesNotVoidTheSector(double wrongByNm)
+    {
+        // Case 1. The opening fix is inside StartingFixToleranceNm, so it is believed rather than
+        // discarded, and it is held long enough to build a full CorroborationDwell behind it. When
+        // the aircraft's real position finally arrives, the correction reads as a teleport FROM a
+        // place the aircraft never was. Two miles is the size of error an ordinary scenery load or
+        // ground settle produces.
+        var pipeline = new Pipeline(Stand);
+        var wrong = South(Stand, wrongByNm);
+
+        pipeline.Hold(wrong, seconds: 90);
+        pipeline.Hold(Stand, seconds: 30);
+        pipeline.Fly(Stand, seconds: 300);
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
+    [InlineData(75)]
+    [InlineData(125)]
+    [InlineData(180)]
+    [InlineData(600)]
+    public void StuckGarbageOpeningFix_HeldForAnyLength_DoesNotVoidTheSector(double heldSeconds)
+    {
+        // Case 2. The uninitialised SimConnect fix that started all of this - 0.0N 90.0E, 5,505 nm
+        // from the stand - but STUCK rather than momentary. The acquisition gate cannot help: a
+        // stationary fix corroborates itself, because two identical packets agree. Past
+        // StartingFixAcquisitionWindow + CorroborationDwell the monitor starts believing it, and the
+        // arrival of the truth condemns the sector.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Hold((0.0, 90.0), heldSeconds);
+        pipeline.Hold(Stand, seconds: 30);
+        pipeline.Fly(Stand, seconds: 300);
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
+    [InlineData(120, 2)]
+    [InlineData(120, 30)]
+    [InlineData(120, 90)]
+    [InlineData(120, 240)]
+    [InlineData(300, 5)]
+    [InlineData(45, 10)]
+    public void ReconnectMidFlight_ReplayingAStalePosition_DoesNotVoidTheSector(double outageSeconds, double staleSeconds)
+    {
+        // Case 3. Twenty minutes into a clean sector the sim link drops. When it comes back it
+        // replays the position it last had, which bridges the outage so the monitor's own timeline
+        // looks unbroken; then the true position arrives and the aircraft has genuinely moved on
+        // through the gap. That transition spans an OUTAGE, so it carries no information about how
+        // fast anything travelled - but it is measured as though it did, with twenty minutes of
+        // corroboration standing behind it.
+        var pipeline = new Pipeline(Stand);
+
+        var atOutage = pipeline.Fly(Stand, seconds: 1200);
+        pipeline.Reconnect(outageSeconds);
+        pipeline.Hold(atOutage, staleSeconds);
+
+        // Where the aircraft really got to while nobody was watching.
+        var truth = North(atOutage, Pipeline.CruiseKt / 3600.0 * outageSeconds);
+        pipeline.Fly(truth, seconds: 600);
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
+    [InlineData(1.0, 64.0, 64.0, 640.0, 0.2)]
+    [InlineData(1.0, 128.0, 128.0, 640.0, 0.2)]
+    [InlineData(1.0, 128.0, 128.0, 700.0, 0.2)]
+    [InlineData(128.0, 1.0, 128.0, 640.0, 0.2)]
+    [InlineData(1.0, 2.0, 2.0, 460.0, 0.2)]
+    // The same steps on a sim running at 20 and 10 fps rather than 30. Nothing about the arithmetic
+    // changes - implied speed does not depend on the interval - but the ground the straddling
+    // transition covers does, which takes it clear of the negligible-jump floor. Without these, this
+    // theory would be silently proving the FLOOR rather than the normalisation.
+    [InlineData(1.0, 128.0, 128.0, 640.0, 0.3)]
+    [InlineData(1.0, 64.0, 64.0, 640.0, 0.6)]
+    [InlineData(128.0, 1.0, 128.0, 640.0, 0.3)]
+    public void LargeSimulationRateStepAtHighGroundSpeed_DoesNotVoidTheSector(
+        double fromRate, double toRate, double rateGroundWasFlownAt, double groundSpeedKt, double intervalSeconds)
+    {
+        // Case 4, and nothing has to malfunction for it: a player binds "set rate", goes straight
+        // from 1x to 64x or 128x, and the aircraft is quick over the ground. Exactly one transition
+        // straddles the two rates and the ground it covers was flown at ONE of them, so combining
+        // them by average under-divides that sample to about twice ground speed - past a 1,200 kt
+        // threshold for anything over roughly 600 kt, which is an airliner in a jet stream.
+        //
+        // Both directions are here on purpose. Normalising by the ARRIVING sample's rate would cure
+        // the step up and rebuild the identical fault on the step down, where the ground was flown
+        // fast and the arriving rate is 1. Only taking the greater of the two is safe both ways.
+        var pipeline = new Pipeline(Stand)
+        {
+            GroundSpeedKt = groundSpeedKt,
+            SimulationRate = fromRate,
+            IntervalSeconds = intervalSeconds,
+        };
+
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        pipeline.Continue(600);
+        var straddlingJumpNm = pipeline.StepRateTo(toRate, rateGroundWasFlownAt);
+        pipeline.Continue(600);
+
+        // Guard, so a passing test cannot mean "the scenario never happened": the transition really
+        // does straddle a rate change big enough to matter, and it really would have been condemned
+        // by averaging the two rates.
+        Assert.Equal(Math.Max(fromRate, toRate), pipeline.Monitor.MaxSimulationRateObserved);
+        var averagedImpliedKt = straddlingJumpNm / (intervalSeconds / 3600.0) / ((fromRate + toRate) / 2.0);
+        Assert.True(
+            averagedImpliedKt > FlightIntegrityMonitor.ImpossibleGroundSpeedKt || Math.Max(fromRate, toRate) <= 2.0,
+            $"this case proves nothing: averaging the rates implies only {averagedImpliedKt:N0} kt, which was never over the threshold");
+
+        Assert.False(pipeline.Monitor.PositionJumpDetected,
+            $"a {fromRate}x -> {toRate}x rate change at {groundSpeedKt} kt over the ground voided the sector");
+        Assert.False(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The other side of the line. Nothing above may be bought at the price of anything below.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void JumpToTheDepartureAirportOnceAirborne_IsStillCaught()
+    {
+        // The departure-correction rule is strictly one-way. It must be spent by GETTING AIRBORNE,
+        // not only by flying beyond the departure radius - because landing back where you departed
+        // is a legitimate, paid outcome, so an exemption still live in the air would pay a cheat for
+        // teleporting home. Here the aircraft never leaves the departure radius at all, so only the
+        // airborne half of the latch can catch it.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        var afterCircuit = pipeline.Circuit(Stand, cycles: 12, legNm: 2.0);
+
+        var jumpTo = North(Stand, 9.0);
+        pipeline.Sample(jumpTo);
+        pipeline.Fly(jumpTo, seconds: 600);
+
+        // Guards, so this can only pass for the reason it is about: the aircraft never went further
+        // than the departure radius, so the DISTANCE half of the latch cannot have fired; and the
+        // jump both lands inside that radius and is far enough to clear the negligible-jump floor.
+        var strayedNm = GreatCircle.DistanceNm(Stand.Lat, Stand.Lon, afterCircuit.Lat, afterCircuit.Lon);
+        var jumpNm = GreatCircle.DistanceNm(afterCircuit.Lat, afterCircuit.Lon, jumpTo.Lat, jumpTo.Lon);
+        Assert.True(strayedNm < FlightIntegrityMonitor.DepartureCorrectionRadiusNm,
+            $"the circuit strayed {strayedNm:F1} nm, outside the departure radius, so this proves nothing about the airborne latch");
+        Assert.True(GreatCircle.DistanceNm(Stand.Lat, Stand.Lon, jumpTo.Lat, jumpTo.Lon) < FlightIntegrityMonitor.DepartureCorrectionRadiusNm,
+            "the jump has to LAND inside the departure radius, or the exemption was never in play");
+        Assert.True(jumpNm > FlightIntegrityMonitor.NegligibleJumpDistanceNm,
+            $"the jump has to clear the negligible-jump floor; it was {jumpNm:F1} nm");
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void TeleportInTheMiddleOfARealFlight_IsStillCaught()
+    {
+        var pipeline = new Pipeline(Stand);
+
+        var beforeJump = pipeline.Fly(Stand, seconds: 600);
+        pipeline.Fly(North(beforeJump, 600), seconds: 600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void RepositionDeliveredAsARunOfIndividuallySmallHops_IsStillCaught()
+    {
+        // The obvious way to probe a minimum jump distance: stay under it on every single step.
+        // A reposition is one excursion however many packets it is spread over, so it is measured
+        // by where it ended up, not by its largest single hop.
+        var pipeline = new Pipeline(Stand);
+
+        var position = pipeline.Fly(Stand, seconds: 600);
+        for (var hop = 0; hop < 60; hop++)
+        {
+            position = North(position, 4.0);
+            pipeline.Sample(position);
+        }
+
+        pipeline.Fly(position, seconds: 600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void RepositionWhoseHopsAreSeparatedByOrdinaryLookingFrames_IsStillCaught()
+    {
+        // The same probe again, but hiding each hop behind a frame that looks like normal flight, on
+        // the theory that a rule which only measures an UNBROKEN run of bad transitions can be
+        // walked straight through. An excursion is measured by how far the aircraft was moved, not
+        // by how tidily the moves were delivered.
+        var pipeline = new Pipeline(Stand);
+
+        var position = pipeline.Fly(Stand, seconds: 600);
+        for (var hop = 0; hop < 60; hop++)
+        {
+            position = North(position, 4.0);
+            pipeline.Sample(position);
+            pipeline.Sample(North(position, Pipeline.CruiseKt / 3600.0 * 0.2));
+            position = North(position, Pipeline.CruiseKt / 3600.0 * 0.2);
+        }
+
+        pipeline.Fly(position, seconds: 600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void JumpBackToTheDepartureAirportAfterTheAircraftHasLeftIt_IsStillCaught()
+    {
+        // The departure-correction rule is spent the moment the aircraft is seen to fly away from
+        // its departure airport, so it can never be reached for again later in the sector.
+        var pipeline = new Pipeline(Stand);
+
+        var away = pipeline.Fly(North(Stand, 400), seconds: 600);
+        pipeline.Fly(Stand, seconds: 600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+        Assert.True(GreatCircle.DistanceNm(Stand.Lat, Stand.Lon, away.Lat, away.Lon) > 400,
+            "the aircraft has to have genuinely left the departure area for this to prove anything");
+    }
+
+    [Fact]
+    public void TeleportAfterAReconnectHasBeenFlownThrough_IsStillCaught()
+    {
+        // A reconnect resets what the monitor can measure, but it is not a laundry: fly on
+        // normally afterwards and the sector is corroborated again, teleport included.
+        var pipeline = new Pipeline(Stand);
+
+        var atOutage = pipeline.Fly(Stand, seconds: 600);
+        pipeline.Reconnect(outageSeconds: 60);
+        var resumed = pipeline.Fly(atOutage, seconds: 600);
+        pipeline.Fly(North(resumed, 600), seconds: 600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void TeleportUnderTimeAcceleration_IsStillCaught()
+    {
+        var pipeline = new Pipeline(Stand) { SimulationRate = 4.0 };
+
+        var beforeJump = pipeline.Fly(Stand, seconds: 600);
+        pipeline.Fly(North(beforeJump, 2000), seconds: 600);
+
+        Assert.True(pipeline.Monitor.ElevatedSimRateDetected);
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void SlewSimvar_StillVoidsTheSectorOnItsOwn()
+    {
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Fly(Stand, seconds: 30);
+        pipeline.Sample(Stand, slew: true);
+
+        Assert.True(pipeline.Monitor.SlewDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    private static void AssertFlownHonestly(Pipeline pipeline)
+    {
+        Assert.False(pipeline.Monitor.SlewDetected);
+        Assert.False(pipeline.Monitor.ElevatedSimRateDetected);
+        Assert.False(pipeline.Monitor.PositionJumpDetected);
+        Assert.False(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    /// <summary>
+    /// The app's real telemetry path in miniature: every sample goes through the acquisition gate
+    /// first and only reaches the integrity monitor if the gate hands it on, which is exactly how
+    /// <c>SimTelemetryService</c> feeds <c>FlightLifecycleService</c>. Testing the monitor on its own
+    /// would miss anything the gate lets through - and a stationary bad fix is precisely that, since
+    /// two identical packets agree with each other.
+    /// </summary>
+    private sealed class Pipeline
+    {
+        public const double CruiseKt = 450.0;
+
+        private PositionAcquisitionGate _gate = new();
+        private double _elapsedSeconds;
+        private (double Lat, double Lon) _lastPosition;
+
+        public Pipeline((double Lat, double Lon)? expectedStart = null)
+        {
+            Monitor = new FlightIntegrityMonitor(expectedStart);
+        }
+
+        public FlightIntegrityMonitor Monitor { get; }
+
+        public double SimulationRate { get; set; } = 1.0;
+
+        public double GroundSpeedKt { get; init; } = CruiseKt;
+
+        /// <summary>How far apart samples arrive. The sim source asks for every 6th SIM FRAME, so
+        /// the familiar "roughly 5 Hz" is really "roughly 30 fps"; a loaded sim at 20 or 10 fps
+        /// delivers every 0.3 or 0.6 s instead, and the same rate change then covers proportionally
+        /// more ground on the transition that straddles it.</summary>
+        public double IntervalSeconds { get; init; } = SampleIntervalSeconds;
+
+        public void Sample((double Lat, double Lon) position, bool slew = false, bool onGround = false)
+        {
+            var utc = Base + TimeSpan.FromSeconds(_elapsedSeconds);
+            if (_gate.Accept(position.Lat, position.Lon, utc, SimulationRate))
+            {
+                Monitor.Observe(new FlightTelemetrySample(
+                    utc, position.Lat, position.Lon, onGround ? 0 : 30000, onGround ? 0 : 30000,
+                    onGround ? 0 : 280, onGround ? 0 : GroundSpeedKt, 0, 0, 0,
+                    onGround, true, false, 1.0, 0, 5000, "Test Aircraft", "TEST", "Test", SimulationRate, slew));
+            }
+
+            _lastPosition = position;
+            _elapsedSeconds += IntervalSeconds;
+        }
+
+        /// <summary>Reports the same position over and over, which is what both a parked aircraft and
+        /// a frozen feed look like.</summary>
+        public void Hold((double Lat, double Lon) position, double seconds, bool onGround = false)
+        {
+            for (var i = 0; i < SampleCount(seconds); i++)
+            {
+                Sample(position, onGround: onGround);
+            }
+        }
+
+        /// <summary>Ordinary tracked flight due north, starting AT <paramref name="from"/> - so the
+        /// step onto that first sample is whatever the caller has arranged, which is how the teleport
+        /// tests splice a jump in. Returns where the NEXT sample would go.</summary>
+        public (double Lat, double Lon) Fly((double Lat, double Lon) from, double seconds)
+        {
+            var samples = SampleCount(seconds);
+
+            for (var i = 0; i < samples; i++)
+            {
+                Sample((from.Lat + DegreesPerSample() * i, from.Lon));
+            }
+
+            return (from.Lat + DegreesPerSample() * samples, from.Lon);
+        }
+
+        /// <summary>Flies on from wherever the last sample actually was, at the CURRENT simulation
+        /// rate - so a rate changed just before this call produces exactly the one transition that
+        /// straddles two rates, with the arriving sample carrying the new rate and a full new-rate
+        /// step of ground.</summary>
+        public (double Lat, double Lon) Continue(double seconds)
+        {
+            for (var i = 0; i < SampleCount(seconds); i++)
+            {
+                Sample((_lastPosition.Lat + DegreesPerSample(), _lastPosition.Lon));
+            }
+
+            return _lastPosition;
+        }
+
+        /// <summary>
+        /// The single transition on which the player changes simulation rate. The arriving sample
+        /// reports <paramref name="newRate"/> - rate and position are fields of one SimConnect struct
+        /// and cannot lag each other by a frame - while the ground it covers was flown at
+        /// <paramref name="rateGroundWasFlownAt"/>, which is the whole difficulty: that is the old
+        /// rate when the change lands at the end of the interval and the new one when it lands at
+        /// the start, and the monitor cannot tell which.
+        /// </summary>
+        /// <returns>How far that one transition covered, in nautical miles, so a test can assert
+        /// what it was actually judging.</returns>
+        public double StepRateTo(double newRate, double rateGroundWasFlownAt)
+        {
+            var degrees = GroundSpeedKt / 3600.0 * IntervalSeconds * rateGroundWasFlownAt / 60.0;
+            SimulationRate = newRate;
+            Sample((_lastPosition.Lat + degrees, _lastPosition.Lon));
+            return degrees * 60.0;
+        }
+
+        /// <summary>Whole out-and-back legs from <paramref name="from"/>, airborne throughout, never
+        /// straying further than <paramref name="legNm"/> from where it started and ending exactly
+        /// back there - a circuit, which is a real thing pilots fly and the only shape that gets an
+        /// aircraft airborne without taking it out of its departure area.</summary>
+        public (double Lat, double Lon) Circuit((double Lat, double Lon) from, int cycles, double legNm)
+        {
+            var samplesPerLeg = (int)Math.Round(legNm / (GroundSpeedKt / 3600.0 * IntervalSeconds));
+            var degreesPerSample = DegreesPerSample();
+
+            for (var cycle = 0; cycle < cycles; cycle++)
+            {
+                for (var i = 1; i <= samplesPerLeg; i++)
+                {
+                    Sample((from.Lat + degreesPerSample * i, from.Lon));
+                }
+
+                for (var i = samplesPerLeg - 1; i >= 0; i--)
+                {
+                    Sample((from.Lat + degreesPerSample * i, from.Lon));
+                }
+            }
+
+            return _lastPosition;
+        }
+
+        /// <summary>The sim link drops and comes back. Mirrors what the running app does: the
+        /// acquisition gate is rebuilt from scratch, and the integrity monitor is told that its
+        /// timeline has a hole in it.</summary>
+        public void Reconnect(double outageSeconds)
+        {
+            _elapsedSeconds += outageSeconds;
+            _gate = new PositionAcquisitionGate();
+            Monitor.NotifyTelemetryInterrupted();
+        }
+
+        private double DegreesPerSample() => GroundSpeedKt / 3600.0 * IntervalSeconds * SimulationRate / 60.0;
+
+        private int SampleCount(double seconds) => (int)Math.Round(seconds / IntervalSeconds);
+    }
+}
+

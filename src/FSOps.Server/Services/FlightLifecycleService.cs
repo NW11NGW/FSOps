@@ -107,11 +107,13 @@ public sealed class FlightLifecycleService : IHostedService
         _writerTask = Task.Run(() => WriterLoopAsync(_cts.Token), CancellationToken.None);
         await RehydrateInProgressFlightAsync(cancellationToken);
         _telemetry.SampleReceived += OnSample;
+        _telemetry.TelemetryInterrupted += OnTelemetryInterrupted;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _telemetry.SampleReceived -= OnSample;
+        _telemetry.TelemetryInterrupted -= OnTelemetryInterrupted;
         _cts?.Cancel();
         _eventQueue.Writer.TryComplete();
 
@@ -252,6 +254,34 @@ public sealed class FlightLifecycleService : IHostedService
             return FuelBurnResolver.Measure(
                 _active.EngineStartFuelKg, _active.AccumulatedBurnKg, _active.FirstSampleFuelKg, _active.LastFuelKg);
         }
+    }
+
+    /// <summary>
+    /// The sim link dropped and came back mid-sector. The integrity monitor is judging each sample
+    /// against the one before it, and those two are now separated by a hole it cannot see - a
+    /// reconnecting SimConnect replays the position it last had, which bridges the gap in the
+    /// timestamps, so when the truth finally arrives the aircraft has genuinely moved miles and the
+    /// transition reads as a teleport with the whole flight's corroboration standing behind it.
+    /// Telling the monitor is the same reset the acquisition gate already gets, and for the same
+    /// reason: see <see cref="FlightIntegrityMonitor.NotifyTelemetryInterrupted"/>.
+    /// </summary>
+    private void OnTelemetryInterrupted(object? sender, EventArgs e)
+    {
+        ActiveFlightTracker? tracker;
+        lock (_lock)
+        {
+            tracker = _active;
+        }
+
+        if (tracker is null)
+        {
+            return;
+        }
+
+        tracker.IntegrityMonitor.NotifyTelemetryInterrupted();
+        _logger.LogInformation(
+            "Telemetry for flight {FlightId} was interrupted and has resumed; speed across the gap is not measurable and is not being judged.",
+            tracker.FlightId);
     }
 
     private void OnSample(object? sender, TelemetrySample sample)
