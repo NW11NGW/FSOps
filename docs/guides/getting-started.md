@@ -62,7 +62,9 @@ npm install
 npm run build
 ```
 
-`npm install` pulls down the frontend's dependencies (only needed once, or again after they change). `npm run build` compiles the React app into static files that `FSOps.Server` serves. If you skip this step, the server will still start, but the browser will show a message that the UI hasn't been built yet — see [troubleshooting](troubleshooting.md#the-ui-shows-fsops-ui-not-built-yet) if you hit that.
+`npm install` pulls down the frontend's dependencies (only needed once, or again after they change). `npm run build` compiles the React app into static files under `src/FSOps.Server/wwwroot`. If you skip this step entirely, the server will still start, but the browser will show a message that the UI hasn't been built yet — see [troubleshooting](troubleshooting.md#the-ui-shows-fsops-ui-not-built-yet) if you hit that.
+
+**`npm run build` on its own does not update the UI you see, and this costs real time if you don't know it.** `FSOps.Server` doesn't serve straight out of `src/FSOps.Server/wwwroot` — it serves from a `wwwroot` folder beside the *built* server assembly (its `.csproj` copies `wwwroot`'s contents there, `PreserveNewest`, as part of a `dotnet build`). That copy only happens when the backend itself is built. So after changing frontend code and running `npm run build` again, the browser keeps showing the **previous** build (or, on a brand-new checkout that's never been built at all, "UI not built yet") until you also run `dotnet build` — or just restart with `dotnet run --project src/FSOps.Server`, which builds first anyway — to pick the freshly-built files up. If you've built the frontend and the browser genuinely doesn't reflect it, rebuild the backend before looking anywhere else.
 
 If you're contributing to the frontend, `npm test` (watch mode) or `npm run test:run` (single pass) runs its [Vitest](https://vitest.dev/) suite from the same `src/fsops-web` folder — see [Architecture](../architecture.md#testing) for what it covers. Neither is required just to build and run FSOps.
 

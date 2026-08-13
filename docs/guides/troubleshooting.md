@@ -43,6 +43,8 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
 - [A flight is stuck needing attention](#a-flight-is-stuck-needing-attention)
+- [A landing shows as "not measured"](#a-landing-shows-as-not-measured)
+- [A sector wasn't valid for payment (slew or a position jump)](#a-sector-wasnt-valid-for-payment-slew-or-a-position-jump)
 - [Why did completing manually cost me reputation](#why-did-completing-manually-cost-me-reputation)
 - [A route doesn't show as flyable](#a-route-doesnt-show-as-flyable)
 - [Where to find log files](#where-to-find-log-files)
@@ -79,6 +81,8 @@ cd ../..
 ```
 
 Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the browser tab. See [Getting Started](getting-started.md#4-build-the-frontend) for the full walkthrough.
+
+**If you've already built the frontend and still see this (or the browser shows an old version of a change you just made), the backend needs rebuilding too.** `FSOps.Server` serves `wwwroot` from beside its own built assembly, not straight out of `src/FSOps.Server/wwwroot` — that folder only gets copied into place when the backend itself is built. Running `npm run build` again updates the source folder but not the copy the running server is actually reading from. `dotnet run --project src/FSOps.Server` rebuilds first and picks up the change; a plain `dotnet build` from the repository root works too.
 
 ## The map shows no background tiles
 
@@ -466,6 +470,24 @@ Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from th
 1. **Check again** — if MSFS just needed a moment longer to load and reconnect, this re-checks without doing anything else. Try this first if you're about to keep flying the same flight.
 2. **Complete with estimates** — closes the flight out now, using your planned block time and fuel figures rather than measured ones. Use this if you don't intend to keep flying it. No landing quality (touchdown rate, G-force, bounces, centreline) will be recorded for a flight completed this way, since none of that could actually be measured.
 3. **Abandon** — discards the flight entirely, with no report card, and frees your aircraft up to fly something else. Use this if the flight is a lost cause (for example, MSFS crashed and you don't want to resume that exact flight).
+
+## A landing shows as "not measured"
+
+**Symptom:** The report card's landing quality section reads "Touchdown was recorded, but the sim never reported a rate for it — landing rate not measured" instead of showing a touchdown rate, even though you clearly landed.
+
+**Cause:** Not a bug, and not the same thing as a missing touchdown. MSFS publishes its own touchdown-rate simvar a moment *after* the wheels actually touch, not at the instant of contact — reading it at that exact instant sees it still sitting at its idle zero, which used to show a real landing (even a hard one) as a perfect 0 fpm. FSOps now watches the few seconds after contact for that simvar to actually report something, and falls back to the vertical speed from the moment just before touchdown if it never does. **"Not measured" only appears when neither of those produced a usable figure** — genuinely rare, and specifically not the same as landing softly. A touchdown with no rate at all is still scored on peak G-force, bounces and centreline deviation, whichever of those were captured.
+
+**Solution:** Nothing to fix. If this happens on every single landing rather than occasionally, that's worth reporting (see [How to report a problem](#how-to-report-a-problem)) with the aircraft you were flying, since some third-party aircraft may not populate the underlying simvar reliably. A flight completed with **"Complete with estimates"** always shows no touchdown at all rather than "not measured" — that's the other, unrelated case where nothing about the landing could be captured in the first place; see [Ending a flight](user-guide.md#ending-a-flight-and-what-happens-if-it-gets-interrupted).
+
+## A sector wasn't valid for payment (slew or a position jump)
+
+**Symptom:** The report card shows a **Flight integrity** card saying slew was active, or that telemetry showed a position change inconsistent with normal flight, and that "this sector isn't valid for payment" — no ticket revenue was posted, even though the flight felt normal to fly.
+
+**Cause:** FSOps' integrity monitor genuinely detected either slew mode being active at some point during the flight, or a position change between two telemetry samples that no real aircraft could have made — both mean part of the recorded flight wasn't actually flown, so the ledger-posting code never reaches the step that would add ticket revenue for it. This is a structural gate, not a deduction, and it's deliberately not an accusation: an elevated simulation rate (speeding up cruise) is scored completely differently and never voids a sector on its own — see [Flight integrity](user-guide.md#flight-integrity).
+
+A position jump specifically now has to be **corroborated** before it's flagged: FSOps ignores a single implausible reading unless the aircraft was already tracked through a spell of plausible flight beforehand, and then only confirms the jump once the aircraft has gone on flying plausibly afterwards too — a reading that comes back close to where it appeared to leave from is dismissed as bad data rather than treated as a teleport. A flight's very first position is also checked against where it's expected to start, and discarded rather than believed if it's wildly off. This means an occasional bad reading from the simulator (most commonly right as it connects) no longer voids an otherwise clean sector — if you're seeing this on a flight you're confident had no slewing or repositioning in it, that's worth reporting with the approximate time it happened, since a corroborated jump found on a flight that genuinely had none would be a real defect, not a false alarm.
+
+**Solution:** Nothing to fix if you did genuinely slew or reposition mid-flight — that's working as intended. Whatever fuel the aircraft actually burned is still billed regardless (see [Fuel billing](user-guide.md#fuel-billing)); only the ticket revenue is withheld. If you're confident nothing like that happened, check the [log files](#where-to-find-log-files) around the flagged time and report it.
 
 ## Why did completing manually cost me reputation
 
