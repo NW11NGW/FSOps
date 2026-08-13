@@ -662,7 +662,17 @@ public static class PanelPackageInstaller
         foreach (var file in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
         {
             var relative = Path.GetRelativePath(target, file).Replace(Path.DirectorySeparatorChar, '/');
-            if (string.Equals(relative, "layout.json", StringComparison.OrdinalIgnoreCase))
+
+            // BOTH of the package's own metadata files are excluded, not just the layout. A layout
+            // that lists manifest.json is malformed, and the simulator's response to a malformed
+            // layout is to mount none of the package's files - while still reading the compiled
+            // panel component, which it finds by scanning. That is exactly the symptom this cost a
+            // day of guessing at: a toolbar button that appears and opens an empty window, with no
+            // error logged anywhere, because from the simulator's point of view nothing failed.
+            // Confirmed against the two packages on the test machine that genuinely work: neither
+            // fsdreamteam-gsx-pro nor fsltl-traffic-injector lists manifest.json in its layout.
+            if (string.Equals(relative, "layout.json", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(relative, "manifest.json", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

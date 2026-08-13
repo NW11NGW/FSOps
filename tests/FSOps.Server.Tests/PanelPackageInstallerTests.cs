@@ -171,8 +171,21 @@ public sealed class PanelPackageInstallerTests : IDisposable
         Assert.Equal(first.InstalledVersion, second.InstalledVersion);
     }
 
+    /// <summary>
+    /// The layout lists the package's CONTENT and neither of its two metadata files. This test used
+    /// to assert the opposite for manifest.json, and that false premise is what let the panel ship
+    /// broken for a day: a layout naming manifest.json is malformed, and the simulator's answer to a
+    /// malformed layout is to mount none of the package's files at all - while still finding the
+    /// compiled panel component by scanning, so a toolbar button appears and opens an empty window
+    /// with nothing logged anywhere. Every theory that fit those symptoms was wrong in turn because
+    /// the one thing that could be checked against a working package never was.
+    /// <para>
+    /// Pinned against the two packages on the machine this was diagnosed on that genuinely work:
+    /// neither fsdreamteam-gsx-pro nor fsltl-traffic-injector lists manifest.json in its layout.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void InstallOrRepair_GeneratesLayoutJson_IncludingManifest_ExcludingItself()
+    public void InstallOrRepair_GeneratesLayoutJson_ListingContentOnly_ExcludingBothMetadataFiles()
     {
         var result = PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
 
@@ -185,9 +198,14 @@ public sealed class PanelPackageInstallerTests : IDisposable
             .Select(e => e.GetProperty("path").GetString())
             .ToList();
 
-        Assert.Contains("manifest.json", paths);
-        Assert.Contains("html_ui/InGamePanels/FSOpsPanel/FSOpsPanel.html", paths);
+        Assert.DoesNotContain("manifest.json", paths);
         Assert.DoesNotContain("layout.json", paths);
+
+        // ...and it does still list the content, so excluding the metadata cannot be satisfied by
+        // excluding everything. (This fixture's template carries the html_ui files only; the tests
+        // that install from the real shipped template cover the compiled component.)
+        Assert.Contains("html_ui/InGamePanels/FSOpsPanel/FSOpsPanel.html", paths);
+        Assert.NotEmpty(paths);
     }
 
     [Fact]
