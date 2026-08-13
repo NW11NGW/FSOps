@@ -5,6 +5,7 @@ import {
   clearDay,
   draftLegFromOption,
   draftWeekToInput,
+  findLegsOrphanedByRemoval,
   findOverlappingLeg,
   removeLegFromDay,
   scheduleToDraftWeek,
@@ -182,6 +183,153 @@ describe('draftLegFromOption', () => {
     const a = draftLegFromOption(option, '08:15', 90)
     const b = draftLegFromOption(option, '08:15', 90)
     expect(a.id).not.toBe(b.id)
+  })
+})
+
+describe('findLegsOrphanedByRemoval', () => {
+  it('returns [] when the day or the leg being removed does not exist', () => {
+    expect(findLegsOrphanedByRemoval({}, 1, 'nope')).toEqual([])
+    const week: DraftWeek = { 1: { dayOfWeek: 1, fleetAircraftId: 'ac-1', registration: 'G-ABCD', legs: [] } }
+    expect(findLegsOrphanedByRemoval(week, 1, 'nope')).toEqual([])
+  })
+
+  it('orphans the return half of a simple out-and-back when the outbound is removed', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'ret', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const orphaned = findLegsOrphanedByRemoval(week, 1, 'out', 'EGLL')
+    expect(orphaned).toEqual([{ day: 1, leg: week[1]!.legs[1], aircraftActuallyAt: 'EGLL' }])
+  })
+
+  it('orphans a leg SEVERAL positions later, not just the one immediately after the gap', () => {
+    // A: EGLL -> EGKK, B: EGKK -> EGPH (removed), C: EGPH -> EGCC, D: EGCC -> EGLL.
+    // C's own departure (EGPH) still matches what would have been B's arrival on paper, and D's
+    // departure (EGCC) still matches C's own arrival - so a check that only looked at the pair
+    // adjacent to the removal would flag nothing beyond C. The aircraft is really still stuck at
+    // EGKK (A's arrival) once B is gone, so BOTH C and D are unflyable as scheduled.
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'a', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'b', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGPH' }),
+          leg({ id: 'c', departureTimeUtc: '12:00:00', blockMinutes: 60, departureIcao: 'EGPH', arrivalIcao: 'EGCC' }),
+          leg({ id: 'd', departureTimeUtc: '14:00:00', blockMinutes: 60, departureIcao: 'EGCC', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const orphaned = findLegsOrphanedByRemoval(week, 1, 'b', 'EGLL')
+    expect(orphaned.map((o) => o.leg.id)).toEqual(['c', 'd'])
+    expect(orphaned.every((o) => o.aircraftActuallyAt === 'EGKK')).toBe(true)
+  })
+
+  it('reports nothing when the removed leg has no successor depending on it', () => {
+    // Two independent out-and-backs on the same aircraft, different days. Removing the SECOND
+    // rotation's return leg leaves nothing later in the week for this aircraft to strand.
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'a', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'b', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+      2: {
+        dayOfWeek: 2,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'c', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGPH' }),
+          leg({ id: 'd', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGPH', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    expect(findLegsOrphanedByRemoval(week, 2, 'd', 'EGLL')).toEqual([])
+  })
+
+  it('reports nothing when the aircraft is already recorded at the remaining leg\'s departure', () => {
+    // Same shape as the simple out-and-back case above, but this time the aircraft's real recorded
+    // location IS the away airport (e.g. it genuinely ended an earlier week there) - the return is
+    // actually flyable as drafted, so nothing should be reported.
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'ret', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    expect(findLegsOrphanedByRemoval(week, 1, 'out', 'EGKK')).toEqual([])
+  })
+
+  it('trusts the first remaining entry when the aircraft location is unknown, but still catches breaks further in', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'a', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGPH' }),
+          leg({ id: 'gap', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGPH', arrivalIcao: 'EGCC' }),
+          leg({ id: 'broken', departureTimeUtc: '12:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+        ],
+      },
+    }
+    // Removing 'gap' leaves 'a' (EGKK -> EGPH, never anchored against any known real location - not
+    // flagged) followed by 'broken' (departs EGLL, but 'a' really only gets the aircraft to EGPH).
+    const orphaned = findLegsOrphanedByRemoval(week, 1, 'gap')
+    expect(orphaned.map((o) => o.leg.id)).toEqual(['broken'])
+    expect(orphaned[0]?.aircraftActuallyAt).toBe('EGPH')
+  })
+
+  it('never considers legs flown by a different aircraft', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' })],
+      },
+      2: {
+        dayOfWeek: 2,
+        fleetAircraftId: 'ac-2',
+        registration: 'G-WXYZ',
+        legs: [leg({ id: 'other', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL', routeId: 'route-2' })],
+      },
+    }
+    expect(findLegsOrphanedByRemoval(week, 1, 'out', 'EGLL')).toEqual([])
+  })
+
+  it('does not mutate the input week', () => {
+    const week: DraftWeek = {
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+          leg({ id: 'ret', departureTimeUtc: '10:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+    const snapshot = JSON.parse(JSON.stringify(week))
+    findLegsOrphanedByRemoval(week, 1, 'out', 'EGLL')
+    expect(week).toEqual(snapshot)
   })
 })
 

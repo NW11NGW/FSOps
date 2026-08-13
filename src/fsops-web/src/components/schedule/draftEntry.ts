@@ -131,6 +131,111 @@ export function removeLegFromDay(week: DraftWeek, day: DayOfWeek, legId: string)
   return { ...week, [day]: { ...existing, legs: existing.legs.filter((l) => l.id !== legId) } }
 }
 
+/** One leg left stranded by a removal elsewhere in the week - not the leg being removed itself. */
+export interface OrphanedLeg {
+  day: DayOfWeek
+  leg: DraftLeg
+  /** Where the aircraft will actually be when this leg is due to depart, once every leg earlier in
+   *  the week (chronologically, on this same aircraft) that still connects has been accounted for -
+   *  NOT necessarily `aircraftLocationIcao`, since legs before the point of breakage still fly
+   *  normally and carry the aircraft along the way before the break is reached. */
+  aircraftActuallyAt: string
+}
+
+/** "HH:mm:ss" plus a day-of-week, as one number the whole week can be sorted by - same construction
+ *  as PilotScheduleValidator.AbsoluteWeekMinute on the backend (DayOfWeek's .NET numbering, 0 =
+ *  Sunday, is shared end to end - see types/schedule.ts's own remark), so this orders identically to
+ *  how the backend orders the same chain. */
+function absoluteWeekMinute(day: DayOfWeek, departureTimeUtc: string): number {
+  return day * 1440 + timeToMinutes(departureTimeUtc)
+}
+
+/** ICAO comparison the same way the backend does it (OrdinalIgnoreCase) - every ICAO in this app is
+ *  already upper-case by the time it reaches the draft, but a helper that assumed that and broke
+ *  silently on the one place it wasn't would be a worse bug than the one this file exists to catch. */
+function icaoEquals(a: string, b: string): boolean {
+  return a.toUpperCase() === b.toUpperCase()
+}
+
+/**
+ * What removing one leg does to every OTHER leg on the same aircraft this week - not just the leg
+ * immediately next to it. Real-use defect, 2026-08-13: a player scheduled an out-and-back, deleted
+ * only the outbound, and the return silently stayed in the draft grid looking scheduled, even
+ * though the aircraft was never repositioned to fly it. The backend's save-time validator already
+ * refuses this outright (PilotScheduleValidator's first-leg-location anchor, under
+ * `requireWeekClosure: true`) - the database was never at risk - but the player only finds out
+ * after clicking Save, with a conflict about "the first leg of the week" that reads as a strange
+ * new error rather than "you just deleted the wrong half of a pair." This is the draft-time half of
+ * that fix: surface the SAME consequence the moment the player asks to remove a leg, before Save is
+ * ever clicked, so the choice - and its wording - can live next to the delete button instead.
+ *
+ * Deliberately returns data, not a message: what got orphaned and where the aircraft would actually
+ * be, never a sentence. The wording belongs to whichever component wires this up
+ * (ScheduleBuilder.tsx / LegDialog.tsx), not to this pure helper - and the rule already established
+ * elsewhere in this feature applies here too: tell the player what will happen and let them choose,
+ * never cascade the removal silently.
+ *
+ * <b>Simulates the whole chain, not just the adjacent pair.</b> A leg two or three positions after
+ * the one being removed can be orphaned even though its OWN departure/arrival still lines up with
+ * its immediate predecessor on paper - because that predecessor itself never actually got there.
+ * This walks the aircraft's whole week in departure order (across every duty day it flies, not just
+ * the day the removal happened on), tracking where the aircraft would genuinely be at each point
+ * (starting from `aircraftLocationIcao`, when known), and reports every leg whose departure does not
+ * match that real, carried-forward position - not just the leg immediately following the gap.
+ * Mirrors how VirtualFlightResolverService actually behaves at wall-clock resolution time: a leg
+ * that can't be flown is skipped and the aircraft stays exactly where it was, so every later leg is
+ * checked against that SAME frozen position until - if ever - one happens to depart from it.
+ *
+ * <b>Scope.</b> This is a same-week, same-aircraft domino check only - it does not evaluate whether
+ * the week closes on itself (the last leg connecting back to the first for next week), which is
+ * what the backend's `requireWeekClosure: true` wrap check is for. That's a whole-week property with
+ * its own good error message at save time; this helper is about the immediate, in-view consequence
+ * of one delete, not a full re-validation of the draft.
+ *
+ * @param aircraftLocationIcao The aircraft's actual recorded position (`FleetAircraftLite.locationIcao`),
+ * when known. Anchors the earliest entry left in the week for this aircraft - a remainder that
+ * already departs from here is never reported, even for the immediate half of an out-and-back (the
+ * aircraft may genuinely already be at the away airport, e.g. from an earlier week's real flying).
+ * When omitted, the anchor is simply unknown: the first remaining entry is trusted by default (never
+ * itself reported), and only breaks this removal causes further into the chain are still detected.
+ */
+export function findLegsOrphanedByRemoval(week: DraftWeek, day: DayOfWeek, legId: string, aircraftLocationIcao?: string): OrphanedLeg[] {
+  const targetDay = week[day]
+  const removedLeg = targetDay?.legs.find((l) => l.id === legId)
+  if (!targetDay || !removedLeg) return []
+
+  const fleetAircraftId = targetDay.fleetAircraftId
+
+  // Every OTHER leg on the SAME aircraft, anywhere in the week - continuity is a whole-aircraft
+  // property, not a single-day one (one aircraft can carry more than one duty day across the week).
+  // Excludes the leg being removed and every day flown by a different aircraft.
+  const remaining: { day: DayOfWeek; leg: DraftLeg }[] = []
+  for (const candidateDay of Object.values(week)) {
+    if (!candidateDay || candidateDay.fleetAircraftId !== fleetAircraftId) continue
+    for (const candidateLeg of candidateDay.legs) {
+      if (candidateDay.dayOfWeek === day && candidateLeg.id === legId) continue
+      remaining.push({ day: candidateDay.dayOfWeek, leg: candidateLeg })
+    }
+  }
+  remaining.sort((a, b) => absoluteWeekMinute(a.day, a.leg.departureTimeUtc) - absoluteWeekMinute(b.day, b.leg.departureTimeUtc))
+
+  const orphaned: OrphanedLeg[] = []
+  let position = aircraftLocationIcao ?? remaining[0]?.leg.departureIcao ?? null
+
+  for (const entry of remaining) {
+    if (position !== null && !icaoEquals(entry.leg.departureIcao, position)) {
+      orphaned.push({ day: entry.day, leg: entry.leg, aircraftActuallyAt: position })
+      // Frozen, not advanced: a leg that can't fly never moves the aircraft, so the next entry is
+      // checked against this SAME position - see this function's own doc for why that mirrors the
+      // resolver rather than the backend validator's local pairwise check.
+      continue
+    }
+    position = entry.leg.arrivalIcao
+  }
+
+  return orphaned
+}
+
 export function updateLegTime(week: DraftWeek, day: DayOfWeek, legId: string, departureTimeUtc: string): DraftWeek {
   const existing = week[day]
   if (!existing) return week
