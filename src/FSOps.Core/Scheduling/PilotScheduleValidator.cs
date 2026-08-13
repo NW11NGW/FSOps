@@ -14,6 +14,18 @@ public sealed record PilotScheduleEntryInput(Guid PilotId, DayOfWeek DayOfWeek, 
 
 public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string> Conflicts, IReadOnlyList<ContinuityGap> ContinuityGaps)
 {
+    /// <summary>
+    /// Things worth telling the player that are deliberately NOT reasons to refuse - a valid result
+    /// can carry these, and a caller is free to ignore them entirely. Introduced for exactly one
+    /// case (see <see cref="PilotScheduleValidator.ValidateAircraftChains"/>): a saved rolling
+    /// pattern whose aircraft is not currently standing where the pattern starts. That used to be a
+    /// hard conflict, which made a schedule permanently unsavable whenever its own aircraft was away
+    /// or in the air - but saying nothing at all would be worse, because under True-life every
+    /// occurrence the aircraft cannot reach is a cancellation fee. So it is said once, at save, and
+    /// blocks nothing.
+    /// </summary>
+    public IReadOnlyList<string> Advisories { get; init; } = Array.Empty<string>();
+
     public static ScheduleValidationResult Ok { get; } = new(true, Array.Empty<string>(), Array.Empty<ContinuityGap>());
 }
 
@@ -79,18 +91,36 @@ public sealed record ContinuityGap(
 /// builder unusable while a player is still filling it in (clarified 2026-08-08).
 /// </para>
 /// <para>
-/// <b>The first leg of the pattern has to depart from where the aircraft actually is.</b> Geographic
-/// continuity between consecutive legs (above) says nothing about where an aircraft's very first
-/// scheduled leg of the week departs from - a chain that closes on itself perfectly can still start
-/// nowhere near the airframe's recorded <see cref="FleetAircraft.LocationIcao"/>, which produces a
-/// week that can never actually be flown as drafted. <see cref="ValidateAircraftChains"/> anchors the
-/// chronologically earliest entry per aircraft to <c>LocationIcao</c> for exactly this reason. For the
+/// <b>While a week is being BUILT, its first leg has to depart from where the aircraft actually is.</b>
+/// Geographic continuity between consecutive legs (above) says nothing about where an aircraft's very
+/// first scheduled leg of the week departs from, so <see cref="ValidateAircraftChains"/> anchors the
+/// chronologically earliest entry per aircraft to <see cref="FleetAircraft.LocationIcao"/>. For the
 /// first duty day an aircraft flies this week that anchor is the aircraft's own recorded location; for
 /// every day after that, it is wherever the previous day's chain left the aircraft, which the ordinary
 /// pairwise continuity check already guarantees - so this needs no day-by-day special-casing, only
-/// the one entry with nothing before it. Unlike the wrap/closure check, this is never gated on
-/// <see cref="requireWeekClosure"/>: it is knowable the moment a single leg is proposed (the
-/// leg-options endpoint's own case), not only once the whole week closes.
+/// the one entry with nothing before it.
+/// </para>
+/// <para>
+/// <b>It is a build-time check, not a permanent property of a saved pattern</b> (user's decision,
+/// 2026-08-13: "the schedule should be for the week rolling forever until it's modified"). It fires
+/// as a hard conflict only when <see cref="requireWeekClosure"/> is <c>false</c> - the leg-options
+/// endpoint's case, where the player is choosing a leg right now and "the aircraft isn't there" is
+/// real, actionable guidance. When closure IS required - a complete rolling week being saved - the
+/// wrap check has already proved the pattern is a closed cycle, and this anchor would add only "and
+/// the airframe happens to be standing at the cycle's start <i>today</i>": a fact about this minute,
+/// not about the pattern. Enforcing it there made a schedule permanently unsavable the moment its own
+/// aircraft flew somewhere and stayed - which happens every time a virtual pilot flies - and, because
+/// chains are validated across every pilot, it also blocked OTHER pilots' saves over an aircraft they
+/// never touch (real-use defect, 2026-08-13). So at save it becomes an entry in
+/// <see cref="ScheduleValidationResult.Advisories"/> instead: said once, blocking nothing. Nothing
+/// about resolution time changes - <c>VirtualFlightResolverService</c> still refuses to fly a leg
+/// whose aircraft is elsewhere, with its own stated reason, exactly as strictly as before.
+/// </para>
+/// <para>
+/// <b>An aircraft in the air is not "at" anywhere.</b> While <see cref="FleetAircraft.Status"/> is
+/// <see cref="FleetAircraftStatus.InFlight"/>, <c>LocationIcao</c> is the departure airport of a
+/// sector in progress, not a position - so the anchor is skipped entirely rather than compared
+/// against a value that is knowably stale.
 /// </para>
 /// </summary>
 public static class PilotScheduleValidator
@@ -229,10 +259,15 @@ public static class PilotScheduleValidator
         }
 
         var continuityGaps = new List<ContinuityGap>();
-        ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, continuityGaps, requireWeekClosure);
+        var advisories = new List<string>();
+        ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, continuityGaps, advisories, requireWeekClosure);
         ValidatePilotDutyAndRest(entries, blockMinutesByLeg, config, conflicts, requireWeekClosure);
 
-        return conflicts.Count == 0 ? ScheduleValidationResult.Ok : new ScheduleValidationResult(false, conflicts, continuityGaps);
+        // Advisories ride along with a valid result too - they are not refusals, so they must never
+        // change IsValid (see ScheduleValidationResult.Advisories' own doc).
+        return conflicts.Count == 0
+            ? ScheduleValidationResult.Ok with { Advisories = advisories }
+            : new ScheduleValidationResult(false, conflicts, continuityGaps) { Advisories = advisories };
     }
 
     /// <summary>
@@ -286,6 +321,7 @@ public static class PilotScheduleValidator
         IReadOnlyCollection<(string DepartureIcao, string ArrivalIcao)> existingRoutePairs,
         List<string> conflicts,
         List<ContinuityGap> continuityGaps,
+        List<string> advisories,
         bool requireWeekClosure)
     {
         foreach (var group in entries.GroupBy(e => e.FleetAircraftId))
@@ -302,24 +338,46 @@ public static class PilotScheduleValidator
                 .ToList();
 
             // The first leg of the pattern (chronologically earliest across the whole week, for
-            // THIS aircraft) must depart from where the aircraft actually is - not a second
+            // THIS aircraft) is anchored to where the aircraft actually is - not a second
             // mechanism, just the same continuity rule this loop already enforces between every
-            // other consecutive pair, anchored once at the start. This is deliberately NOT gated on
-            // requireWeekClosure: it isn't a whole-week property like the wrap check below - it's
-            // knowable the moment a single candidate leg is proposed, which is exactly the
-            // leg-options endpoint's case (a week under construction, one aircraft, its very first
-            // leg). Every subsequent day's starting point is whatever the previous day's chain left
-            // the aircraft at, which the pairwise checks below already guarantee - only the very
-            // first entry has no prior leg to inherit a location from, so only it needs anchoring
-            // to the aircraft's own recorded LocationIcao. Combined with the wrap/closure check,
-            // this also guarantees the aircraft is back where it started by week's end.
+            // other consecutive pair, anchored once at the start. Every subsequent day's starting
+            // point is whatever the previous day's chain left the aircraft at, which the pairwise
+            // checks below already guarantee - only the very first entry has no prior leg to
+            // inherit a location from.
+            //
+            // Whether that anchor REFUSES or merely informs depends on what is being asked, and
+            // this class's own doc explains why at length: building a week (requireWeekClosure
+            // false) it is a hard refusal, because the player is picking a leg right now and can
+            // act on it; saving a complete rolling week (closure true) it is an advisory, because
+            // a pattern that repeats forever must not be governed by where the airframe happens to
+            // be standing this minute. An aircraft mid-sector is skipped altogether - its recorded
+            // location is knowably stale rather than wrong.
             var firstRoute = routesById[ordered[0].Entry.RouteId];
-            if (!string.Equals(firstRoute.DepartureIcao, aircraft.LocationIcao, StringComparison.OrdinalIgnoreCase))
+            if (aircraft.Status != FleetAircraftStatus.InFlight &&
+                !string.Equals(firstRoute.DepartureIcao, aircraft.LocationIcao, StringComparison.OrdinalIgnoreCase))
             {
-                conflicts.Add(
-                    $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern's first leg departs " +
-                    $"{firstRoute.DepartureIcao} ({FormatSlot(ordered[0].Entry.DayOfWeek, ordered[0].Entry.DepartureTimeUtc)}) - " +
-                    "the first leg of the week has to depart from where the aircraft actually is.");
+                var slot = FormatSlot(ordered[0].Entry.DayOfWeek, ordered[0].Entry.DepartureTimeUtc);
+                if (requireWeekClosure)
+                {
+                    // Deliberately no day/time here, unlike the conflict below. The anchor entry is
+                    // the earliest on this AIRCRAFT across every pilot, so the slot it falls in can
+                    // belong to somebody else's duty day - and quoting a Monday 08:00 the reader
+                    // cannot find anywhere on their own screen is the exact species of unactionable
+                    // message this whole change exists to remove. Where the aircraft is, and where
+                    // the pattern starts, is the whole of what they can act on.
+                    advisories.Add(
+                        $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern starts from " +
+                        $"{firstRoute.DepartureIcao}. The schedule is saved and keeps repeating - it will start " +
+                        $"flying as soon as {aircraft.Registration} is back at {firstRoute.DepartureIcao}, and any leg it " +
+                        "misses until then is reported on the pilot's flight history.");
+                }
+                else
+                {
+                    conflicts.Add(
+                        $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern's first leg departs " +
+                        $"{firstRoute.DepartureIcao} ({slot}) - " +
+                        "the first leg of the week has to depart from where the aircraft actually is.");
+                }
             }
 
             for (var i = 0; i < ordered.Count; i++)

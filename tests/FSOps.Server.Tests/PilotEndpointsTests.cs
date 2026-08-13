@@ -1097,6 +1097,225 @@ public class PilotEndpointsTests
         Assert.Equal(2, day.Legs.Count);
     }
 
+    // ---- Real-use defect, 2026-08-13: a conflict naming an aircraft that isn't in the schedule ----
+
+    /// <summary>
+    /// The reported bug, end to end. One virtual pilot has a saved rolling week on G-ONEX; that
+    /// aircraft has since been left at EGPF, so its saved pattern no longer starts where it stands.
+    /// A SECOND pilot then saves a completely separate week on a completely separate airframe - and
+    /// used to be refused, with a conflict naming G-ONEX, an aircraft appearing nowhere in the week
+    /// they were looking at. Airline-wide VALIDATION is right and unchanged; airline-wide REPORTING
+    /// was the defect.
+    /// </summary>
+    [Fact]
+    public async Task SaveSchedule_AnotherPilotsAircraftIsOutOfPosition_DoesNotBlockThisPilotsUnrelatedWeek()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+
+        var firstAircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, firstAircraftId);
+        var secondAircraftId = await LeaseSecondAircraftAsync(ctx, catalog);
+
+        var dave = await HirePilotAsync(ctx, catalog);
+        var jenny = await SeedExtraPilotAsync(ctx, "Jenny");
+
+        // Dave's week saves cleanly while G-ONEX is still at EGGD.
+        var daveWeek = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(1, firstAircraftId, new[]
+            {
+                new DutyLegRequest("08:00:00", outbound.Id),
+                new DutyLegRequest("12:00:00", inbound.Id),
+            }),
+        });
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(
+            await PilotEndpoints.SaveScheduleAsync(dave.Id, daveWeek, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None)));
+
+        // ...then it flies and is left somewhere else, exactly as happens whenever a pilot flies.
+        var firstAircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == firstAircraftId);
+        firstAircraft.LocationIcao = "EGPF";
+        await ctx.Db.SaveChangesAsync();
+
+        // Jenny's week: different aircraft, different times, nothing to do with G-ONEX.
+        var jennyWeek = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(3, secondAircraftId, new[]
+            {
+                new DutyLegRequest("08:00:00", outbound.Id),
+                new DutyLegRequest("12:00:00", inbound.Id),
+            }),
+        });
+
+        var result = await PilotEndpoints.SaveScheduleAsync(jenny.Id, jennyWeek, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+        var saved = await ctx.Db.PilotScheduleEntries.CountAsync(e => e.PilotScheduleId == ctx.Db.PilotSchedules.Single(s => s.PilotId == jenny.Id).Id);
+        Assert.Equal(2, saved);
+    }
+
+    /// <summary>
+    /// The invariant the user actually asked for, stated directly: whatever a save refuses, every
+    /// sentence it refuses with must name an aircraft that is in the week being saved. A conflict
+    /// about an airframe the player cannot see is unactionable no matter how true it is.
+    /// </summary>
+    [Fact]
+    public async Task SaveSchedule_EveryReportedConflict_NamesAnAircraftPresentInTheSubmittedWeek()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var elsewhere = await SeedRouteAsync(ctx, "EGSS", "EGPF");
+
+        var firstAircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, firstAircraftId);
+        var secondAircraftId = await LeaseSecondAircraftAsync(ctx, catalog);
+
+        var dave = await HirePilotAsync(ctx, catalog);
+        var jenny = await SeedExtraPilotAsync(ctx, "Jenny");
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(await PilotEndpoints.SaveScheduleAsync(
+            dave.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(1, firstAircraftId, new[]
+                {
+                    new DutyLegRequest("08:00:00", outbound.Id),
+                    new DutyLegRequest("12:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None)));
+
+        var firstAircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == firstAircraftId);
+        firstAircraft.LocationIcao = "EGPF";
+        await ctx.Db.SaveChangesAsync();
+
+        // Jenny's week is genuinely broken on its OWN aircraft (lands EGPH, next leg departs EGSS),
+        // so it must still be refused - but only ever with sentences about G-TEST2.
+        var result = await PilotEndpoints.SaveScheduleAsync(
+            jenny.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(3, secondAircraftId, new[]
+                {
+                    new DutyLegRequest("08:00:00", outbound.Id),
+                    new DutyLegRequest("12:00:00", elsewhere.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
+        var value = OkValueOf<ConflictDto>(result);
+        Assert.NotEmpty(value.Conflicts);
+        // "G-TEST " with the trailing space, because the OTHER aircraft in this fixture is
+        // "G-TEST2" - a bare substring check would reject the very conflicts this save SHOULD report.
+        Assert.All(value.Conflicts, c => Assert.DoesNotContain("G-TEST ", c));
+        Assert.Contains(value.Conflicts, c => c.Contains("G-TEST2"));
+    }
+
+    /// <summary>
+    /// The other half of the differential, and the thing that stops it becoming "anything already
+    /// broken is unreportable forever": a save that genuinely makes ANOTHER pilot's chain worse is
+    /// still refused, because the conflict it produces is not one the baseline already had.
+    /// </summary>
+    [Fact]
+    public async Task SaveSchedule_DoubleBookingAnAircraftAnotherPilotAlreadyFlies_IsStillRefused()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var dave = await HirePilotAsync(ctx, catalog);
+        var jenny = await SeedExtraPilotAsync(ctx, "Jenny");
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(await PilotEndpoints.SaveScheduleAsync(
+            dave.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(1, aircraftId, new[]
+                {
+                    new DutyLegRequest("08:00:00", outbound.Id),
+                    new DutyLegRequest("12:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None)));
+
+        // Jenny takes the SAME airframe at the SAME minute - a brand-new conflict, not a pre-existing one.
+        var result = await PilotEndpoints.SaveScheduleAsync(
+            jenny.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(1, aircraftId, new[]
+                {
+                    new DutyLegRequest("08:00:00", outbound.Id),
+                    new DutyLegRequest("12:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(result));
+        Assert.NotEmpty(OkValueOf<ConflictDto>(result).Conflicts);
+    }
+
+    /// <summary>
+    /// A rolling pattern whose own aircraft has moved away saves fine (user's ruling, 2026-08-13)
+    /// but is not silently accepted: the save comes back with an advisory naming that aircraft, so
+    /// the player knows it will not start flying until the airframe is back. Under True-life the
+    /// alternative to saying this is a cancellation fee every occurrence with nothing to explain it.
+    /// </summary>
+    [Fact]
+    public async Task SaveSchedule_OwnAircraftOutOfPosition_SavesAndReturnsAnAdvisoryAboutThatAircraft()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+        var pilot = await HirePilotAsync(ctx, catalog);
+
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraftId);
+        aircraft.LocationIcao = "EGPF";
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await PilotEndpoints.SaveScheduleAsync(
+            pilot.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(1, aircraftId, new[]
+                {
+                    new DutyLegRequest("08:00:00", outbound.Id),
+                    new DutyLegRequest("12:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+        var value = OkValueOf<SavedScheduleDto>(result);
+        Assert.Contains(value.Advisories, a => a.Contains("G-TEST") && a.Contains("EGPF") && a.Contains("EGGD"));
+    }
+
+    private static async Task<Pilot> SeedExtraPilotAsync(RouteTestContext ctx, string name)
+    {
+        var pilot = new Pilot
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            Name = name,
+            IsPlayer = false,
+            MonthlySalary = 9000m,
+            SkillRating = 50,
+            Status = PilotStatus.Available,
+            CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.Pilots.Add(pilot);
+        await ctx.Db.SaveChangesAsync();
+        return pilot;
+    }
+
     private static async Task<Pilot> HirePilotAsync(RouteTestContext ctx, EconomyConfigCatalog catalog)
     {
         var result = await PilotEndpoints.HireAsync(new HirePilotRequest("Test FO"), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
@@ -1171,6 +1390,8 @@ public class PilotEndpointsTests
     private sealed record DutyLegDto(Guid Id, string DepartureTimeUtc, Guid RouteId, string? DepartureIcao, string? ArrivalIcao, string? FlightNumber, int? BlockMinutes);
 
     private sealed record ConflictDto(string Error, List<string> Conflicts);
+
+    private sealed record SavedScheduleDto(Guid PilotId, List<DutyDayDto> DutyDays, bool AutoSuspendOnMaintenance, List<string> Advisories);
 
     private sealed record AircraftOptionsDto(List<AircraftOptionDto> Options);
 

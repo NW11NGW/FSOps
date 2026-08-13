@@ -39,10 +39,11 @@ public class PilotScheduleValidatorTests
     /// test that isn't specifically about the first-leg-location rule. Pass
     /// <paramref name="locationIcao"/> to make it relevant (see the
     /// Validate_FirstLegMustDepartFromWhereTheAircraftIs_* tests below).</summary>
-    private static Dictionary<Guid, FleetAircraft> Fleet(bool reserved = false, string locationIcao = "EGGD") => new()
+    private static Dictionary<Guid, FleetAircraft> Fleet(
+        bool reserved = false, string locationIcao = "EGGD", FleetAircraftStatus status = FleetAircraftStatus.Active) => new()
     {
-        [AircraftX] = new FleetAircraft { Id = AircraftX, Registration = "G-ONEX", ReservedForPlayer = reserved, AircraftTypeId = NarrowbodyTypeId, LocationIcao = locationIcao },
-        [AircraftY] = new FleetAircraft { Id = AircraftY, Registration = "G-TWOY", ReservedForPlayer = false, AircraftTypeId = NarrowbodyTypeId, LocationIcao = locationIcao },
+        [AircraftX] = new FleetAircraft { Id = AircraftX, Registration = "G-ONEX", ReservedForPlayer = reserved, AircraftTypeId = NarrowbodyTypeId, LocationIcao = locationIcao, Status = status },
+        [AircraftY] = new FleetAircraft { Id = AircraftY, Registration = "G-TWOY", ReservedForPlayer = false, AircraftTypeId = NarrowbodyTypeId, LocationIcao = locationIcao, Status = status },
     };
 
     /// <summary>Keyed by AircraftTypeId, as the validator's range and runway checks expect. 3,300 nm
@@ -645,12 +646,21 @@ public class PilotScheduleValidatorTests
     // ---- K36: the first leg of the pattern has to depart from where the aircraft actually is ----
 
     [Fact]
-    public void Validate_FirstLegDoesNotDepartFromWhereTheAircraftIs_IsRejected()
+    public void Validate_SavedRollingWeek_AircraftAwayFromWhereThePatternStarts_IsAllowedWithAnAdvisory()
     {
-        // Real-use shape: the aircraft is sitting at EGPF, but the drafted week's first (and only,
-        // chronologically earliest) leg on it departs EGGD - a chain that closes on itself perfectly
-        // (EGGD -> EGPH -> EGGD) is still unflyable because the aircraft can never reach EGGD to
-        // start it in the first place.
+        // Changed 2026-08-13 on the user's explicit ruling: "the schedule should be for the week
+        // rolling forever until it's modified". This test previously asserted the opposite - that a
+        // complete week is REFUSED when its aircraft is elsewhere - and it is being updated because
+        // the requirement itself moved, in the user's own words, not to make anything pass.
+        //
+        // Why refusing was wrong: an aircraft moves every time a virtual pilot flies, so a pattern
+        // that was legal when saved became permanently unsavable the moment it was used - and,
+        // because chains are validated airline-wide, it blocked OTHER pilots' saves too. The wrap
+        // check has already proved this chain is a closed cycle (EGGD -> EGPH -> EGGD); where the
+        // airframe happens to be standing today says nothing about the pattern.
+        //
+        // It is not silently allowed either: the advisory says so once, and the resolver still
+        // refuses to fly any individual leg the aircraft cannot reach.
         var entries = new[]
         {
             new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
@@ -659,8 +669,49 @@ public class PilotScheduleValidatorTests
 
         var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(locationIcao: "EGPF"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
 
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Conflicts);
+        Assert.Contains(result.Advisories, a => a.Contains("G-ONEX") && a.Contains("EGPF") && a.Contains("EGGD"));
+    }
+
+    [Fact]
+    public void Validate_SavedRollingWeek_AircraftInFlight_SaysNothingAtAll()
+    {
+        // An aircraft mid-sector is not "at" anywhere - LocationIcao is the departure airport of the
+        // leg in progress, which is knowably stale rather than a position. Comparing a rolling
+        // pattern against it produces exactly the nonsense the user hit, so the anchor is skipped
+        // outright: no conflict AND no advisory.
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(
+            entries, Routes(), Fleet(locationIcao: "EGPF", status: FleetAircraftStatus.InFlight), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Conflicts);
+        Assert.Empty(result.Advisories);
+    }
+
+    [Fact]
+    public void Validate_RemovingHalfOfAnOutAndBack_StillRefused_ByClosureAloneRatherThanTheAnchor()
+    {
+        // The protection the first-leg anchor used to provide at save time, proved to be carried by
+        // the wrap/closure check on its own. Deleting either half of a round trip leaves a chain
+        // that cannot close on itself, so it is still refused - even with the aircraft standing
+        // exactly where the surviving leg departs from, which is the case the anchor would have
+        // waved through anyway. Pinned by a test so this stays a guarantee rather than an argument.
+        var outboundOnly = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(outboundOnly, Routes(), Fleet(locationIcao: "EGGD"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
         Assert.False(result.IsValid);
-        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("EGPF") && c.Contains("EGGD") && c.Contains("first leg"));
+        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("next week"));
     }
 
     [Fact]

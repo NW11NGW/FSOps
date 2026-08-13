@@ -16,7 +16,12 @@ import type {
 export type ScheduleStatus = 'loading' | 'ready' | 'error'
 
 export type SaveScheduleResult =
-  | { ok: true; dutyDays: ScheduleDutyDay[]; autoSuspendOnMaintenance: boolean }
+  /** `advisories` are things worth knowing about a schedule that saved perfectly well - never
+   *  reasons it failed, and never a reason to keep the player's edits from being applied. Today
+   *  there is exactly one: the pattern's aircraft is not currently standing where the pattern
+   *  starts, so it will not begin flying until the airframe is back. Render as a notice, not an
+   *  error; empty in the overwhelmingly common case. */
+  | { ok: true; dutyDays: ScheduleDutyDay[]; autoSuspendOnMaintenance: boolean; advisories: string[] }
   | { ok: false; error: string; conflicts: string[] }
 
 interface UseScheduleResult {
@@ -59,8 +64,15 @@ async function putSchedule(pilotId: string, dutyDays: DutyDayInput[], autoSuspen
   }
 
   if (response.ok) {
-    const schedule = (payload ?? { pilotId, dutyDays: [], autoSuspendOnMaintenance: true }) as PilotSchedule
-    return { ok: true, dutyDays: schedule.dutyDays, autoSuspendOnMaintenance: schedule.autoSuspendOnMaintenance }
+    const schedule = (payload ?? { pilotId, dutyDays: [], autoSuspendOnMaintenance: true }) as PilotSchedule & { advisories?: unknown }
+    return {
+      ok: true,
+      dutyDays: schedule.dutyDays,
+      autoSuspendOnMaintenance: schedule.autoSuspendOnMaintenance,
+      // Tolerant of the field being absent so an older server (or the not-yet-saved default above)
+      // simply means "nothing to say", never a crash on a successful save.
+      advisories: Array.isArray(schedule.advisories) ? (schedule.advisories as string[]) : [],
+    }
   }
 
   const record = (payload && typeof payload === 'object' ? payload : {}) as Partial<ScheduleConflictResponse>

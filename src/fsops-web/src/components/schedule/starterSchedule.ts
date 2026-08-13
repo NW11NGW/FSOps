@@ -16,9 +16,16 @@ import { minutesToTime, timeToMinutes } from '@/types/schedule'
  * relaxes the real duty/rest/continuity/range/runway rules - it only ever accepts what the backend
  * already calls legal, which is what keeps the result always immediately saveable.
  *
- * Weekday mornings, same as before: every chain this generator proposes starts at {@link
+ * Mornings, every day of the week: every chain this generator proposes starts at {@link
  * STARTER_TIME} on one of {@link STARTER_DAYS}. What changed is what happens after that first
  * departure.
+ *
+ * <b>More than one aircraft is tried.</b> The generator ranks every eligible aircraft (see {@link
+ * rankAircraftForStarterSchedule}) and works down the list until one yields a legal week, rather
+ * than giving up if the first one cannot produce a chain. Real-use defect, 2026-08-13: an airline
+ * with three aircraft was told no legal starter schedule existed at all, because the only aircraft
+ * ever tried was one parked away from every route and already flown hard by another pilot - while a
+ * second, idle airframe sitting at the hub every route touches would have succeeded immediately.
  *
  * <b>At most four legs a day - a ceiling on the GENERATOR only.</b> {@link MAX_LEGS_PER_GENERATED_DAY}
  * caps how many legs one calendar day can be offered here (two return trips); hand-building
@@ -37,15 +44,21 @@ import { minutesToTime, timeToMinutes } from '@/types/schedule'
  *
  * <b>A sector that cannot close same-day still gets a legal answer, not silence.</b> When the
  * outbound's own block time rules out a same-day return, the generator does not give up on the day
- * - it looks for a legal return on the VERY NEXT day instead (still within {@link STARTER_DAYS}),
- * which is what "one out-and-back across two days" means for a long-haul pair. If no legal return
+ * - it looks for a legal return on the VERY NEXT day instead (wrapping at the end of the week, since
+ * the pattern repeats), which is what "one out-and-back across two days" means for a long-haul pair.
+ * If no legal return
  * exists there either, the whole chain is abandoned and NEITHER day is touched - a dangling
  * one-way leg would fail week-closure at save, so one is never proposed.
  */
 
-/** Weekdays this generator ever proposes legs on - Monday through Friday. Unlike the manual
- *  picker, the starter schedule never touches the weekend. */
-export const STARTER_DAYS: DayOfWeek[] = [1, 2, 3, 4, 5]
+/** Days this generator proposes legs on - the whole week, Monday through Sunday (user's decision,
+ *  2026-08-13; it used to stop at Friday). Nothing about seven days needs a relaxed rule: each day
+ *  the generator builds is a closed out-and-back that leaves the aircraft back where it started, so
+ *  the next day's 08:00 departure is legal for exactly the same reason the second day's always was,
+ *  the week still closes on itself, and a duty day ending mid-afternoon leaves far more than the
+ *  10-hour minimum rest before the next one. A day that genuinely will not fit is simply left empty
+ *  - see {@link buildStarterSchedule} on falling back to the best legal week rather than failing. */
+export const STARTER_DAYS: DayOfWeek[] = [1, 2, 3, 4, 5, 6, 0]
 
 /** Every chain's first departure. Not a promise every leg lands in the morning - a day's second
  *  round trip, or a long-haul chain's return leg, departs whenever the real rules put it. */
@@ -100,13 +113,70 @@ export interface StarterScheduleBuilt {
 
 export type StarterScheduleOutcome = { ok: true; result: StarterScheduleBuilt } | { ok: false; issue: StarterScheduleIssue }
 
+/** The only thing this module needs to know about a route: where it departs from. Enough to tell an
+ *  aircraft parked where the airline actually flies from one parked somewhere it cannot start a
+ *  chain at all - see {@link rankAircraftForStarterSchedule}. */
+export interface StarterScheduleRoute {
+  departureIcao: string
+}
+
 /**
- * Builds the starter week. `routeCount` is passed in rather than fetched here - the caller
- * (ScheduleBuilder) already has the routes query loaded, and re-fetching it here would just be a
- * second source of truth for the same "do routes exist at all" fact.
+ * Every eligible aircraft, best first guess first. Deliberately a total order with an explicit
+ * final tiebreak, so the generator is still deterministic (the tests rely on that).
+ *
+ * 1. <b>Can it start a chain from where it is standing?</b> An aircraft parked at an airport some
+ *    route departs from can fly today; one parked anywhere else cannot legally take a first leg at
+ *    all, because the backend anchors a week's earliest leg to the airframe's real position. This
+ *    is the difference between the two identical ATRs in the defect this ordering was written for.
+ * 2. <b>How contended is it?</b> Fewest already-scheduled legs elsewhere in the airline first. A
+ *    heavily-booked airframe is exactly the one whose every candidate leg comes back carrying a
+ *    warning (double-booking, turnaround) and is therefore refused by {@link legalOptionOf} - so
+ *    trying the idle one first is not a preference, it is the likelier success.
+ * 3. <b>Whatever order the server gave.</b> `GetAircraftOptionsAsync` returns the fleet ordered by
+ *    `CreatedUtc`, i.e. the order the player happened to acquire the aircraft in - which carries no
+ *    information about whether it can fly this week, and is precisely why relying on it alone
+ *    produced "no legal schedule" for an airline that plainly had one. Kept only as a stable
+ *    tiebreak so two equally-good aircraft always resolve the same way.
  */
-export async function buildStarterSchedule(routeCount: number, deps: StarterScheduleDeps): Promise<StarterScheduleOutcome> {
-  if (routeCount === 0) {
+export function rankAircraftForStarterSchedule<T extends { locationIcao: string; scheduledLegsThisWeek: number }>(
+  eligible: readonly T[],
+  routes: readonly StarterScheduleRoute[],
+): T[] {
+  const departureIcaos = new Set(routes.map((route) => route.departureIcao.toUpperCase()))
+  return eligible
+    .map((option, index) => ({ option, index }))
+    .sort((a, b) => {
+      const aCanStart = departureIcaos.has((a.option.locationIcao ?? '').toUpperCase()) ? 0 : 1
+      const bCanStart = departureIcaos.has((b.option.locationIcao ?? '').toUpperCase()) ? 0 : 1
+      if (aCanStart !== bCanStart) return aCanStart - bCanStart
+
+      const aBusy = a.option.scheduledLegsThisWeek ?? 0
+      const bBusy = b.option.scheduledLegsThisWeek ?? 0
+      if (aBusy !== bBusy) return aBusy - bBusy
+
+      return a.index - b.index
+    })
+    .map((entry) => entry.option)
+}
+
+/**
+ * Builds the starter week. `routes` is passed in rather than fetched here - the caller
+ * (ScheduleBuilder) already has the routes query loaded, and re-fetching it here would just be a
+ * second source of truth for the same facts. Only `departureIcao` is read: whether the airline has
+ * any routes at all, and which airports an aircraft could actually start a chain from.
+ *
+ * <b>Every eligible aircraft is tried, and the best legal week wins.</b> Working down {@link
+ * rankAircraftForStarterSchedule}'s order, the first aircraft that produces any legs at all is the
+ * one used. `no-legal-schedule` is only reported once EVERY eligible aircraft has been tried and
+ * none of them yielded a single leg - it now means what it says, rather than "the one aircraft we
+ * happened to ask about was busy". A partial week (some days legal, some not) is a success, not a
+ * failure: the days that fit are handed back and the rest are simply left empty for the player.
+ */
+export async function buildStarterSchedule(
+  routes: readonly StarterScheduleRoute[],
+  deps: StarterScheduleDeps,
+): Promise<StarterScheduleOutcome> {
+  if (routes.length === 0) {
     return { ok: false, issue: { kind: 'no-routes' } }
   }
 
@@ -134,22 +204,57 @@ export async function buildStarterSchedule(routeCount: number, deps: StarterSche
     return { ok: false, issue: { kind: allReserved ? 'all-reserved' : 'no-usable-aircraft' } }
   }
 
-  // eligible.length > 0 was just confirmed above.
-  const aircraft = eligible[0]!
+  // Every eligible aircraft, best first guess first - not just whichever the server listed first.
+  for (const aircraft of rankAircraftForStarterSchedule(eligible, routes)) {
+    // eslint-disable-next-line no-await-in-loop
+    const built = await buildWeekFor(aircraft, deps)
+    if (built.legsAdded > 0) {
+      return { ok: true, result: built }
+    }
+  }
 
+  // Genuinely nothing: every eligible aircraft was asked, on every day, and not one legal leg came
+  // back.
+  return { ok: false, issue: { kind: 'no-legal-schedule' } }
+}
+
+/**
+ * One aircraft's best week: each day of {@link STARTER_DAYS} in turn, keeping whatever chains come
+ * back legal and quietly leaving the days that do not. A day that will not fit is not a failure of
+ * the week - a six-day week is a perfectly good starter schedule, and refusing to hand back the
+ * five days that DID work because the sixth did not would be strictly worse for the player than
+ * offering them the five.
+ */
+async function buildWeekFor(
+  aircraft: { fleetAircraftId: string; registration: string },
+  deps: StarterScheduleDeps,
+): Promise<StarterScheduleBuilt> {
   let built: DraftWeek = {}
   const usedDays = new Set<DayOfWeek>()
   let legsAdded = 0
   let daysUsed = 0
+
+  // Every day this generator builds must be an out-and-back from the SAME airport, and that is the
+  // whole reason its weeks close. Defect caught in testing, 2026-08-13: each day was built
+  // independently against whatever the backend said the aircraft's position would be that morning -
+  // which is not one fixed airport, because ANOTHER pilot's legs earlier in the week move the
+  // airframe. The result was a week of individually-legal days based at two different airports
+  // (Saturday round trips out of EGGD, Sunday's out of LFPG) that could not join up, and the
+  // generated week was refused the moment it was saved - breaking this module's one real promise,
+  // that what it hands back is always immediately saveable. Fixing the days to a single base makes
+  // closure structural rather than something to hope for: end every day where you started, and you
+  // necessarily end the WEEK where you started too.
+  let baseIcao: string | null = null
 
   for (const day of STARTER_DAYS) {
     if (usedDays.has(day)) continue
 
     try {
       // eslint-disable-next-line no-await-in-loop
-      const chain = await buildChain(day, aircraft, built, usedDays, deps)
+      const chain = await buildChain(day, aircraft, built, usedDays, deps, baseIcao)
       if (chain) {
         built = chain.week
+        baseIcao ??= chain.baseIcao
         for (const usedDay of chain.days) usedDays.add(usedDay)
         legsAdded += chain.legsAdded
         daysUsed += chain.days.length
@@ -161,11 +266,7 @@ export async function buildStarterSchedule(routeCount: number, deps: StarterSche
     }
   }
 
-  if (legsAdded === 0) {
-    return { ok: false, issue: { kind: 'no-legal-schedule' } }
-  }
-
-  return { ok: true, result: { week: built, legsAdded, daysUsed } }
+  return { week: built, legsAdded, daysUsed }
 }
 
 /**
@@ -181,12 +282,17 @@ async function buildChain(
   weekSoFar: DraftWeek,
   usedDays: ReadonlySet<DayOfWeek>,
   deps: StarterScheduleDeps,
-): Promise<{ week: DraftWeek; days: DayOfWeek[]; legsAdded: number } | null> {
+  /** The airport every day of this week departs from, once the first chain has established it -
+   *  `null` only for that very first chain, which is free to start wherever the aircraft is. See
+   *  {@link buildWeekFor} for why this is what keeps the generated week closed. */
+  baseIcao: string | null,
+): Promise<{ week: DraftWeek; days: DayOfWeek[]; legsAdded: number; baseIcao: string } | null> {
   const dayWithAircraft = setDayAircraft(weekSoFar, day, aircraft.fleetAircraftId, aircraft.registration)
 
   const outboundOptions = await deps.fetchLegOptions(day, STARTER_TIME, aircraft.fleetAircraftId, draftWeekToInput(dayWithAircraft))
-  const outboundPick = legalOptionOf(outboundOptions.legal)
+  const outboundPick = legalOptionOf(outboundOptions.legal, baseIcao)
   if (!outboundPick) return null
+  const base = outboundPick.departureIcao
 
   const outboundStart = timeToMinutes(`${STARTER_TIME}:00`)
   const outboundBlock = outboundPick.blockMinutes ?? 60
@@ -215,13 +321,16 @@ async function buildChain(
         }
       }
 
-      return { week, days: [day], legsAdded: legs }
+      return { week, days: [day], legsAdded: legs, baseIcao: base }
     }
   }
 
   // No same-day return checks out - this is the long-haul shape: the day's only leg is the
-  // outbound, closed (if at all) by a matching return on the very next day.
-  const nextDay = (day + 1) as DayOfWeek
+  // outbound, closed (if at all) by a matching return on the very next day. The week is a repeating
+  // cycle, so "the next day" after Saturday is Sunday and after Sunday is Monday - hence the wrap
+  // rather than a bare `day + 1`, which used to fall off the end of the working week and abandon a
+  // chain that had a perfectly good day to close on.
+  const nextDay = (((day + 1) % 7) + 7) % 7 as DayOfWeek
   if (!STARTER_DAYS.includes(nextDay) || usedDays.has(nextDay)) {
     return null
   }
@@ -237,7 +346,7 @@ async function buildChain(
   const nextReturnBlock = nextReturnPick.blockMinutes ?? 60
   nextWeek = addLegToDay(nextWeek, nextDay, draftLegFromOption(nextReturnPick, STARTER_TIME, nextReturnBlock))
 
-  return { week: nextWeek, days: [day, nextDay], legsAdded: 2 }
+  return { week: nextWeek, days: [day, nextDay], legsAdded: 2, baseIcao: base }
 }
 
 /** The third and fourth legs of a day already closed once - both-or-nothing, so a duty day this
@@ -255,7 +364,9 @@ async function tryAddSecondRoundTrip(
   // Same route as the first round trip, deliberately - simplest, most predictable pattern for a
   // starter schedule, and it is exactly what a short sector flown twice a day looks like in
   // practice (e.g. the two-hop EGKK <-> EGPH day this feature was written for).
-  const secondOutPick = secondOutOptions.legal.find((option) => option.routeId === firstOutbound.routeId && option.warnings.length === 0)
+  const sameRoute = (option: LegalLegOption) => option.routeId === firstOutbound.routeId
+  const secondOutPick = secondOutOptions.legal.find((option) => sameRoute(option) && option.warnings.length === 0)
+    ?? secondOutOptions.legal.find((option) => sameRoute(option) && !isBlockingWarning(option))
   if (!secondOutPick) return null
 
   const secondOutBlock = secondOutPick.blockMinutes ?? 60
@@ -273,19 +384,45 @@ async function tryAddSecondRoundTrip(
   return { week }
 }
 
-/** The first legal option with no warning attached - a warning means picking it leaves something
- *  unresolved elsewhere in the week (see LegalLegOption's own doc), and a generator's whole job is
- *  to hand back something that is already fully resolved, never a promise the player has to keep. */
-function legalOptionOf(options: LegalLegOption[]): LegalLegOption | undefined {
-  return options.find((option) => option.warnings.length === 0)
+/**
+ * A warning this generator must not pick past, as opposed to one it is about to resolve itself.
+ *
+ * `"alert"` is a genuine incompatibility with something already committed elsewhere - double-booking
+ * the airframe, too little turnaround or rest, an over-long duty day. Nothing the generator does
+ * next makes those untrue, so an option carrying one is never taken: a generated week has to be
+ * immediately saveable, never a promise the player has to keep.
+ *
+ * `"info"` is the opposite: a continuity gap, meaning "this leaves the aircraft at X and a later leg
+ * needs it back at Y - add the return after this one." That is not an unresolved promise here, it is
+ * a description of the generator's very next action, since every chain it builds closes its own
+ * round trip before the day is handed back (and abandons the day entirely if it cannot). Refusing
+ * those made Sunday impossible to generate at all: the week is a cycle and Sunday sorts before
+ * Monday, so a Sunday outbound ALWAYS reads as stranding the aircraft away from Monday's first leg
+ * until its own return leg exists a moment later.
+ */
+function isBlockingWarning(option: LegalLegOption): boolean {
+  return option.warnings.some((warning) => warning.severity === 'alert')
+}
+
+/** The best legal option to lead a chain with: one that is completely unencumbered if there is one,
+ *  otherwise the first whose only warnings are the resolvable kind (see {@link isBlockingWarning}).
+ *  Preferring the clean option keeps every case that already worked behaving exactly as it did.
+ *  `baseIcao`, once the week has one, restricts this to legs departing that airport - see
+ *  {@link buildWeekFor} for why every day has to leave from the same place. */
+function legalOptionOf(options: LegalLegOption[], baseIcao: string | null): LegalLegOption | undefined {
+  const candidates = baseIcao === null
+    ? options
+    : options.filter((option) => option.departureIcao.toUpperCase() === baseIcao.toUpperCase())
+  return candidates.find((option) => option.warnings.length === 0) ?? candidates.find((option) => !isBlockingWarning(option))
 }
 
 /** The option that flies the exact reverse of `outbound` - the only shape this generator ever
  *  proposes as a "return", same as the single-round-trip generator before it. */
 function findReturnOption(options: LegalLegOption[], outbound: LegalLegOption): LegalLegOption | undefined {
-  return options.find(
-    (option) => option.departureIcao === outbound.arrivalIcao && option.arrivalIcao === outbound.departureIcao && option.warnings.length === 0,
-  )
+  const reverses = (option: LegalLegOption) =>
+    option.departureIcao === outbound.arrivalIcao && option.arrivalIcao === outbound.departureIcao
+  return options.find((option) => reverses(option) && option.warnings.length === 0)
+    ?? options.find((option) => reverses(option) && !isBlockingWarning(option))
 }
 
 function formatTime(totalMinutes: number): string {

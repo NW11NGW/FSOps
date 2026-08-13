@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+﻿import { describe, expect, it, vi } from 'vitest'
 
-import { buildStarterSchedule, type StarterScheduleDeps } from './starterSchedule'
+import { buildStarterSchedule, rankAircraftForStarterSchedule, STARTER_DAYS, type StarterScheduleDeps } from './starterSchedule'
 import type { AircraftOptionsResponse, DayOfWeek, DutyDayInput, LegalLegOption, LegOptionsResponse } from '@/types/schedule'
 
 const AIRCRAFT = { fleetAircraftId: 'ac-1', registration: 'G-TEST' }
+
+/** The airline's routes, in the only shape this module reads. Every fixture below flies out of
+ *  EGKK, which is also where the fixture aircraft sits - so "can this aircraft start a chain from
+ *  where it is standing" is true by default and only becomes interesting where a test says so. */
+const ROUTES = [{ departureIcao: 'EGKK' }, { departureIcao: 'EGPH' }]
 
 function aircraftOptions(options: AircraftOptionsResponse['options']): AircraftOptionsResponse {
   return { options }
@@ -40,14 +45,14 @@ function stripIds(week: ReturnType<typeof JSON.parse>) {
 describe('buildStarterSchedule - preconditions checked before generation', () => {
   it('reports no-routes and never even asks about aircraft when the airline has no routes', async () => {
     const deps = fakeDeps({})
-    const outcome = await buildStarterSchedule(0, deps)
+    const outcome = await buildStarterSchedule([], deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'no-routes' } })
     expect(deps.fetchAircraftOptions).not.toHaveBeenCalled()
   })
 
   it('reports no-aircraft when the fleet is empty', async () => {
     const deps = fakeDeps({}, aircraftOptions([]))
-    const outcome = await buildStarterSchedule(1, deps)
+    const outcome = await buildStarterSchedule(ROUTES, deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'no-aircraft' } })
   })
 
@@ -59,7 +64,7 @@ describe('buildStarterSchedule - preconditions checked before generation', () =>
         { fleetAircraftId: 'ac-2', registration: 'G-TEST2', aircraftTypeName: 'Test', locationIcao: 'EGKK', eligible: false, reason: 'G-TEST2 is reserved for the player - release it on the Fleet page to schedule it here.', scheduledLegsThisWeek: 0 },
       ]),
     )
-    const outcome = await buildStarterSchedule(1, deps)
+    const outcome = await buildStarterSchedule(ROUTES, deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'all-reserved' } })
   })
 
@@ -70,7 +75,7 @@ describe('buildStarterSchedule - preconditions checked before generation', () =>
         { ...AIRCRAFT, aircraftTypeName: 'Test', locationIcao: 'EGKK', eligible: false, reason: 'G-TEST is in maintenance until 2026-08-20 09:00 UTC.', scheduledLegsThisWeek: 0 },
       ]),
     )
-    const outcome = await buildStarterSchedule(1, deps)
+    const outcome = await buildStarterSchedule(ROUTES, deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'no-usable-aircraft' } })
   })
 
@@ -79,7 +84,7 @@ describe('buildStarterSchedule - preconditions checked before generation', () =>
       fetchAircraftOptions: vi.fn().mockRejectedValue(new Error('network down')),
       fetchLegOptions: vi.fn(),
     }
-    const outcome = await buildStarterSchedule(1, deps)
+    const outcome = await buildStarterSchedule(ROUTES, deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'check-failed' } })
   })
 
@@ -87,7 +92,7 @@ describe('buildStarterSchedule - preconditions checked before generation', () =>
     const deps = fakeDeps({
       1: () => ({ legal: [], illegal: [{ routeId: 'r1', reason: 'out of range' }] }),
     })
-    const outcome = await buildStarterSchedule(1, deps)
+    const outcome = await buildStarterSchedule(ROUTES, deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'no-legal-schedule' } })
   })
 })
@@ -106,7 +111,7 @@ describe('buildStarterSchedule - short sector: block time leaves room for two ro
   }
 
   it('fills a generated day up to the four-leg cap when duty hours allow it, and it would be immediately saveable', async () => {
-    const outcome = await buildStarterSchedule(1, shortSectorDeps())
+    const outcome = await buildStarterSchedule(ROUTES, shortSectorDeps())
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
@@ -132,15 +137,15 @@ describe('buildStarterSchedule - short sector: block time leaves room for two ro
       fetchAircraftOptions: vi.fn().mockResolvedValue(aircraftOptions([{ ...AIRCRAFT, aircraftTypeName: 'Test', locationIcao: 'EGKK', eligible: true, reason: null, scheduledLegsThisWeek: 0 }])),
       fetchLegOptions: vi.fn(async (day: DayOfWeek) => (day === 1 ? { legal: [outbound, back], illegal: [] } : { legal: [], illegal: [] })),
     }
-    const outcome = await buildStarterSchedule(1, alwaysLegalDeps)
+    const outcome = await buildStarterSchedule(ROUTES, alwaysLegalDeps)
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
     expect(outcome.result.week[1]?.legs).toHaveLength(4)
   })
 
   it('is deterministic: the same inputs produce the same schedule (ignoring the client-only draft id)', async () => {
-    const first = await buildStarterSchedule(1, shortSectorDeps())
-    const second = await buildStarterSchedule(1, shortSectorDeps())
+    const first = await buildStarterSchedule(ROUTES, shortSectorDeps())
+    const second = await buildStarterSchedule(ROUTES, shortSectorDeps())
     expect(first.ok).toBe(true)
     expect(second.ok).toBe(true)
     if (!first.ok || !second.ok) return
@@ -170,7 +175,7 @@ describe('buildStarterSchedule - long-haul sector: block time rules out a same-d
   }
 
   it('proposes exactly one leg on the first day, not four, closed by the return on the next day', async () => {
-    const outcome = await buildStarterSchedule(1, longHaulDeps())
+    const outcome = await buildStarterSchedule(ROUTES, longHaulDeps())
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
@@ -206,15 +211,283 @@ describe('buildStarterSchedule - long-haul sector: block time rules out a same-d
       // Tuesday offers no legal return either - the whole Monday/Tuesday chain must be abandoned.
       2: () => ({ legal: [], illegal: [] }),
     })
-    const outcome = await buildStarterSchedule(1, deps)
+    const outcome = await buildStarterSchedule(ROUTES, deps)
     expect(outcome).toEqual({ ok: false, issue: { kind: 'no-legal-schedule' } })
   })
 
   it('is deterministic across two independent runs', async () => {
-    const first = await buildStarterSchedule(1, longHaulDeps())
-    const second = await buildStarterSchedule(1, longHaulDeps())
+    const first = await buildStarterSchedule(ROUTES, longHaulDeps())
+    const second = await buildStarterSchedule(ROUTES, longHaulDeps())
     expect(first.ok && second.ok).toBe(true)
     if (!first.ok || !second.ok) return
     expect(stripIds(first.result.week)).toEqual(stripIds(second.result.week))
+  })
+})
+
+// ---- Real-use defect, 2026-08-13: only ever trying one aircraft ----
+
+describe('buildStarterSchedule - more than one aircraft is tried', () => {
+  const outbound = legOption({ routeId: 'r-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65 })
+  const back = legOption({ routeId: 'r-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65 })
+
+  function option(id: string, registration: string, locationIcao: string, scheduledLegsThisWeek = 0) {
+    return { fleetAircraftId: id, registration, aircraftTypeName: 'ATR 72-600', locationIcao, eligible: true, reason: null, scheduledLegsThisWeek }
+  }
+
+  it('moves on to the next eligible aircraft when the first one yields nothing', async () => {
+    // The exact shape from real use: two identical ATRs, the busy one listed first by the server
+    // (it was acquired first, and GetAircraftOptionsAsync orders by CreatedUtc). Only the second
+    // can fly anything. Before this fix the generator stopped at the first and reported that no
+    // legal starter schedule existed at all.
+    const deps: StarterScheduleDeps = {
+      fetchAircraftOptions: vi.fn().mockResolvedValue(
+        aircraftOptions([option('busy', 'G-NZHG', 'EGKK', 20), option('idle', 'G-FWLY', 'EGKK', 0)]),
+      ),
+      fetchLegOptions: vi.fn(async (day: DayOfWeek, _time: string, fleetAircraftId: string) => {
+        if (fleetAircraftId !== 'idle' || day !== 1) return { legal: [], illegal: [] }
+        return { legal: [outbound, back], illegal: [] }
+      }),
+    }
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.registration).toBe('G-FWLY')
+    expect(outcome.result.legsAdded).toBeGreaterThan(0)
+  })
+
+  it('still reports no-legal-schedule only once EVERY eligible aircraft has been tried', async () => {
+    const deps: StarterScheduleDeps = {
+      fetchAircraftOptions: vi.fn().mockResolvedValue(
+        aircraftOptions([option('a', 'G-AAAA', 'EGKK'), option('b', 'G-BBBB', 'EGKK'), option('c', 'G-CCCC', 'EGKK')]),
+      ),
+      fetchLegOptions: vi.fn(async () => ({ legal: [], illegal: [] })),
+    }
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome).toEqual({ ok: false, issue: { kind: 'no-legal-schedule' } })
+    const asked = new Set((deps.fetchLegOptions as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[2]))
+    expect(asked).toEqual(new Set(['a', 'b', 'c']))
+  })
+
+  it('stops at the first aircraft that works rather than exhausting the fleet', async () => {
+    const deps: StarterScheduleDeps = {
+      fetchAircraftOptions: vi.fn().mockResolvedValue(
+        aircraftOptions([option('first', 'G-AAAA', 'EGKK'), option('second', 'G-BBBB', 'EGKK')]),
+      ),
+      fetchLegOptions: vi.fn(async (day: DayOfWeek) => (day === 1 ? { legal: [outbound, back], illegal: [] } : { legal: [], illegal: [] })),
+    }
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    const asked = new Set((deps.fetchLegOptions as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[2]))
+    expect(asked).toEqual(new Set(['first']))
+  })
+})
+
+describe('rankAircraftForStarterSchedule', () => {
+  function option(registration: string, locationIcao: string, scheduledLegsThisWeek: number) {
+    return { registration, locationIcao, scheduledLegsThisWeek }
+  }
+
+  it('puts an aircraft standing where a route departs ahead of one parked away from the network', async () => {
+    // The user's own fleet: G-NZHG at LFPG, which no route departs from, listed first because it
+    // was acquired first; G-FWLY at EGGD where every route begins.
+    const ranked = rankAircraftForStarterSchedule(
+      [option('G-NZHG', 'LFPG', 0), option('G-FWLY', 'EGGD', 0)],
+      [{ departureIcao: 'EGGD' }, { departureIcao: 'EGPH' }],
+    )
+    expect(ranked.map((a) => a.registration)).toEqual(['G-FWLY', 'G-NZHG'])
+  })
+
+  it('prefers the least contended aircraft when both could start a chain', async () => {
+    const ranked = rankAircraftForStarterSchedule(
+      [option('G-BUSY', 'EGGD', 20), option('G-IDLE', 'EGGD', 0)],
+      [{ departureIcao: 'EGGD' }],
+    )
+    expect(ranked.map((a) => a.registration)).toEqual(['G-IDLE', 'G-BUSY'])
+  })
+
+  it('falls back to the order the server gave, so two equally-good aircraft always resolve the same way', async () => {
+    const ranked = rankAircraftForStarterSchedule(
+      [option('G-ONE', 'EGGD', 4), option('G-TWO', 'EGGD', 4)],
+      [{ departureIcao: 'EGGD' }],
+    )
+    expect(ranked.map((a) => a.registration)).toEqual(['G-ONE', 'G-TWO'])
+  })
+
+  it('compares ICAOs case-insensitively rather than silently ranking a lower-case location last', async () => {
+    const ranked = rankAircraftForStarterSchedule(
+      [option('G-AWAY', 'LFPG', 0), option('G-HOME', 'eggd', 0)],
+      [{ departureIcao: 'EGGD' }],
+    )
+    expect(ranked.map((a) => a.registration)).toEqual(['G-HOME', 'G-AWAY'])
+  })
+})
+
+describe('buildStarterSchedule - which warnings actually disqualify an option', () => {
+  const outbound = legOption({ routeId: 'r-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65 })
+  const back = legOption({ routeId: 'r-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65 })
+
+  it('takes an option carrying only a continuity gap - the very thing its next leg resolves', async () => {
+    // Exactly what the backend returns for a Sunday outbound once the rest of the week exists:
+    // legal, with an info-severity "add a EGPH -> EGKK leg after this one". Refusing it made Sunday
+    // ungeneratable, because the week is a cycle and Sunday sorts before Monday.
+    const gapWarned = legOption({
+      routeId: 'r-out',
+      departureIcao: 'EGKK',
+      arrivalIcao: 'EGPH',
+      blockMinutes: 65,
+      warnings: [{ message: 'Leaves G-TEST at EGPH. Its next leg departs EGKK (Monday at 08:00) - add a EGPH -> EGKK leg after this one.', severity: 'info' }],
+    })
+    const deps = fakeDeps({ 1: () => ({ legal: [gapWarned, back], illegal: [] }) })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.legs.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('never takes an option carrying an alert - a real incompatibility no later leg undoes', async () => {
+    const doubleBooked = legOption({
+      routeId: 'r-out',
+      departureIcao: 'EGKK',
+      arrivalIcao: 'EGPH',
+      blockMinutes: 65,
+      warnings: [{ message: 'G-TEST is already flying EGKK -> EGPH at this time for another pilot.', severity: 'alert' }],
+    })
+    const deps = fakeDeps({ 1: () => ({ legal: [doubleBooked, back], illegal: [] }) })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome).toEqual({ ok: false, issue: { kind: 'no-legal-schedule' } })
+  })
+
+  it('still prefers a completely clean option when one is on offer', async () => {
+    const gapWarned = legOption({
+      routeId: 'r-warned',
+      departureIcao: 'EGKK',
+      arrivalIcao: 'EIDW',
+      blockMinutes: 55,
+      warnings: [{ message: 'Leaves G-TEST at EIDW.', severity: 'info' }],
+    })
+    const deps = fakeDeps({ 1: () => ({ legal: [gapWarned, outbound, back], illegal: [] }) })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.legs[0]?.routeId).toBe('r-out')
+  })
+})
+
+// ---- User's decision, 2026-08-13: the starter schedule covers the weekend too ----
+
+describe('buildStarterSchedule - the whole week, weekend included', () => {
+  const outbound = legOption({ routeId: 'r-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65 })
+  const back = legOption({ routeId: 'r-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65 })
+
+  it('covers Monday through Sunday - Saturday and Sunday are days like any other', async () => {
+    expect(STARTER_DAYS).toEqual([1, 2, 3, 4, 5, 6, 0])
+
+    const deps = fakeDeps(
+      Object.fromEntries(STARTER_DAYS.map((day) => [day, () => ({ legal: [outbound, back], illegal: [] })])),
+    )
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.daysUsed).toBe(7)
+    expect(outcome.result.week[6]?.legs.length).toBeGreaterThan(0) // Saturday
+    expect(outcome.result.week[0]?.legs.length).toBeGreaterThan(0) // Sunday
+  })
+
+  it('every generated day is a closed out-and-back, so seven of them still leave the week closed', async () => {
+    // Nothing about adding the weekend needs a relaxed rule, and this is why: each day starts and
+    // ends at the same airport, so the aircraft is back where it began every night AND at the end
+    // of the week - which is exactly what the backend's wrap/closure check requires of a saved week.
+    const deps = fakeDeps(
+      Object.fromEntries(STARTER_DAYS.map((day) => [day, () => ({ legal: [outbound, back], illegal: [] })])),
+    )
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    for (const day of STARTER_DAYS) {
+      const legs = outcome.result.week[day]?.legs ?? []
+      expect(legs.length).toBeGreaterThan(0)
+      expect(legs[0]!.departureIcao).toBe(legs[legs.length - 1]!.arrivalIcao)
+    }
+  })
+
+  it('falls back to the best legal week rather than failing when the weekend will not fit', async () => {
+    // Saturday and Sunday come back with nothing legal - a real refusal the generator must respect
+    // rather than work around. The five weekdays that DO fit are still handed back.
+    const deps = fakeDeps({
+      1: () => ({ legal: [outbound, back], illegal: [] }),
+      2: () => ({ legal: [outbound, back], illegal: [] }),
+      3: () => ({ legal: [outbound, back], illegal: [] }),
+      4: () => ({ legal: [outbound, back], illegal: [] }),
+      5: () => ({ legal: [outbound, back], illegal: [] }),
+    })
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.daysUsed).toBe(5)
+    expect(outcome.result.week[6]).toBeUndefined()
+    expect(outcome.result.week[0]).toBeUndefined()
+  })
+
+  it('bases every day at the same airport, so a week built across days that see different aircraft positions still closes', async () => {
+    // Defect caught in testing, 2026-08-13. Another pilot's legs earlier in the week move the
+    // airframe, so the backend legitimately reports a DIFFERENT position for different mornings -
+    // Saturday out of EGKK, Sunday out of LFPG. Building each day against its own position produced
+    // individually-legal days that could not join up, and the generated week was refused the moment
+    // it was saved. Whichever airport the first chain establishes, every later day must leave from
+    // there or be skipped.
+    const fromEgkk = legOption({ routeId: 'r-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65 })
+    const toEgkk = legOption({ routeId: 'r-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65 })
+    const fromLfpg = legOption({ routeId: 'r-lfpg-out', departureIcao: 'LFPG', arrivalIcao: 'EGKK', blockMinutes: 70 })
+
+    const deps = fakeDeps({
+      1: () => ({ legal: [fromEgkk, toEgkk], illegal: [] }),
+      // Sunday can only ever depart LFPG - a different airport, so it must be skipped rather than
+      // bolted onto a week that starts and ends at EGKK.
+      0: () => ({ legal: [fromLfpg], illegal: [] }),
+    })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.legs.length).toBeGreaterThan(0)
+    expect(outcome.result.week[0]).toBeUndefined()
+
+    // The property that actually matters: across the whole week, every day departs from the same
+    // airport and returns to it, so the week closes on itself however many days it ended up using.
+    const departures = new Set(Object.values(outcome.result.week).map((day) => day!.legs[0]!.departureIcao))
+    expect(departures.size).toBe(1)
+    for (const day of Object.values(outcome.result.week)) {
+      expect(day!.legs[day!.legs.length - 1]!.arrivalIcao).toBe(day!.legs[0]!.departureIcao)
+    }
+  })
+
+  it('offers a weekend-only week when those are the only days that work', async () => {
+    const deps = fakeDeps({
+      6: () => ({ legal: [outbound, back], illegal: [] }),
+      0: () => ({ legal: [outbound, back], illegal: [] }),
+    })
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.daysUsed).toBe(2)
+    expect(outcome.result.week[6]?.legs).toHaveLength(4)
+    expect(outcome.result.week[0]?.legs).toHaveLength(4)
   })
 })

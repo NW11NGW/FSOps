@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { CalendarClock, Info, Loader2, RotateCcw, Save, Sparkles } from 'lucide-react'
@@ -109,6 +109,10 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   const [saving, setSaving] = useState(false)
   const [suggesting, setSuggesting] = useState(false)
   const [saveFailure, setSaveFailure] = useState<{ error: string; conflicts: string[] } | null>(null)
+  /** Notices from the last SUCCESSFUL save - the schedule is stored and repeating, this is just
+   *  something the player would want to know (today: its aircraft is not where the pattern starts,
+   *  so it will not begin flying until the airframe is back). Never an error, never blocking. */
+  const [saveAdvisories, setSaveAdvisories] = useState<string[]>([])
   const [suggestionIssue, setSuggestionIssue] = useState<StarterScheduleIssue | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null)
   const initializedForPilot = useRef<string | null>(null)
@@ -131,6 +135,24 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   const isDirty = weekSignature(week) !== savedSignature || autoSuspendOnMaintenance !== savedAutoSuspendOnMaintenance
   const totalLegs = Object.values(week).reduce((sum, day) => sum + (day?.legs.length ?? 0), 0)
 
+  /**
+   * Every path that changes the draft goes through here rather than calling `setWeek` directly, so
+   * that both banners below it are cleared in the same breath. Real-use defect, 2026-08-13: a
+   * player was shown "FSOps couldn't fit a legal starter schedule together" and a save conflict
+   * naming an aircraft, then changed the draft entirely - and both messages stayed on screen,
+   * describing a week that no longer existed. A conflict list and a suggestion failure are both
+   * verdicts on ONE specific draft; the moment that draft changes they are stale, and a stale
+   * verdict is worse than none because the player cannot tell which of the two they are looking at.
+   * Re-running either check is a deliberate action (Save, or Suggest again), so the honest state
+   * between them is silence.
+   */
+  function updateWeek(next: DraftWeek | ((current: DraftWeek) => DraftWeek)) {
+    setWeek(next)
+    setSaveFailure(null)
+    setSuggestionIssue(null)
+    setSaveAdvisories([])
+  }
+
   function openAddDialog(day: DayOfWeek, time = '08:00') {
     setDialog({ open: true, mode: 'add', day, time })
   }
@@ -144,7 +166,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   }
 
   function handleSetAircraft(day: DayOfWeek, option: { fleetAircraftId: string; registration: string }) {
-    setWeek((current) => setDayAircraft(current, day, option.fleetAircraftId, option.registration))
+    updateWeek((current) => setDayAircraft(current, day, option.fleetAircraftId, option.registration))
   }
 
   function handleConfirmAdd(day: DayOfWeek, leg: DraftLeg) {
@@ -152,15 +174,15 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     const overlap = findOverlappingLeg(leg, dayLegs)
     if (overlap) {
       toast.error(
-        `That slot overlaps ${overlap.flightNumber ?? 'another leg'} (${overlap.departureIcao} → ${overlap.arrivalIcao}). Pick a different time.`,
+        `That slot overlaps ${overlap.flightNumber ?? 'another leg'} (${overlap.departureIcao} â†’ ${overlap.arrivalIcao}). Pick a different time.`,
       )
       return
     }
-    setWeek((current) => addLegToDay(current, day, leg))
+    updateWeek((current) => addLegToDay(current, day, leg))
   }
 
   function handleConfirmRetime(day: DayOfWeek, legId: string, time: string) {
-    setWeek((current) => updateLegTime(current, day, legId, time))
+    updateWeek((current) => updateLegTime(current, day, legId, time))
   }
 
   // Real-use defect, 2026-08-13: deleting only the outbound half of an out-and-back left the return
@@ -180,7 +202,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     const orphans = findLegsOrphanedByRemoval(week, day, legId, aircraftLocationIcao)
 
     if (orphans.length === 0) {
-      setWeek((current) => removeLegAndOrphans(current, day, legId, []))
+      updateWeek((current) => removeLegAndOrphans(current, day, legId, []))
       return
     }
 
@@ -190,7 +212,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   function confirmPendingRemoval() {
     if (!pendingRemoval) return
     const { day, leg, orphans } = pendingRemoval
-    setWeek((current) => removeLegAndOrphans(current, day, leg.id, orphans))
+    updateWeek((current) => removeLegAndOrphans(current, day, leg.id, orphans))
     setPendingRemoval(null)
   }
 
@@ -207,6 +229,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   async function handleSave() {
     setSaving(true)
     setSaveFailure(null)
+    setSaveAdvisories([])
     try {
       // autoSuspendOnMaintenance is always sent explicitly - the backend resets an omitted value
       // to true, so leaving it out here would silently switch a player's "off" choice back on the
@@ -218,6 +241,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
         setSavedSignature(weekSignature(nextWeek))
         setAutoSuspendOnMaintenance(result.autoSuspendOnMaintenance)
         setSavedAutoSuspendOnMaintenance(result.autoSuspendOnMaintenance)
+        setSaveAdvisories(result.advisories)
         toast.success('Schedule saved.')
         onSaved?.()
       } else {
@@ -233,7 +257,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setSuggesting(true)
     setSuggestionIssue(null)
     try {
-      const outcome = await buildStarterSchedule(routesQuery.routes.length, {
+      const outcome = await buildStarterSchedule(routesQuery.routes, {
         fetchAircraftOptions: (day) => fetchAircraftOptions(pilot.id, day),
         fetchLegOptions: (day, time, fleetAircraftId, draftDutyDays) => fetchLegOptions(pilot.id, day, time, fleetAircraftId, draftDutyDays),
       })
@@ -288,12 +312,27 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
           </Button>
           <Button type="button" size="sm" onClick={handleSave} disabled={saving || !isDirty}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            {saving ? 'Saving…' : 'Save schedule'}
+            {saving ? 'Savingâ€¦' : 'Save schedule'}
           </Button>
         </div>
       </div>
 
       {saveFailure && <ConflictList error={saveFailure.error} conflicts={saveFailure.conflicts} />}
+
+      {/* A saved schedule that will not start flying yet. Deliberately styled as a notice rather
+          than a conflict: nothing failed, nothing needs fixing, and the pattern repeats forever -
+          but under True-life every occurrence the aircraft cannot reach costs a cancellation fee,
+          so saying nothing at all would trade a confusing refusal for a silent bleed. */}
+      {saveAdvisories.length > 0 && (
+        <div className="space-y-1 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+          {saveAdvisories.map((advisory, index) => (
+            <p key={index} className="flex items-start gap-2">
+              <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 break-words">{advisory}</span>
+            </p>
+          ))}
+        </div>
+      )}
 
       {totalLegs === 0 && (
         <EmptyState

@@ -502,6 +502,22 @@ This means an occasional bad reading from the simulator — most commonly right 
 
 **Solution:** Fly a route departing from wherever your aircraft actually is. If you expect a route to be flyable because you believe your aircraft already landed at its departure airport, but it still isn't showing up, that points to something worth reporting rather than normal behaviour — check the [log files](#where-to-find-log-files) for what actually happened at the end of that earlier flight (for example, whether it completed normally or was abandoned, since an abandoned flight leaves the aircraft where it was rather than moving it).
 
+## A saved schedule says its aircraft isn't where the pattern starts
+
+**Symptom:** Saving a virtual pilot's schedule works, but a notice appears afterwards along the lines of *"G-NZHG is at LFPG, but this pattern starts from EGGD. The schedule is saved and keeps repeating — it will start flying as soon as G-NZHG is back at EGGD."*
+
+**Cause:** Entirely normal, and not an error. A weekly schedule is a pattern that repeats forever, but the aircraft flying it moves around — so a week that begins at your home base is often saved while the airframe is away at the far end of a sector, or still in the air on its way back. FSOps mentions it once because of what happens in the meantime: any occurrence the aircraft can't reach is [skipped or cancelled](user-guide.md#the-wall-clock-economy-flying-while-youre-away), and under True-life a cancellation carries a real fee — so it's worth knowing rather than discovering from your ledger.
+
+**Solution:** Usually nothing. If the aircraft is simply out on a leg, it comes home on its own and the pattern starts flying again. If it's genuinely stranded somewhere with no scheduled way back, either schedule a repositioning leg from where it actually is, or reserve it and use **Reposition** on the Fleet page to move it (see [Repositioning a stranded aircraft](user-guide.md#the-fleet-page)). If the pattern was never meant to start from that airport at all, edit the schedule so its first leg departs from where the aircraft really is.
+
+## "FSOps couldn't fit a legal starter schedule together"
+
+**Symptom:** **Suggest a starter schedule** on an empty week reports that no legal starter schedule could be built, even though you have aircraft and routes.
+
+**Cause:** This message now means every eligible aircraft was tried, on every day of the week, and none of them could legally fly anything. The usual reasons are real ones: every unreserved aircraft is already carrying another pilot's week at those times; the only available airframe is parked at an airport none of your routes departs from and has no route back; or your routes are all beyond that aircraft's range.
+
+**Solution:** Open a day manually and pick the aircraft yourself — the **"Why can't I fly the others?"** list under the leg picker names the exact reason for each route, which is the fastest way to see which of the above it is. Hiring a second pilot doesn't help if the *aircraft* is the constraint; freeing one up (releasing a reservation on the Fleet page, or thinning another pilot's week) usually does. Note that a partial week is a success, not a failure — if only some days fit, you'll be offered those days rather than this message.
+
 ## Where to find log files
 
 FSOps writes log output to `%LOCALAPPDATA%\FSOps\logs\` — the same data directory the database lives in (see [Where the database lives](#where-the-database-lives)), not a folder relative to wherever you happen to run FSOps from. Each run writes to a dated log file there — check the most recent one for errors around the time your issue occurred.

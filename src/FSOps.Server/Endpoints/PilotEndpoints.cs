@@ -295,7 +295,28 @@ public static class PilotEndpoints
         var result = PilotScheduleValidator.Validate(unionEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
         if (!result.IsValid)
         {
-            return Results.BadRequest(new { error = "This schedule has conflicts.", conflicts = result.Conflicts });
+            // Only what THIS save actually introduces. Validating airline-wide is right and stays
+            // (an aircraft's chain and double-booking span every pilot), but reporting airline-wide
+            // is not: a conflict that is equally true whether or not this pilot's week is saved was
+            // not caused by it, cannot be fixed from the screen the player is looking at, and may
+            // name an aircraft that appears nowhere in the week in front of them. Real-use defect,
+            // 2026-08-13: saving one virtual pilot's week was refused with "G-NZHG is at LFPG, but
+            // this pattern's first leg departs EGGD" while every day on screen showed a different
+            // airframe entirely - the conflict belonged to ANOTHER pilot's already-saved schedule.
+            // Same "before" vs "after" set difference GetLegOptionsAsync has always used to tell a
+            // genuine disqualifier from a pre-existing one; nothing is relaxed, because a save that
+            // genuinely worsens another pilot's chain produces a conflict sentence that is NOT in
+            // the baseline (different aircraft, airports or times) and is therefore still refused,
+            // and the other pilot's own save still faces their own conflict exactly as before.
+            var preExisting = PilotScheduleValidator
+                .Validate(otherEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true)
+                .Conflicts.ToHashSet();
+            var introduced = result.Conflicts.Where(c => !preExisting.Contains(c)).ToList();
+
+            if (introduced.Count > 0)
+            {
+                return Results.BadRequest(new { error = "This schedule has conflicts.", conflicts = introduced });
+            }
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -336,7 +357,21 @@ public static class PilotEndpoints
 
         var savedEntries = await db.PilotScheduleEntries.Where(e => e.PilotScheduleId == schedule.Id).ToListAsync(ct);
         var dto = await BuildDutyDayDtosAsync(db, savedEntries, ct);
-        return Results.Ok(new { pilotId = pilot.Id, dutyDays = dto, autoSuspendOnMaintenance = schedule.AutoSuspendOnMaintenance });
+
+        // Same "only what the player can see and act on" rule the conflict differential above
+        // applies, for the same reason: an advisory about an airframe that appears nowhere in the
+        // week they just saved is the exact unactionable message this whole fix exists to remove.
+        // Advisories are always worded "{registration} is at ...", so the leading token identifies
+        // the aircraft without needing a second structured channel for one sentence.
+        var ownRegistrations = proposed
+            .Select(e => fleetById.TryGetValue(e.FleetAircraftId, out var a) ? a.Registration : null)
+            .Where(r => r is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var advisories = result.Advisories
+            .Where(a => ownRegistrations.Contains(a.Split(' ', 2)[0]))
+            .ToList();
+
+        return Results.Ok(new { pilotId = pilot.Id, dutyDays = dto, autoSuspendOnMaintenance = schedule.AutoSuspendOnMaintenance, advisories });
     }
 
     /// <summary>
