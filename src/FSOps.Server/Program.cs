@@ -245,6 +245,7 @@ apiV1.MapSimEndpoints();
 apiV1.MapFlightEndpoints();
 apiV1.MapFleetEndpoints();
 apiV1.MapFleetDisposalEndpoints();
+apiV1.MapFleetRepositionEndpoints();
 apiV1.MapFinanceEndpoints();
 apiV1.MapPilotEndpoints();
 apiV1.MapMaintenanceEndpoints();

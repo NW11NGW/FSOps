@@ -160,6 +160,52 @@ export interface LeaseTerminationQuote {
   blockReason: string | null
 }
 
+/** One airport a stranded aircraft may be repositioned to - see GET /fleet/{id}/reposition-options.
+ *  `routeCount` is how many of the airline's active routes touch this airport, in either
+ *  direction, so the picker can tell a hub from a single-route outstation at a glance. */
+export interface RepositionDestination {
+  icao: string
+  name: string
+  municipality: string | null
+  routeCount: number
+}
+
+/**
+ * GET /fleet/{id}/reposition-options - everything the reposition dialog needs before the player
+ * picks anywhere. Read-only and side-effect-free, safe to call on every open of the dialog.
+ *
+ * `destinations` is restricted to airports the airline already has an active route to or from -
+ * never every airport in the world - and never includes wherever the aircraft already is. When
+ * `canReposition` is false, `blockReason` is server-authored and always ends in something the
+ * player can actually do, so the UI must render it verbatim rather than substituting its own
+ * wording.
+ */
+export interface RepositionOptions {
+  fleetAircraftId: string
+  registration: string
+  aircraftTypeName: string
+  currentIcao: string
+  currentAirportName: string | null
+  cost: number
+  cashBalance: number
+  /** cashBalance - cost, computed server-side so the confirmation can never show a figure that
+   *  disagrees with what the commit actually posts. */
+  cashAfter: number
+  destinations: RepositionDestination[]
+  canReposition: boolean
+  blockReason: string | null
+}
+
+/** POST /fleet/{id}/reposition response. */
+export interface RepositionResult {
+  fleetAircraftId: string
+  registration: string
+  fromIcao: string
+  toIcao: string
+  cost: number
+  cashBalance: number
+}
+
 /** POST /fleet/{id}/end-lease response. */
 export interface LeaseTerminationResult {
   fleetAircraftId: string

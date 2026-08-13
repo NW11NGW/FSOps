@@ -59,6 +59,11 @@ public static class LedgerCostClassifier
         LedgerCategory.CrewCost => true,
         LedgerCategory.CancellationFee => true,
         LedgerCategory.GsxServices => true,
+        // Variable, not capital: a positioning fee buys nothing the airline still owns afterwards -
+        // it is a service charge incurred only when the player chooses to move an aircraft, which is
+        // precisely the "owed only if you do something" side of the split. Sits alongside
+        // CancellationFee and GsxServices, which are operating costs of the same shape.
+        LedgerCategory.AircraftRepositioning => true,
         _ => false,
     };
 

@@ -97,6 +97,11 @@ export type LedgerCategory =
   | 'LoanProceeds'
   | 'CancellationFee'
   | 'VatsimOnlineBonus'
+  // Never actually posted against a flight (a repositioning line is airline-level, with no
+  // FlightId), but kept in step with the backend enum and lib/ledgerCategory.ts's own copy - these
+  // are meant to be the same list, and a union that quietly diverges is how a genuinely-missing
+  // category ends up rendering as a raw string one day.
+  | 'AircraftRepositioning'
   | 'Other'
 
 /** One posted LedgerTransaction for a flight - the itemised financial outcome the report card

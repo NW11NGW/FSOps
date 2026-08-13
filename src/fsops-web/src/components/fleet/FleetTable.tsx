@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, Banknote, LogOut, Pencil, Plane, ShieldCheck, Users, Wrench } from 'lucide-react'
+import { AlertTriangle, Banknote, LogOut, MapPin, Pencil, Plane, ShieldCheck, Users, Wrench } from 'lucide-react'
 
 import { ConditionBar } from '@/components/fleet/ConditionBar'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +27,31 @@ interface FleetTableProps {
    *  moment of the player's choosing. Omitted entirely hides the button; shares the actions column
    *  with onDispose rather than adding a second column. */
   onPerformMaintenance?: (aircraft: FleetAircraftSummary) => void
+  /** Opens RepositionAircraftDialog - moving an idle aircraft to another airport the airline serves
+   *  without flying it there, the fix for a stranded airframe. Omitted entirely hides the button;
+   *  shares the actions column with onDispose/onPerformMaintenance. */
+  onReposition?: (aircraft: FleetAircraftSummary) => void
+}
+
+/**
+ * Why this aircraft cannot be repositioned right now, or null when it can. Mirrors
+ * AircraftRepositionEvaluator's own refusal order (in flight, then grounded, then not reserved), so
+ * the disabled button's tooltip agrees with what the server would say if it were clicked anyway.
+ *
+ * Deliberately disabled-with-a-reason rather than hidden: a control that silently vanishes teaches
+ * the player nothing, and a button that always refuses is worse than no button at all. The routes,
+ * cash and destination checks are NOT duplicated here - those need server state the table does not
+ * have, and the dialog reports them properly from `blockReason`.
+ */
+function repositionBlockedReason(aircraft: FleetAircraftSummary): string | null {
+  if (aircraft.status === 'InFlight') return `${aircraft.registration} is in flight - it can't be moved mid-sector.`
+  if (aircraft.status === 'InMaintenance') {
+    return `${aircraft.registration} is grounded for maintenance - an aircraft that can't fly can't be moved either.`
+  }
+  if (!aircraft.reservedForPlayer) {
+    return `${aircraft.registration} is available to virtual pilots. Reserve it for yourself first, then move it.`
+  }
+  return null
 }
 
 function statusBadge(aircraft: FleetAircraftSummary) {
@@ -52,7 +77,16 @@ function formatUntil(iso: string | null): string | null {
   return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReservation, onDispose, onPerformMaintenance }: FleetTableProps) {
+export function FleetTable({
+  fleet,
+  status,
+  emptyAction,
+  onRename,
+  onToggleReservation,
+  onDispose,
+  onPerformMaintenance,
+  onReposition,
+}: FleetTableProps) {
   const { fmt } = useSettings()
 
   if (status === 'loading') {
@@ -101,7 +135,7 @@ export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReser
             <TableHead>Condition</TableHead>
             <TableHead>Fuel on board</TableHead>
             {onToggleReservation && <TableHead>Reservation</TableHead>}
-            {(onDispose || onPerformMaintenance) && (
+            {(onDispose || onPerformMaintenance || onReposition) && (
               <TableHead className="text-right">
                 <span className="sr-only">Actions</span>
               </TableHead>
@@ -195,9 +229,42 @@ export function FleetTable({ fleet, status, emptyAction, onRename, onToggleReser
                   </div>
                 </TableCell>
               )}
-              {(onDispose || onPerformMaintenance) && (
+              {(onDispose || onPerformMaintenance || onReposition) && (
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1.5">
+                    {onReposition &&
+                      (() => {
+                        const blocked = repositionBlockedReason(aircraft)
+                        const button = (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={blocked !== null}
+                            onClick={() => onReposition(aircraft)}
+                          >
+                            <MapPin className="size-3.5" />
+                            Move
+                          </Button>
+                        )
+
+                        // A disabled button swallows pointer events, so the tooltip needs a wrapper
+                        // that still receives them - otherwise the one case where the player most
+                        // needs the reason is the one case they cannot get it.
+                        return blocked ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span tabIndex={0}>{button}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{blocked}</TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>{button}</TooltipTrigger>
+                            <TooltipContent>Move this aircraft to another airport you serve, without flying it there.</TooltipContent>
+                          </Tooltip>
+                        )
+                      })()}
                     {onPerformMaintenance && (
                       <Button
                         type="button"

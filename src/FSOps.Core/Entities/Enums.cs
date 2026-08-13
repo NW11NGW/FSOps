@@ -164,6 +164,18 @@ public enum LedgerCategory
     /// </summary>
     VatsimOnlineBonus,
 
+    /// <summary>
+    /// The flat charge for moving an idle aircraft to another airport the airline serves without
+    /// flying it there - see <see cref="FSOps.Core.Economy.AircraftRepositioningConfig"/> and
+    /// FleetRepositionEndpoints. Its own category rather than
+    /// <see cref="Other"/> or <see cref="Handling"/>: the Finances page groups by category, and
+    /// filing a positioning fee under handling would misattribute it to a flight that never
+    /// happened - "what did I spend moving aircraft around" is a question the ledger should be able
+    /// to answer on its own. Stored as text (see LedgerTransactionConfiguration), so adding this
+    /// value needs no migration.
+    /// </summary>
+    AircraftRepositioning,
+
     Other,
 }
 
