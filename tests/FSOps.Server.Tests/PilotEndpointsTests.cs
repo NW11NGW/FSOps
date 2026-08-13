@@ -371,6 +371,41 @@ public class PilotEndpointsTests
     }
 
     [Fact]
+    public async Task ReleaseAsync_IsRefusedWhileThePilotHasASectorInTheAir()
+    {
+        // Releasing soft-deletes the pilot and cascades to their schedule, so allowing it mid-sector
+        // would leave a live flight owned by a deleted pilot. Three separate documents already told
+        // players this was blocked; the check itself had never been written.
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, _) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+
+        ctx.Db.Flights.Add(new Flight
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            RouteId = outbound.Id,
+            FleetAircraftId = aircraftId,
+            PilotId = pilot.Id,
+            Status = FlightStatus.InProgress,
+            PlannedDepartureUtc = DateTimeOffset.UtcNow,
+            CreatedUtc = DateTimeOffset.UtcNow,
+        });
+        await ctx.Db.SaveChangesAsync();
+
+        var refused = await PilotEndpoints.ReleaseAsync(pilot.Id, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(refused));
+
+        // And the pilot is genuinely still there - a refusal that half-applied would be worse than
+        // the gap it replaces.
+        var stillHired = await ctx.Db.Pilots.FirstOrDefaultAsync(p => p.Id == pilot.Id);
+        Assert.NotNull(stillHired);
+        Assert.Null(stillHired!.DeletedUtc);
+    }
+
+    [Fact]
     public async Task AircraftOptions_ReservedAircraftIsIneligible_WithAQuietReason()
     {
         using var ctx = await RouteTestContext.CreateAsync();

@@ -88,7 +88,7 @@ Once it's running, open your browser and go to:
 http://localhost:5977
 ```
 
-The first time FSOps runs, it needs to import world airport and runway data into its local database — around 78,000 airports and their runways, sourced from a bundled dataset rather than downloaded, so it doesn't need internet access. This kicks off in the background as soon as the server starts and takes roughly half a minute; it doesn't hold up the airline setup wizard described below, which opens straight away, but airport search (including the wizard's home-base step) will only return complete results once the import has actually finished. If you land on the main Dashboard before it's done, a banner near the top shows its progress percentage until it completes; from then on it never runs again. Leave the terminal window open — closing it stops the server.
+The first time FSOps runs, it needs to import world airport and runway data into its local database — roughly 44,000 airports and about 74,000 runways, sourced from a bundled dataset rather than downloaded, so it doesn't need internet access. (The Dashboard shows the exact counts once it's done.) This kicks off in the background as soon as the server starts and takes roughly half a minute; it doesn't hold up the airline setup wizard described below, which opens straight away, but airport search (including the wizard's home-base step) will only return complete results once the import has actually finished. If you land on the main Dashboard before it's done, a banner near the top shows its progress percentage until it completes; from then on it never runs again. Leave the terminal window open — closing it stops the server.
 
 ### Running the desktop shell instead
 

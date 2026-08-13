@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Statistics page, importing your SimBrief flight plan, and seeing online VATSIM controllers on your live map, all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
+This guide covers how to use FSOps, feature by feature. Everything described below is built and describes how FSOps actually behaves today: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Finances page and a Statistics page, importing your SimBrief flight plan, and seeing online VATSIM controllers and traffic on your live map. FSOps is still under active development, so this guide changes as the app does — but nothing here is a description of something that hasn't shipped.
 
 ## Table of contents
 
@@ -10,7 +10,12 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
   - [Strategy profiles](#strategy-profiles)
   - [Starter aircraft](#starter-aircraft)
 - [Settings](#settings)
+  - [Display](#display)
   - [Airline](#airline)
+  - [SimBrief](#simbrief)
+  - [VATSIM](#vatsim)
+  - [Data](#data)
+  - [Updates](#updates)
 - [Building routes](#building-routes)
   - [Your route network on the map](#your-route-network-on-the-map)
   - [Round trips and where your aircraft actually is](#round-trips-and-where-your-aircraft-actually-is)
@@ -43,6 +48,8 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 - [The Finances page](#the-finances-page)
 - [The live operations map](#the-live-operations-map)
   - [Online VATSIM controllers](#online-vatsim-controllers)
+  - [Your VATSIM CID](#your-vatsim-cid)
+  - [The online-flying bonus](#the-online-flying-bonus)
 - [Statistics dashboards](#statistics-dashboards)
 - [A worked example, start to finish](#a-worked-example-start-to-finish)
 
@@ -59,7 +66,7 @@ FSOps opens straight into a full-screen setup wizard whenever no airline exists 
 Alongside strategy, the wizard asks you to choose a **playstyle** — Casual or True-life. Unlike strategy, this is **permanent for the life of your airline**: there's no setting to change it afterwards, only deleting the airline and starting over (going Casual → True-life would multiply your fixed costs roughly twelvefold overnight; the reverse would trivialise everything you'd already earned). Playstyle sets your starting capital, every aircraft type's lease rate, your lease deposit term, monthly insurance, maintenance downtime, and the ceiling on loan interest rates — it shapes how your airline is *run*, not just how fast it earns.
 
 - **Casual** — forgiving fixed costs, so flying occasionally still runs a growing airline. Starting capital **£60,000**, a one-month lease deposit, and a deliberately game-balanced starter lease of **£30,000/month** for either starter type (A320 or 737-800) — see [Starter aircraft](#starter-aircraft) below for why that figure is low. £60,000 is deliberately lean: it covers the £30,000 deposit plus a month's cushion and sits below what a used airframe costs, so a new airline can't buy its way past flying its first sector — one leg a day already nets roughly £45,000 a month, so the airline is profitable from day one regardless. Monthly insurance is **£6,000** per aircraft. A-check maintenance grounds an aircraft for **4 hours**, a C-check for **24 hours** — a nuisance and a bill, not a chunk of your evening lost. Loan interest is capped at **5% APR**. The honest choice for playing in short, occasional sessions.
-- **True-life** — real-world figures throughout. Starting capital **£2,500,000**, a two-month lease deposit, and realistic starter lease rates (roughly **£380,000/month** for an A320, **£390,000/month** for a 737-800). Monthly insurance is **£50,000** per aircraft. A-check downtime is **24 hours**, C-check is **336 hours** (about a fortnight). Loan interest is capped at **8% APR**. At these rates, a single aircraft flown only occasionally runs at a genuine loss — True-life's progression is built to depend on hiring virtual pilots to fly standing schedules once that feature lands, not on flying it yourself alone. The honest choice if you want to run something closer to an actual carrier.
+- **True-life** — real-world figures throughout. Starting capital **£2,500,000**, a two-month lease deposit, and realistic starter lease rates (roughly **£380,000/month** for an A320, **£390,000/month** for a 737-800). Monthly insurance is **£50,000** per aircraft. A-check downtime is **24 hours**, C-check is **336 hours** (about a fortnight). Loan interest is capped at **8% APR**. At these rates, a single aircraft flown only occasionally runs at a genuine loss — True-life's progression depends on [hiring virtual pilots](#hiring-and-assigning-virtual-pilots) to fly standing schedules, not on flying it yourself alone. The honest choice if you want to run something closer to an actual carrier.
 
 Every other figure in the economy — fares, demand, fuel prices, landing/handling fees, the maintenance cycle itself, and the used-aircraft discount — is identical between the two; only the numbers above differ. The onboarding cards and Settings → Airline both fetch these figures live from FSOps' own configuration, so they can't drift out of sync with what founding an airline (or leasing an aircraft later) actually charges.
 
@@ -77,11 +84,22 @@ Fuel and landing fees never change by strategy — they're physical, regulatory 
 
 ### Starter aircraft
 
-You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-800 (189 seats, 3,115 nm range) as your airline's first aircraft. It's **leased**, not bought — founding your airline posts a lease deposit from your starting capital (or top-up loan) rather than the aircraft's full multi-million-pound price, which is what makes starting an airline affordable. The deposit and the ongoing monthly rate both depend on your [playstyle](#playstyles): under Casual it's a one-month deposit on a deliberately game-balanced **£30,000/month** rate for either starter type — a real A320 or 737-800 lease runs closer to £380,000–£390,000 a month, which is exactly what True-life charges instead, on a two-month deposit. Founding your airline is only the first lease payment; from then on, the same monthly rate posts automatically every 30 days as part of the [monthly billing cycle](#the-monthly-billing-cycle) — nothing about the starter aircraft is a one-off charge. Its range determines which routes you can create until you add more aircraft to your fleet: a route beyond this aircraft's practical range can't be created (see [Building routes](#building-routes)).
+You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-800 (189 seats, 3,115 nm range) as your airline's first aircraft. It's **leased**, not bought — founding your airline posts a lease deposit from your starting capital (or top-up loan) rather than the aircraft's full multi-million-pound price, which is what makes starting an airline affordable. The deposit and the ongoing monthly rate both depend on your [playstyle](#playstyles): under Casual it's a one-month deposit on a deliberately game-balanced **£30,000/month** rate for either starter type — a real A320 or 737-800 lease runs closer to £380,000–£390,000 a month, which is exactly what True-life charges instead, on a two-month deposit. Founding your airline is only the first lease payment; from then on, the same monthly rate posts automatically every 30 days as part of the [monthly billing cycle](#the-monthly-billing-cycle) — nothing about the starter aircraft is a one-off charge. While it's the only aircraft you own, its range is what determines which routes you can create: range is always judged against your whole fleet, so with a fleet of one, a sector beyond this aircraft's practical range is genuinely blocked until you add something with the legs for it (see [Range](#range)).
 
 ## Settings
 
-Reachable from the main navigation once your airline exists. Most of Settings applies to your account (currency, units, theme) rather than to a specific airline — the exception is the **Airline** section below, which edits your airline's own identity and strategy.
+Reachable from the main navigation once your airline exists. Settings is six cards, in this order: **Display**, **Airline**, **SimBrief**, **VATSIM**, **Data**, and **Updates**. Most of them apply to your account rather than to a specific airline — the exception is **Airline**, which edits your airline's own identity and strategy.
+
+### Display
+
+Everything about how FSOps presents numbers and times to you. Nothing here changes a stored figure; it all changes how one is shown.
+
+- **Currency** — FSOps stores every amount (cash balance, fares, purchase prices, loan payments) in a single base currency unit, GBP-pegged, inside the database. The currency you pick here is a **display conversion only**: every screen multiplies the stored amount by that currency's fixed display rate and formats it with the right symbol and decimal places. Changing it changes how numbers look everywhere in the app; it never changes your actual balance or rewrites any stored figure. FSOps isn't a forex simulator — display rates are fixed, not fetched or refreshed.
+- **Distance** — nautical miles or kilometres, used for route distances.
+- **Altitude** — feet or metres, used for cruise altitude.
+- **Weight** — kilograms or pounds, used for fuel weights.
+- **Time zone** and **clock format** — UTC or local time, and a 24-hour/12-hour toggle.
+- **Theme** — light or dark, switchable at any time.
 
 ### Airline
 
@@ -92,30 +110,27 @@ Your airline's name, accent colour, strategy, and your own name as its founding 
 - **Your name** — 1 to 40 characters. This is you, the player: it's shown on every flight you fly and alongside your entry on the [Pilots page](#hiring-and-assigning-virtual-pilots), the same as it was when you set it (or left it blank) at founding.
 - **Strategy** — see [Strategy profiles](#strategy-profiles) above for what each one means. Changing it here is **going forward only**: it changes the fares and demand suggested for new routes and which routes get an advisory note from here on, and never touches completed flights, posted ledger entries, or the fares already set on your existing routes. Each profile's card shows its real fares, price sensitivity, typical load factor, cost and route-advice figures, fetched live — if that fetch fails (for example, right after FSOps was updated while running), the cards say so and offer a retry, and choosing a profile still works even without the figures loaded.
 
-### Currency
-
-FSOps stores every amount — cash balance, fares, purchase prices, loan payments — in a single base currency unit (GBP-pegged) inside the database. The currency you pick here is a **display conversion only**: every screen multiplies the stored amount by that currency's fixed display rate and formats it with the right symbol and decimal places. Changing your currency in settings changes how numbers look everywhere in the app; it never changes your actual balance or rewrites any stored figures. FSOps isn't a forex simulator — display rates are fixed, not fetched or refreshed.
-
-### Units
-
-- **Distance** — nautical miles or kilometres, used for route distances.
-- **Altitude** — feet or metres, used for cruise altitude.
-- **Weight** — kilograms or pounds, used for fuel weights.
-- **Time display** — UTC or local time, plus a 24-hour/12-hour clock toggle.
-
-### Theme
-
-Switch between light and dark theme at any time.
-
 ### SimBrief
 
 Your SimBrief Pilot ID — find it on SimBrief under Account → Pilot ID. Set it and the Fly screen's flight brief pulls your latest OFP's fuel, cruise altitude, block time and filed route instead of FSOps' own estimate, but only when that plan matches the exact route you're about to fly — see [Plan in SimBrief](#plan-in-simbrief) below. Leave it blank (the default) and FSOps always uses its own built-in plan; nothing about your flight is sent anywhere without it, and it's entirely optional.
 
 You can also set this from the setup wizard's "Online flying" step when you first found an airline — this Settings field and the wizard's stay in sync either way, and setting or changing it here works exactly the same after onboarding.
 
-### Danger zone: start over
+### VATSIM
 
-Settings includes a **Delete airline** action that permanently removes your airline, fleet, routes, pilots, and financial history — there is no undo. After confirming, you're returned to the setup wizard as if FSOps had never had an airline on this machine. The append-only financial ledger itself isn't purged (it's a historical record, harmless once its airline is gone) but nothing in the UI will reference it any more.
+Your VATSIM CID, also entirely optional. Setting it lets FSOps corroborate a tracked flight against the public network feed and award a small online-flying bonus; leaving it blank changes nothing about the ATC layer or the traffic layer on your map, which both work with no CID at all. See [Your VATSIM CID](#your-vatsim-cid) below for the full picture, including what is and isn't sent anywhere.
+
+### Data
+
+Two things share this card, and they are very different in consequence.
+
+**World data** shows how many airports and runways FSOps knows about and when that data last changed. A newer data set arrives with an FSOps update and is applied automatically the first time you start the app afterwards; the **Refresh** button does it sooner if you want. A refresh only ever **adds and updates — it never deletes**. Airports do sometimes disappear from the upstream source, occasionally because they really closed but just as often for editorial reasons FSOps can't tell apart. Either way, anything you've built on stays: your routes, your flight history and any aircraft parked there keep pointing at somewhere real, even if the wider world data no longer lists it.
+
+**Danger zone: start over** is a **Delete airline** action that permanently removes your airline, fleet, routes, pilots, and financial history — there is no undo. After confirming, you're returned to the setup wizard as if FSOps had never had an airline on this machine. The append-only financial ledger itself isn't purged (it's a historical record, harmless once its airline is gone) but nothing in the UI will reference it any more.
+
+### Updates
+
+Whether FSOps checks for new releases, what it found, and — if there is one — a **Download and verify** action. Off means genuinely off: no request leaves your machine at all. FSOps never runs an installer for you; the most it does is open the folder containing one it has downloaded and checked against the release's published SHA-256. See [Updating FSOps](installation.md#updating-fsops) for the whole flow, and [FSOps never tells me about updates](troubleshooting.md#fsops-never-tells-me-about-updates) if it seems too quiet.
 
 ## Building routes
 
@@ -177,6 +192,10 @@ Elsewhere, it's a hard limit on a specific airframe, exactly like range:
 
 The fare field under the plan panel starts pre-filled with the suggested fare. Edit it to set your own fare instead — enter a value that's a sane multiple of the suggested fare (very roughly, no less than a tenth and no more than ten times the suggestion); wildly out-of-range values like zero or a fare thousands of times the suggestion are rejected with an explanation. Leave the field untouched and the route is priced at the suggested fare automatically. Select **Create route** once the plan looks right and no blocking warning is showing.
 
+![The Routes page: the build panel, the network map, and the route list](../../Screenshots/Routes.png)
+
+The Routes page with four round trips built out of Bristol. The build panel on the left is waiting for both airports before it will show a plan; the map draws the whole network at once, and the table below lists each round trip once — note the paired flight numbers (`OLA501`/`OLA502` and so on), which are the outbound and return legs of a single row. The Munich sector is the only one priced above the £65 floor, because it's the only one long enough for the distance-based fare to exceed it.
+
 ### Managing the route list
 
 Every route you've created is listed below the plan panel and map, showing both airports, distance, estimated block time, fare, and status. Selecting a row loads that route's airports back into the picker and map so you can review it. Routes can be deleted from the list; deleting is a soft delete — the route stops appearing and can't be flown, but its record isn't destroyed.
@@ -208,11 +227,7 @@ This means:
 - **FSOps copies your database before applying any change to its structure.** Updates occasionally need to alter the shape of the database, and a copy taken beforehand is what you would restore from if one ever went wrong. It's only taken when there's actually something to apply, and if the copy can't be made, FSOps stops rather than proceeding without it.
 - **If the database is ever damaged, FSOps will not try to fix it by itself.** It stops and tells you which file is affected, and asks you to copy it somewhere safe first — because a damaged file is sometimes still repairable, and a well-meant automatic "repair" is how an airline gets lost for good.
 
-### World data
-
-**Settings → World data** shows how many airports and runways FSOps knows about and when that data last changed. A newer data set arrives with an FSOps update and is applied automatically the first time you start the app afterwards; the **Refresh** button does it sooner if you want.
-
-A refresh only ever **adds and updates — it never deletes**. Airports do sometimes disappear from the upstream source, occasionally because they really closed but just as often for editorial reasons FSOps can't tell apart. Either way, anything you've built on stays: your routes, your flight history and any aircraft parked there keep pointing at somewhere real, even if the wider world data no longer lists it.
+The world airport and runway data FSOps searches against lives in that same database, and is imported from a bundled dataset on first launch rather than downloaded. See [Settings → Data](#data) for what it holds, how it's refreshed, and why a refresh never deletes anything.
 
 ## Planning and flying a tracked flight
 
@@ -220,7 +235,7 @@ This is the core loop of FSOps: pick a route on the **Fly** screen (main navigat
 
 ### Connecting to the simulator
 
-FSOps needs a live SimConnect connection to track anything, so make sure MSFS 2024 is running and you're loaded into a flight (on the ground or in the air — the main menu doesn't expose live data) before you expect tracking to start. See [Getting Started](getting-started.md#7-connect-to-msfs) for the full connection walkthrough. Two small pills in the top-right of the top bar, next to your cash balance, show connection state at all times: one for FSOps' own live-update link to its backend, one for the simulator itself ("Sim connected" in green, "Sim offline" otherwise). If the sim drops out mid-flight, FSOps keeps retrying the connection on its own — see [Ending a flight, and what happens if it gets interrupted](#ending-a-flight-and-what-happens-if-it-gets-interrupted) below for what happens to a flight that was in progress when that happens.
+FSOps needs a live SimConnect connection to track anything, so make sure MSFS 2024 is running and you're loaded into a flight (on the ground or in the air — the main menu doesn't expose live data) before you expect tracking to start. See [Getting Started](getting-started.md#7-connect-to-msfs) for the full connection walkthrough. Two small pills in the top-right of the top bar, next to your cash balance, show connection state at all times: one for FSOps' own live-update link to its backend, one for the simulator itself ("Sim connected" in green, "Sim offline" otherwise). The cash figure beside them keeps itself current rather than freezing at whatever it was when the page loaded: it refreshes every 30 seconds, and again the moment you click back into FSOps' window — so money your virtual pilots earned or spent while you were in the simulator is already reflected when you look. A refresh that fails leaves the last known figure on screen rather than blanking it. If the sim drops out mid-flight, FSOps keeps retrying the connection on its own — see [Ending a flight, and what happens if it gets interrupted](#ending-a-flight-and-what-happens-if-it-gets-interrupted) below for what happens to a flight that was in progress when that happens.
 
 ### Picking a route to fly
 
@@ -239,6 +254,10 @@ A tabbed panel breaks two of those figures down further:
 
 - **Block time** — taxi-out, climb, cruise, descent, and taxi-in, plus the total.
 - **Fuel** — trip fuel, taxi fuel, contingency, alternate, and final reserve, plus the total. This is the same breakdown described under [Building routes](#building-routes) — the flight brief is just that route's plan, applied to the aircraft you're about to fly.
+
+![The Fly screen: the route chooser, the SimBrief panel, and the flight brief](../../Screenshots/Flyy.png)
+
+The Fly screen in one shot. On the left, one route is **Ready now** and three are not — each unflyable one naming the actual obstacle rather than just greying out. On the right, the SimBrief panel has found a real OFP and declined it, because that plan is for EGGD–EGPH and this flight is EGPH–EGGD; the built-in plan is used and says so. Below it the six headline figures, the block-time breakdown, and the three readiness checks — all three failing here, and **Start flight** still available, because readiness informs rather than blocks.
 
 ### Readiness checks
 
@@ -295,6 +314,10 @@ The report card's header shows the route, the airports' names, and a status badg
 - **Landing quality**, headed by the **touchdown rate** — vertical speed at the moment of touchdown, in feet per minute. As a rule of thumb: roughly **0 to -200 fpm** reads as a smooth, well-judged touchdown; **-200 to -400 fpm** is graded a firmer landing; beyond **-400 fpm**, it's graded a hard landing. Alongside it: **peak G-force** (the highest G reading in the few seconds around touchdown, a secondary smoothness signal), **bounces** (how many times the aircraft touched down before settling — 0 for a clean landing), and **centreline deviation** — how far off the runway's centreline, in metres, you touched down. Two different things can mean there's no rate to show, and the card is careful not to blur them: if a touchdown genuinely wasn't captured at all (for example, one completed with estimates after an interruption), it says so plainly; if a touchdown *was* captured but the simulator itself never reported a rate for it, the card reads **"landing rate not measured"** rather than showing a false zero — see [Troubleshooting](troubleshooting.md#a-landing-shows-as-not-measured) if you see this on a landing you're confident you felt.
 - **Phase timeline** — the same ten-phase timeline from the live view, now showing the actual clock time each OOOI milestone (out, off, on, in) was captured.
 - **Actual vs. planned** — your actual block time and fuel burn set directly against what the flight brief predicted, each with a plain-language delta ("N minutes ahead of schedule", "N kg over plan", and so on).
+
+![A post-flight report card](../../Screenshots/Flight%20Report.png)
+
+A completed Bristol–Edinburgh sector. The touchdown rate of -250 fpm is graded **Firm** — the bar underneath shows where that sits against the smooth/firm/hard bands — alongside peak G, bounce count and centreline deviation. The phase timeline below carries the real clock times each OOOI milestone was captured at, and "Actual vs. planned" sets the 52-minute block time and 2,371 kg burn against the 55 minutes and 4,866 kg the plan expected. The fuel section states plainly that only the 2,371 kg actually burned was billed.
 
 ### Flight integrity
 
@@ -475,7 +498,9 @@ As your airline grows, you won't want to fly every route yourself. The **Pilots*
 
 Select **Hire pilot**, optionally give them a name (leave it blank and they're named "First Officer" plus a number), and confirm. There's no upfront hiring cost — a new pilot costs you nothing until the next [monthly billing cycle](#the-monthly-billing-cycle) tick, which charges their salary (the same **£9,000/month** every pilot earns, including you) whether or not they've flown anything yet. You can hire as many pilots as you want; each one needs their own schedule to actually earn their keep.
 
-The Pilots table shows every pilot you employ — your own entry alongside every virtual pilot you've hired — with their status (**Available**, **Flying**, or **Inactive**), skill rating, hours flown, monthly salary, and (for virtual pilots) a weekly summary of sectors flown and expected revenue once they have a schedule. **Your own hours flown accrue from your tracked flights** the same way a virtual pilot's do from theirs, so your entry keeps up to date with how much you've actually flown. **Release** removes a pilot; it can't be undone, and it's blocked while they're actually mid-flight — release them once they land, or wait it out.
+The Pilots table shows every pilot you employ — your own entry alongside every virtual pilot you've hired — with their status, skill rating, hours flown, monthly salary, and (for virtual pilots) a weekly summary of sectors flown and expected revenue once they have a schedule. The status column currently reads **Available** for everybody, always: it's a record of employment rather than of what a pilot is doing this minute, and a pilot being mid-sector isn't reflected there. To see what's actually in the air right now, use the Dashboard's [live operations map](#the-live-operations-map), which draws every airborne flight, yours and your virtual pilots'. **Your own hours flown accrue from your tracked flights** the same way a virtual pilot's do from theirs, so your entry keeps up to date with how much you've actually flown.
+
+**Release** removes a virtual pilot, and takes their weekly schedule with them — the whole standing week is deleted alongside the pilot, so releasing somebody and hiring a replacement means building that week again from scratch. It can't be undone. Two things will refuse it: you can never release **yourself** (your own entry is your airline's founding pilot, not a hire), and a virtual pilot **with a sector in the air right now** can't be released until that flight finishes — releasing them mid-flight would leave the flight with nobody to resolve against. Virtual pilots' flights resolve on their own on the wall clock, so this is usually a matter of waiting rather than doing anything.
 
 ### Skill, landing quality, and idle decay
 
@@ -522,6 +547,10 @@ A virtual pilot's scheduled flights don't complete while you watch — they comp
 
 Because billing and virtual flights both resolve against the real-world clock rather than the time FSOps happens to be open, closing the app for a while and reopening it can land a materially different cash balance with no warning — several months of lease payments arriving at once looks exactly like a bug unless something explains it. So on startup, if enough happened while you were gone, FSOps shows a **"While you were away"** dialog before anything else: how long the app was closed, everything charged broken down by category, what your virtual pilots flew and earned (sectors, revenue, cost, net), any maintenance that fell due, and any flight that was skipped, cancelled or suspended, with the reason for each. It links straight through to the [Finances page's](#the-finances-page) ledger for the full detail, and a **Got it** button dismisses it — it won't reappear for the same window once acknowledged, only for whatever happens next. A very short gap (a normal restart, a quick reload) never triggers it; there has to be something genuine to report.
 
+![The "while you were away" summary](../../Screenshots/While%20You%20were%20away.png)
+
+Just over two hours away, summarised. The net effect is stated first, against the balance it produced, so the number at the top of the screen is already explained before you go looking for it. Below, every charge grouped by category with the number of postings behind each, and then what your virtual pilots did with the time — here one sector flown, earning £4,160 against £2,933.31 of cost. Note that this is a summary of the ledger, not a second source: **View the full ledger** goes to the same rows.
+
 ## The Finances page
 
 The **Finances** page (main navigation) is where you actually run the airline from, rather than piece its state together from the Fleet and Pilots pages. Four figures sit at the top always: your **cash balance** and its change over the last 30 days, and your **income**, **expenditure** and **net profit or loss** for the current 30-day billing period. Below that, tabs cover each area in turn:
@@ -535,11 +564,21 @@ The **Finances** page (main navigation) is where you actually run the airline fr
 
 Every figure that isn't explicitly marked as an estimate comes straight from posted ledger transactions, the same rule the rest of the app follows — nothing shown here can disagree with what actually moved your cash balance.
 
+![The Finances page's Ledger tab](../../Screenshots/Ledger.png)
+
+The Ledger tab, showing two sectors' worth of postings. Every line a flight produces is itemised separately rather than netted into one figure — ticket revenue, then landing, passenger, crew, maintenance, turnaround, fuel, parking and handling — and the fuel line names what it charged for and where ("2371 kg burned, billed at EGGD @ 0.8386/kg"). The icon at the end of each row opens the flight that posted it. The category filter above narrows the list to one kind of cost, which is how you'd answer a question like "what has repositioning aircraft cost me".
+
 ## The live operations map
+
+![The Dashboard, with the live operations map](../../Screenshots/Dashboard.png)
+
+The Dashboard in full. The sim clock at the top left runs off the simulator's own time rather than your machine's; the KPI row and the reputation card beneath it are read back from the ledger and your last few sectors, never stored separately. In the "Live operations" card, nothing is airborne, so the map says so in a card that folds away; **Show VATSIM traffic** is offered but off, and the ATC coverage list below the map is populated regardless.
 
 The **Dashboard**'s "Live operations" card shows your whole route network plus every aircraft currently in the air — your own tracked flight if you're flying, and every virtual pilot's currently-airborne scheduled leg, all on the same map. A virtual pilot's aircraft isn't a stored position: it's calculated fresh each time from their schedule and how much of that leg's block time has elapsed, so it's always consistent with how that flight will actually resolve once its time comes.
 
-Hover any aircraft for a flight card: flight number, route, pilot name, aircraft registration and type, scheduled departure and estimated arrival times (in UTC), elapsed versus remaining time, percentage complete, and current phase (taxi out, climb, cruise, descent, taxi in). Your own aircraft is badged **You**; every other aircraft is badged **Virtual**, so it's always clear which one you're actually flying. When nothing is airborne, the map simply shows your network with no aircraft on it — no error, no placeholder text needed.
+Hover any aircraft for a flight card: flight number, route, pilot name, aircraft registration and type, scheduled departure and estimated arrival times (in UTC), elapsed versus remaining time, percentage complete, and current phase (taxi out, climb, cruise, descent, taxi in). Your own aircraft is badged **You**; every other aircraft is badged **Virtual**, so it's always clear which one you're actually flying.
+
+**Nothing drawn over the map stays in the way.** When nothing is airborne, a card over the map says so and offers the two things that would change it — hiring a pilot, or flying a route yourself. Close it (the **×**, or just press Escape) and it doesn't vanish, it folds down to a small **Nothing airborne** pill along the bottom, so the map underneath is usable immediately and the message is one click away when you want it back. The **Legend** in the bottom-right corner folds the same way, to a **Legend** pill. Both remember what you chose, so a map you folded away stays folded the next time you open the Dashboard — with one deliberate exception: the "nothing airborne" card re-arms itself the moment a real flight starts, so it's waiting in full the next time your network genuinely goes quiet. Dismissing it once is not opting out of ever seeing it again.
 
 ### Online VATSIM controllers
 
@@ -551,7 +590,9 @@ The same map shows who's actually controlling the airspace you fly in — no set
 
 **What isn't shown, and why.** Approach TRACONs that aren't named after an airport have no published boundary data available, so FSOps shows nothing rather than inventing a shape — a wrong boundary on a map reads as authoritative. There are **no altitude limits** in this data either, so a sector polygon says nothing about which levels are being worked, and top-down coverage is never inferred. An empty area means "FSOps can't say", not necessarily "nobody is there".
 
-**Other VATSIM traffic near your network is shown too**, off the same feed and toggleable. A small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm) — never your own aircraft, and never anyone's if the feed is unreachable. Toggle it from the button above the map; it's on by default there.
+**Other VATSIM traffic near your network can be shown too**, off the same feed — but it **starts hidden**, and until you switch it on FSOps doesn't even ask for it. The **Show VATSIM traffic** button above the map turns it on: a small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm). Your own aircraft is never drawn by this layer, and nothing appears if the feed is unreachable. FSOps remembers the setting, so switching it on once keeps it on.
+
+This affects **other people's aircraft only**. Your own tracked flight, your virtual pilots' aircraft, and the ATC coverage described above are all unaffected by the toggle and are shown regardless — the dashboard is about your airline first, and everyone else's traffic is context you opt into.
 
 If VATSIM's feed is temporarily unreachable the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. Nothing about your flight or the economy depends on any of this.
 
@@ -582,7 +623,7 @@ The **Stats** page (main navigation) is where your airline's history turns into 
 - **Fleet** — every aircraft's sectors flown, hours flown and idle in the period, a utilisation percentage, hours to its next A- or C-check, and current condition — the same "how close to its next check" figures the Fleet page itself shows, so they can't drift apart either.
 - **Pilots** — a logbook covering every pilot who's flown in the window, you included: sectors, hours, on-time percentage, and average landing rate. A figure that genuinely couldn't be measured (for example, a pilot whose every sector in the window was a manual completion) reads "Not measured," never a misleading zero.
 
-Every one of the four tabs has its own **Export CSV** button, exporting exactly the rows currently on screen for the period selected — handy for keeping your own record outside FSOps, or just looking at the raw numbers in a spreadsheet.
+Performance, Fleet and Pilots each have their own **Export CSV** button, exporting exactly the rows currently on screen for the period selected — handy for keeping your own record outside FSOps, or just looking at the raw numbers in a spreadsheet. Finance has none, because it isn't this page's data to export: those figures come from the Finances page's own endpoints, and its [Ledger tab](#the-finances-page) is the place to take them from.
 
 ## A worked example, start to finish
 

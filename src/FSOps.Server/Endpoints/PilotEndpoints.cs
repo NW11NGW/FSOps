@@ -191,6 +191,21 @@ public static class PilotEndpoints
             return Results.BadRequest(new { error = "The player pilot cannot be released." });
         }
 
+        // Releasing soft-deletes the pilot and cascades to their schedule below, so doing it to
+        // someone with a sector in the air would leave that flight owned by a deleted pilot -
+        // recoverable, but only by hand. Refuse instead. Note this cannot lean on Pilot.Status:
+        // that column only ever reads Available (nothing in the app writes Flying), so the flight
+        // itself is the sole reliable answer to "are they up right now".
+        var flightInProgress = await db.Flights
+            .AnyAsync(f => f.PilotId == pilot.Id && f.Status == FlightStatus.InProgress, ct);
+        if (flightInProgress)
+        {
+            return Results.BadRequest(new
+            {
+                error = $"{pilot.Name} is in the air right now. Wait for the flight to finish before releasing them.",
+            });
+        }
+
         var now = DateTimeOffset.UtcNow;
         pilot.DeletedUtc = now;
 

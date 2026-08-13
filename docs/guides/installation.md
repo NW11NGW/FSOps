@@ -30,7 +30,7 @@ You do **not** need:
 - **.NET.** The installer carries its own copy of the .NET 8 runtime, so FSOps runs on a machine with no .NET installed at all.
 - **Node.js, or any development tools.** Those are only for building from source.
 - **Administrator rights.** See the next section for why.
-- **An internet connection**, except to download the installer itself. FSOps' world data — around 78,000 airports and their runways — is bundled, not downloaded, and the app makes no network calls of its own beyond the optional update check.
+- **An internet connection**, except to download the installer itself. FSOps' world data — roughly 44,000 airports and about 74,000 runways — is bundled, not downloaded. The app's own outbound calls are all optional and all opt-in: the update check, SimBrief's OFP fetch if you set a Pilot ID, VATSIM's public feed for the map's ATC layer, and the map's background tiles. Everything else works with no connection at all.
 
 ## 1. Download the installer
 
@@ -83,7 +83,7 @@ If it genuinely isn't — Windows LTSC and some tightly managed corporate images
 
 Start FSOps from the Start menu or your desktop shortcut. A window opens showing the airline setup wizard.
 
-**The first run imports world data**, and this takes roughly 35 seconds. FSOps is loading around 78,000 airports and their runways into its local database from a bundled dataset — nothing is downloaded. This happens in the background and does not hold up the setup wizard, which opens straight away.
+**The first run imports world data**, and this takes roughly 35 seconds. FSOps is loading roughly 44,000 airports and about 74,000 runways into its local database from a bundled dataset — nothing is downloaded. This happens in the background and does not hold up the setup wizard, which opens straight away.
 
 The one thing it does affect is airport search. Until the import finishes, searching for airports — including the wizard's home-base step — returns incomplete results. If you reach the main Dashboard before it's done, a banner near the top shows its progress. It never runs again after that first time.
 

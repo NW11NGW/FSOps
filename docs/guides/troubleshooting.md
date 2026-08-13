@@ -52,6 +52,11 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 
 **Symptom:** Browsing to `http://localhost:5977` shows nothing, a connection-refused error, or the terminal running FSOps reports the address is already in use.
 
+**First, which way did you launch it?** The two behave differently on a busy port, and only one of them is a problem:
+
+- **The installed app** (the FSOps window from your Start menu) doesn't mind. If 5977 is taken by something that isn't FSOps, it steps up to the next free port and tells you in its title bar; if 5977 is taken by a copy of FSOps that's already running, it attaches to that one rather than starting a second server. Either way there's nothing to fix — but it does mean the app may not be at `http://localhost:5977`, so check the window title before assuming it failed.
+- **Running the server directly** (`dotnet run --project src/FSOps.Server`, the build-from-source path) has no such fallback: it binds 5977 or fails. That's the case the steps below are for. You can point it elsewhere by setting `FSOPS_PORT` rather than freeing the port.
+
 **Solutions:**
 
 1. Make sure the backend is actually running — check the terminal window for `dotnet run --project src/FSOps.Server`. If it exited or errored, read the terminal output for the cause.
@@ -102,23 +107,27 @@ Then restart the server (`dotnet run --project src/FSOps.Server`) and reload the
 
 **Symptom:** The plan panel shows a red "This route can't be created yet" message and the **Create route** button stays disabled.
 
-**Cause:** Only two things actually block a route: departure and arrival being the same airport, or **nothing in your entire fleet** being able to fly the sector. Range is measured as **practical** operating range — roughly **0.85×** the published figure once fuel reserves are accounted for — so a sector just inside the catalogue number can still be out of reach.
+**Cause:** Exactly three things block a route, and the red message says which one you've hit:
 
-Range on its own is rarely the blocker, and it's worth knowing the three outcomes apart:
+- **Departure and arrival are the same airport.**
+- **Nothing in your entire fleet has the range** for the sector. Range is measured as **practical** operating range — roughly **0.85×** the published figure once fuel reserves are accounted for — so a sector just inside the catalogue number can still be out of reach.
+- **Nothing in your entire fleet can physically use one of the two runways** — too short for anything you own, or (for a heavy aircraft) an unpaved surface no length of which will do.
+
+Neither range nor runway is a blocker on its own, though, and it's worth knowing the three outcomes apart. They work identically:
 
 | What you have | What happens |
 | --- | --- |
-| A reserved aircraft that can fly it | Nothing — the route is created normally. |
-| Nothing reserved can, but something in the fleet can | **Not a refusal.** You get guidance to reserve a suitable aircraft. |
-| Nothing in the fleet can fly it at all | The red message, and the route is genuinely blocked. |
+| A reserved aircraft that can do it | Nothing — the route is created normally. |
+| Nothing reserved can, but something in the fleet can | **Not a refusal.** You get an amber advisory pointing you at reserving that aircraft, and the route is still created. |
+| Nothing in the fleet can do it at all | The red message, and the route is genuinely blocked. |
 
-**Solution:** If you're being pointed at reserving an aircraft, reserve one that can fly the sector — the route itself is fine. If the route is genuinely blocked, pick a different airport pair or add an aircraft with more range from the Fleet page (see [Range](user-guide.md#range) and [Buying, leasing and financing aircraft](user-guide.md#buying-leasing-and-financing-aircraft)). Amber advisory warnings (short runway, strategy mismatch) look similar but don't block creation — only the red message does.
+**Solution:** If you're being pointed at reserving an aircraft, reserve one that can fly the sector — the route itself is fine. If the route is genuinely blocked, pick a different airport pair or add a suitable aircraft from the Fleet page (see [Range](user-guide.md#range), [Runway suitability](user-guide.md#runway-suitability) and [Buying, leasing and financing aircraft](user-guide.md#buying-leasing-and-financing-aircraft)). Amber advisory messages — a strategy mismatch, or "reserve this one instead" — look similar but never block creation; only the red banner does.
 
 ## My currency looks wrong
 
 **Symptom:** Fares, balances, or prices look off after changing currency in settings, or don't match what you expected.
 
-**Cause:** FSOps stores every amount internally in a single base currency unit and only converts it for display using your selected currency's fixed rate (see [Settings — Currency](user-guide.md#currency) and [Architecture](../architecture.md#money-is-stored-in-a-single-base-unit)). Rates are fixed at build time, not live exchange rates, so they won't match real-world rates exactly — and changing currency never changes your actual stored balance, only how it's displayed.
+**Cause:** FSOps stores every amount internally in a single base currency unit and only converts it for display using your selected currency's fixed rate (see [Settings → Display](user-guide.md#display) and [Architecture](../architecture.md#money-is-stored-in-a-single-base-unit)). Rates are fixed at build time, not live exchange rates, so they won't match real-world rates exactly — and changing currency never changes your actual stored balance, only how it's displayed.
 
 **Solution:** If a number looks wrong, double check which currency is currently selected in settings. If it still looks wrong after that, it's worth reporting (see [How to report a problem](#how-to-report-a-problem)) — but a mismatch with real-world exchange rates is expected behaviour, not a bug.
 
@@ -260,9 +269,16 @@ The most common cause is a pilot who was hired but never given a schedule, or on
 
 **Symptom:** Selecting **Release** for a pilot on the Pilots page fails, or the release action isn't offered.
 
-**Cause:** A pilot can't be released while they're actually mid-flight (status **Flying**) — releasing them out from under an in-progress flight would leave that flight with no pilot to resolve against.
+**Cause:** There are two, and the message tells you which one you've hit:
 
-**Solution:** Wait for their current flight to resolve (virtual pilots resolve automatically on the wall clock — see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away)), then release them.
+- **"The player pilot cannot be released."** — you're trying to release **yourself**. Your own entry on the Pilots page is your airline's founding pilot rather than a hire, so there's no releasing it; an airline always has you. If what you actually want is to be rid of the airline entirely, that's [Settings → Data → start over](user-guide.md#data), not this.
+- **"… is in the air right now. Wait for the flight to finish before releasing them."** — that virtual pilot has a sector in progress. Releasing them out from under an in-progress flight would leave that flight with no pilot to resolve against, so it's refused outright rather than half-applied.
+
+Note that the **Status** column is no help in telling these apart — it reads "Available" for every pilot at all times, including one currently flying. The Dashboard's [live operations map](user-guide.md#the-live-operations-map) is where to look if you want to see what's actually airborne.
+
+**Solution:** For the first, nothing to do — you can't release yourself, by design. For the second, wait for that flight to resolve; a virtual pilot's flights complete on their own against the wall clock (see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away)), so this is usually a short wait rather than something you have to act on. Then release them.
+
+**Before you do release anybody, note what goes with them:** releasing a pilot deletes their whole weekly schedule too, and that can't be undone. If you're only trying to free up an aircraft or change what they fly, edit their schedule instead — releasing and re-hiring means rebuilding the week from an empty calendar.
 
 ## SimBrief import did nothing
 
@@ -317,7 +333,7 @@ Two related limits worth knowing, since neither is visible on screen: coverage i
 
 **Cause:** A few ordinary reasons, all handled by quietly leaving the badge off rather than guessing:
 
-- **No VATSIM CID set.** Go to Settings and enter your CID — see [Your VATSIM CID](user-guide.md#vatsim). With nothing set, FSOps never even asks the network about a flight.
+- **No VATSIM CID set.** Go to Settings and enter your CID — see [Your VATSIM CID](user-guide.md#your-vatsim-cid). With nothing set, FSOps never even asks the network about a flight.
 - **The flight was too short for a single check.** FSOps checks the network at most every ~20 seconds while a flight is tracked, matched to your own configured CID; a flight completed before the first check ran simply has nothing to show either way.
 - **You weren't online for enough of the flight.** FSOps corroborates your position against the network, not just your presence on it — briefly logging on and then disconnecting doesn't qualify. The badge (and the small bonus that comes with it) needs a meaningful share of the tracked flight to have matched, not just a moment of it.
 - **The flight was completed manually** ("Complete with estimates"). There's no reliable telemetry to corroborate against on that path at all — see [Why did completing manually cost me reputation](#why-did-completing-manually-cost-me-reputation).
@@ -339,7 +355,7 @@ Two related limits worth knowing, since neither is visible on screen: coverage i
 
 **Solutions, in order:**
 
-1. **Check the toggle.** The **"Show/Hide VATSIM traffic"** button above the map switches this layer on and off; it's on by default. If it reads "Show VATSIM traffic", select it.
+1. **Switch the layer on — it starts off.** Other pilots' traffic is **hidden by default**, and until you turn it on FSOps doesn't request it at all, so this is by far the most likely answer. The button above the map reads **"Show VATSIM traffic"** while it's off; select it and it becomes "Hide VATSIM traffic". FSOps remembers the choice, so you only do this once. Note that this affects *other people's* aircraft only — your own tracked flight, your virtual pilots and the ATC layer are all shown regardless of it.
 2. **Check they're actually near your network.** This layer only shows traffic within about 150 nm of one of your own airports or your active routes' flight paths — it's deliberately not a whole-network traffic display, which would be far more than a dashboard map needs. Someone controlling or flying well away from your network genuinely won't appear.
 3. **Check the feed is reachable.** If VATSIM's public feed can't be read at all, other traffic (and the ATC layer alongside it) both quietly show nothing rather than an error — see [No controllers are showing](#no-controllers-are-showing) for the same underlying feed and how to tell "nobody nearby" apart from "feed unreachable".
 Other traffic is drawn deliberately small, faint, and without the accent colour your own aircraft or a controller uses — that's intentional, so it reads as background context rather than competing with your own flight for attention.

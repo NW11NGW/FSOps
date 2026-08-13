@@ -284,7 +284,8 @@ export function Dashboard() {
                 {liveOps.data.aircraft.length} airborne
               </Badge>
             )}
-            {/* G11: other people's traffic, toggleable and on by default on the dashboard. */}
+            {/* G11: other people's traffic - toggleable, and OFF until the player asks for it. The
+            toggle also gates the fetch, so a player who never turns it on never calls VATSIM. */}
             <Button
               type="button"
               variant="outline"

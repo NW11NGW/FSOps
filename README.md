@@ -34,16 +34,16 @@ FSOps is being built in the open, in public view, one feature at a time. Foundin
 - **Pilots improve with experience, and rust if you forget them** — a pilot's skill climbs with hours flown toward a cap it's never quite allowed to reach, so even your most experienced hire still varies a little. A virtual pilot left off every schedule for more than two weeks starts losing some of what they earned, the way real currency does; keep flying them — including on the standing weekly schedule that runs while FSOps is closed — and skill never decays. Your own record is exempt entirely: your flying is always judged by real telemetry, never by this number.
 - **A wall-clock economy that runs while you're away — and explains itself when you get back** — virtual pilots' flights complete against the real-world clock, not the time you spend with FSOps open. Close the app for a few hours, a few days, or longer, and reopen it: every flight that was due, and every monthly bill, has already been resolved and posted, all the way up to the moment you closed it, capped so a very long gap catches up over a few passes rather than in one enormous burst. It can't be tricked by winding your system clock forward or back either. If enough happened while you were gone, a "while you were away" summary greets you on startup — what was charged, what your pilots flew and earned, maintenance that fell due, and anything skipped, cancelled or suspended, with its reason.
 - **A Finances page** — cash balance and trend, income against expenditure for the current period, every lease with its real next-payment date (a rolling 30 days from your airline's own clock, not the calendar) and an end-lease action, every loan with full or partial early repayment, per-pilot revenue versus cost, a fixed-versus-variable cost split, a filterable itemised ledger, and profit and loss per route. Figures that are estimates (a pilot's salary prorated to the window shown) are labelled as such; everything else comes straight from the ledger.
-- **A live operations map on the Dashboard** — see your whole route network plus every aircraft currently airborne, virtual pilots included (their position is calculated from the schedule and elapsed time, not stored), with your own tracked flight shown distinctly from theirs. Hover any aircraft for a flight card: flight number, route, pilot, aircraft, departure/arrival times, and percentage complete.
-- **Online VATSIM controllers on the same map** — controllers currently covering an airport in your own route network, with callsign, frequency and how long they've been logged on, shown alongside your own aircraft. Other pilots' traffic is deliberately left off — this is about your network, not the whole network. FSOps' server fetches and caches VATSIM's public feed once and shares that copy with the browser; the browser never talks to VATSIM directly, and if the feed's unreachable the rest of the map is unaffected.
+- **A live operations map on the Dashboard** — see your whole route network plus every aircraft currently airborne, virtual pilots included (their position is calculated from the schedule and elapsed time, not stored), with your own tracked flight shown distinctly from theirs. Hover any aircraft for a flight card: flight number, route, pilot, aircraft, departure/arrival times, and percentage complete. Both things drawn over the map — the "nothing airborne right now" message and the ATC legend — fold away to a small pill you can reopen, so neither ever sits permanently between you and the map underneath.
+- **Online VATSIM controllers on the same map** — controllers whose coverage is currently on screen, with callsign, frequency and how long they've been logged on, shown alongside your own aircraft; the ones covering an airport in your own network are listed first. Other pilots' traffic is available too but **starts hidden**, behind a **Show VATSIM traffic** button above the map — off means nothing is even fetched, so the dashboard stays about your airline rather than the whole network until you ask otherwise. FSOps' server fetches and caches VATSIM's public feed once and shares that copy with the browser; the browser never talks to VATSIM directly, and if the feed's unreachable the rest of the map is unaffected.
 - **A Statistics page** — on-time performance and load factor over time, revenue against cost, profit per route, fleet utilisation including hours to each aircraft's next check, and a pilot logbook covering you and every virtual pilot, over a selectable trailing period (7, 30 or 90 days) with a CSV export on every table. Every figure is read back from the ledger and flight records rather than recomputed, and on-time performance uses the identical rule the reputation score does, so the two can never disagree.
 - **Updates you're told about, never updates that happen to you** — FSOps can check whether a newer release exists and tell you, quietly and only when there is one. If you ask it to, it downloads the installer and checks it against the release's published SHA-256 before doing anything else, then opens the folder so you can run it yourself. **It never runs an installer for you** — FSOps ships unsigned, so that checksum is the only thing separating the real installer from whatever turned up over the network, and the decision to run it stays yours. The check is off the startup path entirely, fails silently when there's no internet, and can be switched off completely — off means no request is made at all.
 
 ## Quick start
 
-New to FSOps? Start with the [Getting Started guide](docs/guides/getting-started.md) for installation and first run.
+New to FSOps? The [Installation guide](docs/guides/installation.md) covers downloading the installer, verifying it, and your first launch. If you'd rather build from source — to change FSOps, or to run something that hasn't been released yet — [Getting Started](docs/guides/getting-started.md) is the one to follow instead.
 
-Once it's running, the [User Guide](docs/guides/user-guide.md) walks through every feature area — what exists today and what's arriving in later updates.
+Once it's running, the [User Guide](docs/guides/user-guide.md) walks through every feature area as it actually behaves today.
 
 Running into trouble? Check the [Troubleshooting guide](docs/guides/troubleshooting.md).
 
@@ -81,7 +81,8 @@ FSOps/
 │   │   └── Scheduling/   #   Weekly schedule validation (aircraft-per-duty-day), occurrence timing, pilot performance
 │   ├── FSOps.Data/       # EF Core + SQLite persistence, world data import
 │   ├── FSOps.Sim/        # Sim abstraction: the SimConnect adapter and a replay-based fake source
-│   ├── FSOps.Server/     # API endpoints (fleet, disposal, maintenance, finance, stats, pilots, flights, VATSIM ...), SignalR hubs, flight lifecycle/virtual-flight-resolver/economy-clock/reservation-reconciler services, the SimBrief and VATSIM network clients, and serves the built web UI
+│   ├── FSOps.Server/     # API endpoints (fleet, disposal, repositioning, maintenance, finance, stats, pilots, flights, VATSIM ...), SignalR hubs, flight lifecycle/virtual-flight-resolver/economy-clock/reservation-reconciler services, the SimBrief and VATSIM network clients, and serves the built web UI
+│   ├── FSOps.Desktop/    # The WebView2 window a user actually launches; runs the server as a child process
 │   ├── fsops-web/        # React + TypeScript + Vite + Tailwind + shadcn/ui frontend
 │   │   └── src/components/
 │   │       ├── flight/   #   Fly screen pieces: route selector, brief (with the SimBrief import banner), live view, report card
@@ -100,11 +101,21 @@ FSOps/
 │   ├── architecture.md
 │   └── guides/
 │       ├── getting-started.md
+│       ├── installation.md
 │       ├── user-guide.md
 │       └── troubleshooting.md
+├── Screenshots/          # Images used by the README and the user guide
 └── README.md
 ```
 
 ## Screenshots
 
-> _Coming soon — screenshots will be added here as the UI takes shape._
+![The FSOps dashboard](Screenshots/Dashboard.png)
+
+The Dashboard, with an airline four routes and two aircraft into its life. The sim clock runs off the simulator's own time; the KPI row and the reputation card beneath it read straight from the ledger and the last few sectors. The live operations map draws the route network with anything currently airborne on top of it — here, nothing is, so the map says so in a card that folds away to a pill if you'd rather see what's underneath. Other pilots' VATSIM traffic starts hidden behind the **Show VATSIM traffic** button; the ATC coverage list below is on regardless.
+
+![The Fly screen, with a route chosen and its flight brief open](Screenshots/Flyy.png)
+
+The Fly screen. Routes are split into what you can fly right now and what you can't, and an unflyable one always says why — here, three routes want an aircraft at Bristol and the fleet is at Edinburgh and Paris. The SimBrief panel at the top is declining a real OFP on purpose: the plan on file is for the opposite direction, so the built-in plan is used and the reason is stated rather than the wrong fuel figures being applied quietly. Below it, the brief for the sector that *is* flyable, and three readiness checks that inform but never block.
+
+More screens — the route network, the ledger, a post-flight report card, and the catch-up summary you get after leaving FSOps closed — appear throughout the [User Guide](docs/guides/user-guide.md).
