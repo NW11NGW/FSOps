@@ -739,7 +739,15 @@ public static class RouteEndpoints
         // finalisation resolves the route to price the sector and finds nothing. Completion now
         // declines to finish such a flight at all, but the player should never reach that either -
         // losing an hour's flying to tidying a list is not a trade anybody would knowingly make.
-        var affectedRouteIds = reverse is not null ? new[] { route.Id, reverse.Id } : new[] { route.Id };
+        // A List, deliberately, NOT an array. On an array, `.Contains(x)` inside an expression tree
+        // binds to the ReadOnlySpan extension rather than Enumerable.Contains, and EF's parameter
+        // evaluator cannot construct that generic - it throws "violates the constraint of type
+        // parameter 'TRet'" at query time rather than failing to compile. It passes locally and dies
+        // in CI, which is the same trap the fleet-reversal code hit once already: on an array,
+        // `.Reverse()` binds to the Span extension, reverses in place and returns void.
+        var affectedRouteIds = reverse is not null
+            ? new List<Guid> { route.Id, reverse.Id }
+            : new List<Guid> { route.Id };
         var flightInProgress = await db.Flights
             .Where(f => affectedRouteIds.Contains(f.RouteId) && f.Status == FlightStatus.InProgress)
             .Select(f => new { f.RouteId })
