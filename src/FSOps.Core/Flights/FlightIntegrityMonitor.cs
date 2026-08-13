@@ -1,4 +1,4 @@
-using FSOps.Core.Planning;
+﻿using FSOps.Core.Planning;
 
 namespace FSOps.Core.Flights;
 
@@ -204,12 +204,23 @@ public sealed class FlightIntegrityMonitor
     /// judged. Null until one arrives.</summary>
     private (double Lat, double Lon)? _positionWhenFeedResumed;
 
-    /// <summary>Ground the aircraft has been observed to cover, summed over plausible transitions.
-    /// Only ever asked one question - "has this feed ever actually moved?" - so it is never reset.
-    /// A stuck fix reports the same position forever and accumulates nothing, however long it is
-    /// held; see <see cref="NoteWhetherTheAircraftHasLeftItsDepartureArea"/>.</summary>
-    private double _observedTravelNm;
-
+    /// <summary>
+    /// The first position this monitor ever accepted, against which "has the aircraft actually gone
+    /// anywhere?" is measured - see <see cref="NoteWhetherTheAircraftHasLeftItsDepartureArea"/>.
+    /// Never reset, because the question is about the whole sector.
+    /// <para>
+    /// It has to be DISPLACEMENT from a fixed origin, and emphatically not a running sum of
+    /// per-transition distances. A sum of hops is PATH LENGTH, and path length grows without bound
+    /// for a reading that is going nowhere: a wrong fix carrying a metre of ordinary noise displaces
+    /// the aircraft by a metre forever while accumulating a metre of "travel" every sample, so at
+    /// 5 Hz it clears any fixed distance in seconds. Since such a fix also reports itself well
+    /// outside the departure area, the sum-of-hops form spent the departure-correction exemption
+    /// before the brakes came off - which is the exact opposite of what that precondition exists
+    /// for, and it re-opened the original garbage-opening-fix bug for any bad reading that was not
+    /// bit-identical every sample.
+    /// </para>
+    /// </summary>
+    private (double Lat, double Lon)? _firstObservedPosition;
     /// <param name="expectedStartPosition">
     /// Where the aircraft should be when tracking begins - normally the flight's departure airport.
     /// Optional, and null-safe by design, so this type stays pure and every caller that has nothing
@@ -360,6 +371,10 @@ public sealed class FlightIntegrityMonitor
             return;
         }
 
+        // The first position actually believed - the fixed origin the "has it gone anywhere?" test
+        // measures displacement from. See _firstObservedPosition.
+        _firstObservedPosition ??= (sample.LatitudeDeg, sample.LongitudeDeg);
+
         if (_last is { } last)
         {
             var interval = sample.TimestampUtc - last.TimestampUtc;
@@ -412,7 +427,12 @@ public sealed class FlightIntegrityMonitor
                             GreatCircle.DistanceNm(running.Lat, running.Lon, sample.LatitudeDeg, sample.LongitudeDeg));
                     }
 
-                    _awaitingProofTheFeedResumed = false;
+                    // Note what is deliberately NOT done here: an implausible transition does not
+                    // clear _awaitingProofTheFeedResumed. Jitter is nothing but implausible
+                    // transitions, and it is the opposite of evidence that a feed is healthy - a
+                    // reading that cannot even agree with itself must not be allowed to certify the
+                    // link as recovered and hand back the right to rebuild dwell out of whatever
+                    // freeze follows it. Only a plausible transition can do that.
                     _plausibleDwell = TimeSpan.Zero;
                 }
                 else
@@ -420,7 +440,6 @@ public sealed class FlightIntegrityMonitor
                     if (HasTheResumedFeedProvedItself(sample))
                     {
                         _plausibleDwell += interval * simulationRate;
-                        _observedTravelNm += distanceNm;
                         NoteWhetherTheAircraftHasLeftItsDepartureArea(sample);
                     }
                 }
@@ -512,18 +531,25 @@ public sealed class FlightIntegrityMonitor
     /// (the resolver treats it as a diversion), so an exemption that survived into the airborne
     /// phase would let a cheat teleport home from anywhere and still be paid in full.
     /// <para>
-    /// Called only for PLAUSIBLE transitions, and only once the feed has been seen to cover some
-    /// ground. That precondition is the load-bearing one: being REPORTED somewhere is not the same
-    /// as having gone there. A fix stuck five thousand miles away reports itself outside the
+    /// Called only for PLAUSIBLE transitions, and only once the aircraft has been DISPLACED from the
+    /// first position this monitor ever saw. That precondition is the load-bearing one: being
+    /// REPORTED somewhere is not the same as having gone there. A bad fix reports itself outside the
     /// departure area - and airborne, and anything else it likes - on every single sample, and if
     /// that were enough it would spend the exemption on the flight's behalf before the aircraft had
-    /// released its brakes. A stuck fix covers no ground at all however long it is held; a real
-    /// aircraft covers the first ninety metres within seconds of moving.
+    /// released its brakes. A bad fix does not MOVE, whether it is frozen solid or wandering by a
+    /// metre; a real aircraft is ninety metres from where it started within seconds of rolling.
+    /// See <see cref="_firstObservedPosition"/> for why this must not be a sum of hops.
     /// </para>
     /// </summary>
     private void NoteWhetherTheAircraftHasLeftItsDepartureArea(FlightTelemetrySample sample)
     {
-        if (_leftTheStartingArea || _observedTravelNm <= ObservableMovementNm || _expectedStartPosition is not { } expectedStart)
+        if (_leftTheStartingArea || _expectedStartPosition is not { } expectedStart)
+        {
+            return;
+        }
+
+        if (_firstObservedPosition is not { } origin
+            || GreatCircle.DistanceNm(origin.Lat, origin.Lon, sample.LatitudeDeg, sample.LongitudeDeg) <= ObservableMovementNm)
         {
             return;
         }
@@ -642,3 +668,5 @@ public sealed class FlightIntegrityMonitor
 
     private static double SafeRate(double reportedRate) => reportedRate > 0 ? reportedRate : 1.0;
 }
+
+
