@@ -205,9 +205,19 @@ public sealed class FlightIntegrityMonitor
     private (double Lat, double Lon)? _positionWhenFeedResumed;
 
     /// <summary>
-    /// The first position this monitor ever accepted, against which "has the aircraft actually gone
-    /// anywhere?" is measured - see <see cref="NoteWhetherTheAircraftHasLeftItsDepartureArea"/>.
-    /// Never reset, because the question is about the whole sector.
+    /// The position "has the aircraft actually gone anywhere?" is measured from - see
+    /// <see cref="NoteWhetherTheAircraftHasLeftItsDepartureArea"/>. Set to the first position this
+    /// monitor accepts, and moved to wherever an IMPLAUSIBLE transition lands, so it always marks
+    /// the start of the current unbroken run rather than the start of the session.
+    /// <para>
+    /// It has to follow continuity, because displacement measured across a discontinuity measures
+    /// the discontinuity. When the bad reading comes first this makes no difference - the bad fix is
+    /// the origin either way - but reverse the order and it decides the case: a good opening fix on
+    /// the stand, then a glitch reporting the aircraft forty miles out, and a session-long origin
+    /// reads that glitch as forty miles of travel although the aircraft never moved. That spends the
+    /// departure-correction exemption on the strength of a transition the monitor had already judged
+    /// impossible, and the correction back to the stand is then condemned as a teleport.
+    /// </para>
     /// <para>
     /// It has to be DISPLACEMENT from a fixed origin, and emphatically not a running sum of
     /// per-transition distances. A sum of hops is PATH LENGTH, and path length grows without bound
@@ -434,6 +444,16 @@ public sealed class FlightIntegrityMonitor
                     // link as recovered and hand back the right to rebuild dwell out of whatever
                     // freeze follows it. Only a plausible transition can do that.
                     _plausibleDwell = TimeSpan.Zero;
+
+                    // The aircraft cannot have FLOWN here, so wherever this reading claims to be is
+                    // the new origin for "has the aircraft actually gone anywhere?". The origin
+                    // tracks continuity, not the whole session: measuring displacement across a
+                    // discontinuity measures the discontinuity, and a reading that jumps forty miles
+                    // and then sits still would otherwise be read as an aircraft that had travelled
+                    // forty miles - spending the departure-correction exemption on the strength of
+                    // the very transition the monitor had just judged impossible. See
+                    // _firstObservedPosition.
+                    _firstObservedPosition = (sample.LatitudeDeg, sample.LongitudeDeg);
                 }
                 else
                 {

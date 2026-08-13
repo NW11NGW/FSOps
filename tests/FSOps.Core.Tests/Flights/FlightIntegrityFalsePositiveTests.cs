@@ -140,6 +140,64 @@ public class FlightIntegrityFalsePositiveTests
     }
 
     [Theory]
+    [InlineData(40.0, 90)]
+    [InlineData(95.0, 90)]
+    [InlineData(40.0, 300)]
+    [InlineData(5505.0, 120)]
+    public void GoodOpeningFixThenASustainedGlitchAwayAndBack_DoesNotVoidTheSector(
+        double glitchAwayNm, double glitchHeldSeconds)
+    {
+        // Case 7 - the mirror of case 5, and the order is the whole difference. When the BAD reading
+        // comes first it becomes the origin, so the hold displaces nothing and the guard holds. Put
+        // the GOOD reading first and the origin is the stand, so a glitch reporting the aircraft
+        // forty miles away is displaced from it by forty miles - even though the aircraft has not
+        // moved an inch - and the guard reads that as an aircraft that has gone somewhere.
+        //
+        // What makes it plainly a bug rather than a limit: the glitch position was ARRIVED AT by an
+        // implausible transition, so the monitor already knew the aircraft could not have flown
+        // there. It was the hold afterwards, judged on its own plausible transitions, that spent the
+        // exemption - by which time that knowledge had been thrown away.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        pipeline.Hold(South(Stand, glitchAwayNm), glitchHeldSeconds, onGround: true);
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        pipeline.Fly(Stand, seconds: 600);
+
+        // Guards: the glitch is outside the departure radius (inside it, the exemption was never at
+        // risk) and is held past the corroboration dwell (below it, nothing can be corroborated).
+        Assert.True(glitchAwayNm > FlightIntegrityMonitor.DepartureCorrectionRadiusNm,
+            "a glitch inside the departure radius cannot spend the exemption, so this would prove nothing");
+        Assert.True(glitchHeldSeconds > FlightIntegrityMonitor.CorroborationDwell.TotalSeconds,
+            "a glitch held for less than the dwell cannot corroborate anything, so this would prove nothing");
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
+    [InlineData(2.0, 120)]
+    [InlineData(8.0, 120)]
+    [InlineData(40.0, 5)]
+    [InlineData(40.0, 30)]
+    [InlineData(95.0, 55)]
+    public void GoodOpeningFixThenAGlitchTooSmallOrTooBriefToCorroborate_DoesNotVoidTheSector(
+        double glitchAwayNm, double glitchHeldSeconds)
+    {
+        // The bounds of the case above, pinned in their own right: a glitch inside the departure
+        // radius is harmless at any length, and a glitch of any size is harmless if it is over
+        // before it can corroborate itself. These pay already - they are here so that a future
+        // change cannot quietly move the boundary without a test noticing.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        pipeline.Hold(South(Stand, glitchAwayNm), glitchHeldSeconds, onGround: true);
+        pipeline.Hold(Stand, seconds: 30, onGround: true);
+        pipeline.Fly(Stand, seconds: 600);
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
     [InlineData(30, 90)]
     [InlineData(60, 90)]
     [InlineData(60, 150)]
