@@ -503,6 +503,8 @@ A position jump specifically has to be **corroborated** before it's flagged, and
 
 This means an occasional bad reading from the simulator — most commonly right as it connects, or just after it reconnects — no longer voids an otherwise clean sector. If you're seeing this on a flight you're confident had no slewing or repositioning in it, that's worth reporting with the approximate time it happened, since a corroborated jump found on a flight that genuinely had none would be a real defect, not a false alarm.
 
+**Slew is the exception to all of that leniency, and it is absolute.** Everything above describes how a *position jump* is now forgiven, because a jump is usually the simulator misreporting rather than anything you did. Slew is different: it is something only you can turn on, and it moves an aircraft without flying it. So it voids the sector the moment it is seen, with no grace period, no allowance for still being on the stand, and no way to undo it by carrying on — including the common case of using it to unstick an aircraft from scenery *after* pressing **Start flight**. Unstick it first, then start the flight, and nothing is lost. The rule is deliberately without exceptions, because a rule with exceptions is one somebody eventually finds a way through.
+
 **Solution:** Nothing to fix if you did genuinely slew or reposition mid-flight — that's working as intended. Whatever fuel the aircraft actually burned is still billed regardless (see [Fuel billing](user-guide.md#fuel-billing)); only the ticket revenue is withheld. If you're confident nothing like that happened, check the [log files](#where-to-find-log-files) around the flagged time and report it.
 
 ## Why did completing manually cost me reputation
