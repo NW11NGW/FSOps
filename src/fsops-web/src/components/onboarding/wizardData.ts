@@ -22,6 +22,7 @@ export const WIZARD_STEPS = [
   { key: 'aircraft', label: 'Aircraft' },
   { key: 'currency', label: 'Currency' },
   { key: 'communityFolder', label: 'MSFS panel' },
+  { key: 'onlinePresence', label: 'Online flying' },
   { key: 'review', label: 'Review' },
 ] as const
 
@@ -136,6 +137,15 @@ export interface WizardData {
    *  prerequisite, and the app stays fully usable with no Community folder configured at all.
    *  Never required to finish founding an airline. */
   communityFolderPath: string | null
+  /** null = skipped. Same optional/never-required posture as communityFolderPath above: unlocks
+   *  the Fly screen's SimBrief OFP import (see SimBriefSection in Settings) but nothing depends
+   *  on it. On an existing install where this is already set (e.g. the airline was re-founded
+   *  after being deleted from Settings' danger zone), OnlinePresenceStep shows it locked rather
+   *  than re-prompting - see that component for why. */
+  simBriefPilotId: string | null
+  /** null = skipped. Same posture as simBriefPilotId above: unlocks VATSIM flight corroboration
+   *  and its small online-flying bonus (see VatsimSection in Settings), never required. */
+  vatsimCid: string | null
 }
 
 export const DEFAULT_WIZARD_DATA: WizardData = {
@@ -164,6 +174,8 @@ export const DEFAULT_WIZARD_DATA: WizardData = {
   loanAmount: 0,
   loanTermMonths: 60,
   communityFolderPath: null,
+  simBriefPilotId: null,
+  vatsimCid: null,
 }
 
 const ICAO_PATTERN = /^[A-Z]{2,3}$/
@@ -210,6 +222,9 @@ export const STEP_VALIDATORS: Record<WizardStepKey, (data: WizardData) => boolea
   // Always valid - genuinely skippable, and offered again later from Settings rather than nagged. An
   // unconfirmed or empty path never blocks founding an airline.
   communityFolder: () => true,
+  // Same posture, for the same reason: onboarding must never block on either field (see
+  // OnlinePresenceStep for the light, non-blocking local format hint shown instead).
+  onlinePresence: () => true,
   review: isFinanceValid,
 }
 
