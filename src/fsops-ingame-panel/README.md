@@ -37,19 +37,19 @@ What was broken, both **still unconfirmed by the simulator** (see the two items 
    fix (present in one confirmed-working reference package, absent in another, so not decisive on
    its own - kept because it costs nothing and is more correct regardless).
 
-> **The `.spb` has NOT been rebuilt. Say this loudly because it is easy to miss:**
-> `package/InGamePanels/FSOpsPanel.spb` is still **668 bytes**, SHA-256
-> `5AA95E70CC4A4E75548A4DB0D1A2F7EFB1B4B0C17FE22511E8DA642A083099C8`, and still carries the
-> uncorrected `html_UI` URL. `source/PackageSources/FSOpsPanel.xml` has the fix sitting right next
-> to it, uncompiled. A rebuild attempt on 2026-08-12 was aborted before producing any output - see
-> "Rebuilding the `.spb`" below for why, and do not assume a future rebuild attempt succeeded
-> without checking the hash changed. A source fix with a stale binary beside it is exactly the kind
-> of thing that gets forgotten and confuses someone badly in three months, hence this warning.
+> **The `.spb` has now been rebuilt (2026-08-13).** `package/InGamePanels/FSOpsPanel.spb` is
+> SHA-256 `B56CA7179FA7223A3A831045BD8DD4777B36B3BFBE53A727E32A7608DDE398D9`, replacing
+> `5AA95E70...`, and carries the corrected lower-case `html_ui` URL. The two files are the same 668
+> bytes and differ in exactly two adjacent bytes - nothing can read a path out of this format, since
+> values are stored by reference, but a two-byte change is what a reference to a same-length path
+> looks like when the only edit was the case of two letters. The build is trustworthy because
+> `source/_out/` was deleted outright beforehand and the file reappeared in it.
 
-The icon fix (item 1) IS live in `package/` right now - it is loose files, not compiled, and any
-Repair from FSOps' Settings picks it up immediately. The casing fix (item 2) will not take effect
-until the `.spb` is actually rebuilt with the simulator closed and the result copied over the file
-above.
+The icon fix (item 1) is loose files, not compiled, so any Repair from FSOps' Settings picks it up.
+The casing fix (item 2) needed the recompile above. **Both only reach a player through a new build
+of FSOps** - `PanelPackageInstaller` copies from a template bundled inside the installed
+application, so a Repair reinstalls whatever that build happens to carry, not whatever is in this
+repository. Editing files here and telling someone to hit Repair does nothing at all.
 
 ## Rebuilding the `.spb` (only needed if `source/PackageSources/FSOpsPanel.xml` changes)
 
@@ -57,12 +57,28 @@ The panel's HTML, CSS, JS and the port it points at are plain text and are **nev
 Only the toolbar registration - the icon, panel ID, default size and docking - lives in the
 compiled file. So a change to the panel's content, or to the port, never needs the SDK.
 
-**Close MSFS 2024 completely before running the tool - see trap 4 below.** With the MSFS 2024 SDK
-installed:
+**The tool does not compile anything itself - it hands the work to `FlightSimulator2024.exe`.** So
+the simulator must be closed (the tool launches its own copy) and the tool must be able to launch
+it, which on a Microsoft Store installation it cannot do without help. See trap 4.
+
+One-time setup, and the thing that makes the difference: put the real path to the simulator in the
+override file that ships next to the tool, **with no byte-order mark**, or the path is read with an
+invisible character on the front and rejected:
 
 ```
-& "C:\MSFS 2024 SDK\Tools\bin\fspackagetool.exe" "<repo>\src\fsops-ingame-panel\source\FSOpsPanel.xml" -nopause
+[System.IO.File]::WriteAllText("C:\MSFS 2024 SDK\Tools\bin\fspackagetool_overrideExePath.txt", "C:\XboxGames\Microsoft Flight Simulator 2024\Content\FlightSimulator2024.exe", (New-Object System.Text.UTF8Encoding($false)))
 ```
+
+Then, with MSFS closed:
+
+```
+& "C:\MSFS 2024 SDK\Tools\bin\fspackagetool.exe" "<repo>\src\fsops-ingame-panel\source\FSOpsPanel.xml" -rebuild -nopause
+```
+
+`-rebuild` is not optional in practice: the tool caches build state under `source/_Temp/`, and a
+changed source file alone will not always persuade it there is work to do. The simulator will start
+up on screen; that is the build running. Delete `source/_out/` first, so anything that appears is
+unambiguously new.
 
 **Then verify it actually produced something before trusting it** - see trap 4. Only once
 `source/_out/Packages/fsops-panel/InGamePanels/FSOpsPanel.spb` exists and its hash differs from the
