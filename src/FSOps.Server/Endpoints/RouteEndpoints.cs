@@ -1,4 +1,4 @@
-using FSOps.Core.Economy;
+﻿using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Planning;
 using FSOps.Core.Routes;
@@ -26,7 +26,6 @@ public static class RouteEndpoints
         group.MapGet("/routes", ListAsync);
         group.MapGet("/routes/{id:guid}", GetByIdAsync);
         group.MapPut("/routes/{id:guid}", UpdateAsync);
-        group.MapPost("/routes/{id:guid}/return-leg", CreateReturnLegAsync);
         group.MapDelete("/routes/{id:guid}", DeleteAsync);
     }
 
@@ -112,7 +111,7 @@ public static class RouteEndpoints
             var priceNowUtc = DateTimeOffset.UtcNow;
             var fuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, departure.Icao, departure.Country, priceNowUtc, worldSeed);
 
-            // The live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
+            // The live "at this fare, expect ~N passengers (X% load factor), ~Â£Y revenue per
             // sector" readout - the real DemandCalculator/FareDemandModel engine, not the rough
             // distance-only estimate above. Needs an airline (for strategy profile and
             // reputation) and a real sector, so it's null for onboarding or a same-airport/no
@@ -347,52 +346,8 @@ public static class RouteEndpoints
     }
 
     /// <summary>
-    /// Creates the reverse of an existing route in one call - e.g. given EGGD-&gt;EGPH, creates
-    /// EGPH-&gt;EGGD. Every route created through <see cref="CreateAsync"/> is already paired, so
-    /// this endpoint is now a manual repair tool: it exists for legacy single-leg routes (created
-    /// before pairing was mandatory) that the automatic backfill in <see cref="ListAsync"/> could
-    /// not complete on its own - e.g. because the reverse direction is beyond the fleet's range -
-    /// and for surfacing that failure reason directly instead of it being swallowed as a skip. The
-    /// fare mirrors the outbound route unless the caller overrides it, and the flight number
-    /// follows on from the outbound one (see <see cref="FlightNumberGenerator.SuggestReturn"/>)
-    /// unless the caller supplies their own.
-    /// </summary>
-    private static async Task<IResult> CreateReturnLegAsync(
-        Guid id, CreateReturnLegRequest? request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
-    {
-        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
-        if (airline is null)
-        {
-            return Results.NotFound();
-        }
-
-        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
-
-        var outbound = await db.Routes.FirstOrDefaultAsync(r => r.Id == id && r.AirlineId == airline.Id, ct);
-        if (outbound is null)
-        {
-            return Results.NotFound();
-        }
-
-        var requestedFare = request?.BaseFare ?? outbound.BaseFare;
-
-        var (route, error) = await BuildRouteAsync(
-            db, airline, outbound.ArrivalIcao, outbound.DepartureIcao, aircraftTypeId: null, requestedFare, request?.FlightNumber,
-            existing => FlightNumberGenerator.SuggestReturn(airline.IcaoCode, outbound.FlightNumber, existing), economyConfig, ct);
-        if (error is not null)
-        {
-            return error;
-        }
-
-        db.Routes.Add(route!);
-        await db.SaveChangesAsync(ct);
-
-        return Results.Created($"/api/v1/routes/{route!.Id}", await ToRouteDtoAsync(route, db, ct));
-    }
-
-    /// <summary>
     /// Shared route-construction logic for <see cref="CreateAsync"/> and
-    /// <see cref="CreateReturnLegAsync"/>: validates the airport pair, enforces the directional
+    /// <see cref="ListAsync"/>'s backfill: validates the airport pair, enforces the directional
     /// duplicate check, resolves an aircraft type and fare, and resolves a flight number. Returns
     /// a fully-populated but not-yet-saved <see cref="Route"/>, or an error result to return
     /// as-is.
@@ -434,7 +389,7 @@ public static class RouteEndpoints
 
         // Routes are directional: an airline flying LHR->JFK doesn't automatically also fly
         // JFK->LHR, so only an exact match in the *same* direction is a conflict. Creating the
-        // reverse direction on purpose is what CreateReturnLegAsync is for.
+        // reverse direction is created deliberately, as the pair that CreateAsync always makes.
         var duplicateExists = await db.Routes.AnyAsync(r =>
             r.AirlineId == airline.Id && r.DepartureIcao == departureIcao && r.ArrivalIcao == arrivalIcao, ct);
         if (duplicateExists)
@@ -645,7 +600,9 @@ public static class RouteEndpoints
         // leg gets one now, so the list this returns is always fully paired without the owner
         // having to notice or do anything. Best-effort - a leg that can't be repaired right now
         // (e.g. the reverse is beyond the fleet's range) is left as a single leg rather than
-        // failing the whole list; see POST /routes/{id}/return-leg for a manual retry.
+        // failing the whole list, and is retried on every subsequent listing - so acquiring an
+        // aircraft with the range for it is enough to complete the pair, with nothing to trigger
+        // by hand.
         var backfilled = await BackfillMissingReturnLegsAsync(db, airline, routes, economyConfig, ct);
         if (backfilled.Count > 0)
         {
@@ -756,8 +713,8 @@ public static class RouteEndpoints
         if (flightInProgress is not null)
         {
             var leg = flightInProgress.RouteId == route.Id
-                ? $"{route.DepartureIcao} → {route.ArrivalIcao}"
-                : $"{route.ArrivalIcao} → {route.DepartureIcao}";
+                ? $"{route.DepartureIcao} â†’ {route.ArrivalIcao}"
+                : $"{route.ArrivalIcao} â†’ {route.DepartureIcao}";
             return Results.BadRequest(new
             {
                 message = $"There is a flight in progress on {leg}. Finish or abandon it before deleting this route - deleting it now would leave that sector unable to be paid.",
@@ -776,7 +733,7 @@ public static class RouteEndpoints
         {
             return Results.BadRequest(new
             {
-                message = $"{route.DepartureIcao} ↔ {route.ArrivalIcao} is still on a pilot's schedule. Remove those legs first, or the aircraft flying them would be left with nowhere to go.",
+                message = $"{route.DepartureIcao} â†” {route.ArrivalIcao} is still on a pilot's schedule. Remove those legs first, or the aircraft flying them would be left with nowhere to go.",
             });
         }
 
@@ -792,8 +749,8 @@ public static class RouteEndpoints
 
         var deletedRouteIds = reverse is not null ? new[] { route.Id, reverse.Id } : new[] { route.Id };
         var message = reverse is not null
-            ? $"Deleted both legs of the route: {route.DepartureIcao} ↔ {route.ArrivalIcao}."
-            : $"Deleted {route.DepartureIcao} → {route.ArrivalIcao}. It had no return leg to remove.";
+            ? $"Deleted both legs of the route: {route.DepartureIcao} â†” {route.ArrivalIcao}."
+            : $"Deleted {route.DepartureIcao} â†’ {route.ArrivalIcao}. It had no return leg to remove.";
 
         return Results.Ok(new { deletedRouteIds, message });
     }
@@ -938,4 +895,3 @@ public record CreateRouteRequest(string? DepartureIcao, string? ArrivalIcao, Gui
 
 public record UpdateRouteRequest(string? FlightNumber, decimal? BaseFare, bool? IsActive);
 
-public record CreateReturnLegRequest(decimal? BaseFare, string? FlightNumber);
