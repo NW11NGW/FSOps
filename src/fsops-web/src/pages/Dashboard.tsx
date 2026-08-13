@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, RadioTower, Route, ShieldCheck, Users } from 'lucide-react'
 
@@ -20,6 +20,7 @@ import { AtcControllerList, AtcCountBadge } from '@/components/map/AtcController
 import { VatsimHistoryCard } from '@/components/map/VatsimHistoryCard'
 import type { MapBounds } from '@/components/map/atcVisibility'
 import { reputationDemandLabel, reputationDrivers, reputationTrendLabel } from '@/lib/reputation'
+import { readVatsimTrafficVisible, writeVatsimTrafficVisible } from '@/lib/vatsimTrafficVisibility'
 import type { LiveContext } from '@/types/live-context'
 import type { ReputationDirection } from '@/types/airline'
 
@@ -65,10 +66,16 @@ export function Dashboard() {
   // Null until the lazy-loaded map mounts and reports its first view, which correctly leaves the
   // list showing the server's own network scoping in the meantime rather than nothing.
   const [atcViewport, setAtcViewport] = useState<MapBounds | null>(null)
-  // G11 - other VATSIM traffic, on by default on the dashboard. There is no equivalent state on
-  // the in-game panel because it never mounts LiveOpsMap at all (see Panel.tsx) - "off by default
-  // on the panel" is therefore structural, not a second flag to keep in sync with this one.
-  const [showVatsimTraffic, setShowVatsimTraffic] = useState(true)
+  // G11 - other VATSIM traffic, OFF by default (including for a brand-new user with nothing
+  // stored yet - see vatsimTrafficVisibility's own doc for why the read must never quietly
+  // default to on) so the map is clean on first load, and remembered per-browser once toggled.
+  // There is no equivalent state on the in-game panel because it never mounts LiveOpsMap at all
+  // (see Panel.tsx) - "off by default on the panel" is therefore structural, not a second flag to
+  // keep in sync with this one.
+  const [showVatsimTraffic, setShowVatsimTraffic] = useState(readVatsimTrafficVisible)
+  useEffect(() => {
+    writeVatsimTrafficVisible(showVatsimTraffic)
+  }, [showVatsimTraffic])
   const traffic = useVatsimTraffic(showVatsimTraffic)
   const reputation = useReputationSummary()
   const { fmt } = useSettings()

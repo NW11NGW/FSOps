@@ -3,16 +3,17 @@ import { Link, useNavigate } from 'react-router-dom'
 import type { Feature, FeatureCollection, LineString } from 'geojson'
 import { Map as MapLibreMap, Marker, NavigationControl } from 'maplibre-gl'
 import type { GeoJSONSource } from 'maplibre-gl'
-import { PlaneTakeoff, Route as RouteIcon, Users } from 'lucide-react'
+import { Route as RouteIcon } from 'lucide-react'
 
 type MapLibreErrorEvent = { error?: { message?: string } }
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { buildMapStyle, readMapColors, type MapThemeMode } from '@/components/map/mapTheme'
+import { LiveOpsEmptyState } from '@/components/map/LiveOpsEmptyState'
+import { LiveOpsLegendPanel } from '@/components/map/LiveOpsLegendPanel'
 import { LiveFlightCard } from '@/components/map/LiveFlightCard'
 import { AtcControllerCard } from '@/components/map/AtcControllerCard'
 import { AtcSectorCard } from '@/components/map/AtcSectorCard'
-import { AtcMapLegend } from '@/components/map/AtcMapLegend'
 import { buildAtcSectorFeatures, buildAtcTerminalFeatures, controllerKeyFor } from '@/components/map/atcGeometry'
 import type { MapBounds } from '@/components/map/atcVisibility'
 import { Button } from '@/components/ui/button'
@@ -746,66 +747,9 @@ export function LiveOpsMap({
         </div>
       )}
 
-      {!hasAircraft && (
-        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex justify-center">
-          <div className="pointer-events-auto flex max-w-md flex-col items-center gap-2 rounded-lg border border-border bg-surface-elevated/95 p-4 text-center shadow-elevation-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
-              <PlaneTakeoff className="size-4" />
-            </div>
-            <p className="text-sm font-medium">Nothing airborne right now</p>
-            <p className="text-xs text-muted-foreground">
-              Hire a pilot and give them a schedule, or fly a route yourself, and it will show up here live.
-            </p>
-            <div className="flex gap-2 pt-1">
-              <Button asChild size="sm" variant="outline">
-                <Link to="/pilots">
-                  <Users className="size-3.5 shrink-0" />
-                  Pilots
-                </Link>
-              </Button>
-              <Button asChild size="sm">
-                <Link to="/fly">
-                  <PlaneTakeoff className="size-3.5 shrink-0" />
-                  Fly
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <LiveOpsEmptyState hasAircraft={hasAircraft} />
 
-      {(hasAircraft || atcControllers.length > 0 || vatsimTraffic.length > 0) && (
-        <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex flex-col gap-1 rounded-md border border-border bg-surface-elevated/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-elevation-2">
-          {hasAircraft && (
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1.5">
-                <span className="size-2.5 shrink-0 rounded-full bg-accent" />
-                You
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="size-2.5 shrink-0 rounded-full border-2 border-accent/70 bg-surface-elevated" />
-                Virtual
-              </span>
-            </div>
-          )}
-          {vatsimTraffic.length > 0 && (
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 shrink-0 rounded-full bg-muted-foreground/70" />
-              Other VATSIM traffic
-            </span>
-          )}
-          {atcControllers.length > 0 && (
-            <>
-              {hasAircraft && <span className="h-px bg-border" aria-hidden="true" />}
-              <span className="flex items-center gap-1.5">
-                <span className="size-2.5 shrink-0 rounded-full border-2 border-warning bg-surface-elevated" />
-                ATC
-              </span>
-              <AtcMapLegend controllers={atcControllers} />
-            </>
-          )}
-        </div>
-      )}
+      <LiveOpsLegendPanel hasAircraft={hasAircraft} atcControllers={atcControllers} vatsimTraffic={vatsimTraffic} />
 
       {hoveredAircraft && hoverPos && (
         <LiveFlightCard aircraft={hoveredAircraft} x={hoverPos.x} y={hoverPos.y} />

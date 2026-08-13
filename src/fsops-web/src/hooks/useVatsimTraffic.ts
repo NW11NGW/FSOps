@@ -19,10 +19,12 @@ interface VatsimTrafficState {
 
 /**
  * Polls GET /vatsim/traffic for the live operations map's "other people's traffic" layer (G11).
- * `enabled` is the client-side toggle (default on for the dashboard map, always off on the
- * in-game panel - which never mounts this hook at all, since it has no map): when false, this
- * never polls at all, satisfying "never poll when the feature is switched off" the same way the
- * server itself never fetches VATSIM when nothing is listening.
+ * `enabled` is the client-side toggle (off by default on the dashboard map - see
+ * vatsimTrafficVisibility - and always off on the in-game panel, which never mounts this hook at
+ * all, since it has no map): when false, this never polls at all, satisfying "never poll when the
+ * feature is switched off" the same way the server itself never fetches VATSIM when nothing is
+ * listening. Nothing else in the app reads this hook's data, so turning it off costs nothing
+ * elsewhere - contrast VatsimHistoryCard, which polls its own separate endpoint.
  */
 export function useVatsimTraffic(enabled: boolean): VatsimTrafficState {
   const [status, setStatus] = useState<VatsimTrafficFetchStatus>('loading')
