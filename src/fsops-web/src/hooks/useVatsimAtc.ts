@@ -26,6 +26,10 @@ export interface VatsimAtcOptions {
   /** Whether to ask for boundary polygons. Only a map should: the coordinates are tens of
    *  kilobytes a consumer that draws no map would parse and discard. */
   geometry?: boolean
+  /** Client-side on/off switch, defaulting to on so existing callers are unaffected. When false
+   *  this never polls at all - see the note on `status` below, which is why every consumer of a
+   *  gated instance must be hidden rather than left rendering a disabled hook's state. */
+  enabled?: boolean
 }
 
 /**
@@ -38,14 +42,28 @@ export interface VatsimAtcOptions {
  * data already held (see atcVisibility.ts), so the feed keeps its own cadence no matter how much
  * the user moves the map - which is both the etiquette rule and the reason the list can respond
  * instantly.
+ *
+ * `options.enabled` is the dashboard's "Show VATSIM ATC" switch (off by default - see
+ * vatsimAtcVisibility): when false this never polls, so a player who never turns ATC on never
+ * calls the ATC feed, the same bargain useVatsimTraffic makes. A disabled instance reports
+ * `status: 'loading'` with null data, exactly like traffic, so **every consumer of a gated
+ * instance must be hidden while it is off** rather than left to render that state - an
+ * AtcControllerList handed a disabled hook would otherwise sit on its loading skeleton forever,
+ * which reads as a hang. The dashboard hides the whole ATC coverage card for this reason.
  */
 export function useVatsimAtc(options: VatsimAtcOptions = {}): VatsimAtcState {
-  const { scope = 'network', geometry = false } = options
+  const { scope = 'network', geometry = false, enabled = true } = options
   const [status, setStatus] = useState<VatsimAtcFetchStatus>('loading')
   const [data, setData] = useState<VatsimAtcResponse | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus('loading')
+      setData(null)
+      return undefined
+    }
+
     let cancelled = false
 
     const query = new URLSearchParams()
@@ -75,7 +93,7 @@ export function useVatsimAtc(options: VatsimAtcOptions = {}): VatsimAtcState {
       cancelled = true
       clearTimeout(timerRef.current)
     }
-  }, [scope, geometry])
+  }, [scope, geometry, enabled])
 
   return { status, data }
 }

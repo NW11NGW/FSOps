@@ -79,6 +79,35 @@ describe('LiveOpsLegendPanel - showing the key', () => {
     expect(text(container)).toContain('Other VATSIM traffic')
     unmount()
   })
+
+  // The dashboard's "Show VATSIM ATC" switch hides ATC by passing no controllers, so this is the
+  // check that the legend cannot advertise a colour key for sectors and terminals that are not on
+  // the map. The footnote about TRACONs and altitude limits must go too - it describes an ATC
+  // layer that is not being drawn.
+  it('drops every ATC row when ATC is hidden, while still keying what is on screen', async () => {
+    const { container, unmount } = await render({
+      hasAircraft: true,
+      atcControllers: [],
+      vatsimTraffic: [traffic()],
+    })
+    expect(text(container)).toContain('Other VATSIM traffic')
+    expect(text(container)).toContain('You')
+    expect(text(container)).not.toContain('ATC')
+    expect(text(container)).not.toContain('Sector')
+    expect(text(container)).not.toContain('Terminal')
+    expect(text(container)).not.toContain('Approach TRACONs')
+    unmount()
+  })
+
+  it('drops the sector/terminal rows when ATC is hidden even if traffic is the only layer left', async () => {
+    const { container, unmount } = await render({
+      atcControllers: [],
+      vatsimTraffic: [traffic()],
+    })
+    expect(text(container)).not.toContain('published boundary')
+    expect(text(container)).not.toContain('approximate range')
+    unmount()
+  })
 })
 
 describe('LiveOpsLegendPanel - collapsing to a reopenable pill', () => {

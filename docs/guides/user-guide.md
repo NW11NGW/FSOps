@@ -578,7 +578,7 @@ The Ledger tab, showing two sectors' worth of postings. Every line a flight prod
 
 ![The Dashboard, with the live operations map](../../Screenshots/Dashboard.png)
 
-The Dashboard in full. The sim clock at the top left runs off the simulator's own time rather than your machine's; the KPI row and the reputation card beneath it are read back from the ledger and your last few sectors, never stored separately. In the "Live operations" card, nothing is airborne, so the map says so in a card that folds away; **Show VATSIM traffic** is offered but off, and the ATC coverage list below the map is populated regardless.
+The Dashboard in full. The sim clock at the top left runs off the simulator's own time rather than your machine's; the KPI row and the reputation card beneath it are read back from the ledger and your last few sectors, never stored separately. In the "Live operations" card, nothing is airborne, so the map says so in a card that folds away, and the two VATSIM buttons above the map — **Show VATSIM ATC** and **Show VATSIM traffic** — are both offered but off, which is how a new airline starts.
 
 The **Dashboard**'s "Live operations" card shows your whole route network plus every aircraft currently in the air — your own tracked flight if you're flying, and every virtual pilot's currently-airborne scheduled leg, all on the same map. A virtual pilot's aircraft isn't a stored position: it's calculated fresh each time from their schedule and how much of that leg's block time has elapsed, so it's always consistent with how that flight will actually resolve once its time comes.
 
@@ -588,7 +588,9 @@ Hover any aircraft for a flight card: flight number, route, pilot name, aircraft
 
 ### Online VATSIM controllers
 
-The same map shows who's actually controlling the airspace you fly in — no setting to turn on, no account or Pilot ID required, since this only reads VATSIM's public status feed. Each controller shows a callsign, position (Tower, Approach, Center, and so on), frequency, and how long they've been logged on.
+The same map can show who's actually controlling the airspace you fly in — no account or Pilot ID required, since this only reads VATSIM's public status feed. Each controller shows a callsign, position (Tower, Approach, Center, and so on), frequency, and how long they've been logged on.
+
+**It starts hidden, and until you switch it on FSOps doesn't even ask for it.** The **Show VATSIM ATC** button above the map turns it on, and brings with it both the controller shapes on the map and the **ATC coverage** list beneath it — the two are one feature and appear together. Switch it back off and both go away again. FSOps remembers the setting, so switching it on once keeps it on the next time you open the Dashboard.
 
 **The list follows the map.** It names what's visible in the current view, so panning and zooming changes both together — look at the UK and you get UK controllers, not a global list you have to scroll. Controllers covering one of your own airports are listed first and marked with a filled icon, so your network stands out without hiding everyone else on screen.
 
@@ -596,11 +598,15 @@ The same map shows who's actually controlling the airspace you fly in — no set
 
 **What isn't shown, and why.** Approach TRACONs that aren't named after an airport have no published boundary data available, so FSOps shows nothing rather than inventing a shape — a wrong boundary on a map reads as authoritative. There are **no altitude limits** in this data either, so a sector polygon says nothing about which levels are being worked, and top-down coverage is never inferred. An empty area means "FSOps can't say", not necessarily "nobody is there".
 
-**Other VATSIM traffic near your network can be shown too**, off the same feed — but it **starts hidden**, and until you switch it on FSOps doesn't even ask for it. The **Show VATSIM traffic** button above the map turns it on: a small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm). Your own aircraft is never drawn by this layer, and nothing appears if the feed is unreachable. FSOps remembers the setting, so switching it on once keeps it on.
+**Other VATSIM traffic near your network can be shown too**, off the same feed — and it works exactly like the ATC button beside it: it **starts hidden**, and until you switch it on FSOps doesn't even ask for it. The **Show VATSIM traffic** button above the map turns it on: a small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm). Your own aircraft is never drawn by this layer, and nothing appears if the feed is unreachable. FSOps remembers this setting too.
 
-This affects **other people's aircraft only**. Your own tracked flight, your virtual pilots' aircraft, and the ATC coverage described above are all unaffected by the toggle and are shown regardless — the dashboard is about your airline first, and everyone else's traffic is context you opt into.
+**The two buttons are independent**, so you can have controllers without other people's aircraft, or the other way round. Turning one on never turns on the other.
 
-If VATSIM's feed is temporarily unreachable the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. Nothing about your flight or the economy depends on any of this.
+Neither affects **your own airline**. Your tracked flight and your virtual pilots' aircraft are drawn regardless of both switches — the Dashboard is about your airline first, and everyone else's traffic and controllers are context you opt into.
+
+**The map legend only ever keys what's actually on screen.** With ATC hidden, the legend drops its sector and terminal rows entirely rather than explaining colours for shapes that aren't drawn; the same is true of the traffic marker.
+
+If VATSIM's feed is temporarily unreachable while ATC is switched on, the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. With ATC switched off you'll never see that message, because FSOps isn't asking. Nothing about your flight or the economy depends on any of this.
 
 FIR boundaries © VAT-Spy Data Project, CC BY-SA 4.0.
 

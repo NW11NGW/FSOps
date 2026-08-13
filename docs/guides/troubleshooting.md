@@ -290,9 +290,11 @@ Note that the **Status** column is no help in telling these apart — it reads "
 
 ## No controllers are showing
 
-**Symptom:** The Dashboard's controller list reads "No controllers online in this part of the map," even though you know someone is controlling on VATSIM.
+**Symptom:** The Dashboard shows no controllers — either there's no **ATC coverage** card at all, or the controller list reads "No controllers online in this part of the map," even though you know someone is controlling on VATSIM.
 
-**Cause:** The list follows the map. It shows the controllers whose coverage is **currently on screen**, so that the list and the map can never disagree while you're looking at both — if you've panned to somewhere quiet, or zoomed in past the sector you were expecting, the list empties out even though plenty of people are online elsewhere.
+**First, check the layer is switched on — it starts off.** VATSIM ATC is **hidden by default**, and until you turn it on FSOps doesn't request it at all. If you can't see an **ATC coverage** card beneath the map, that's why: the card and the map's controller shapes are one feature and appear together. The button above the map reads **"Show VATSIM ATC"** while it's off; select it and it becomes "Hide VATSIM ATC", the card returns, and FSOps remembers the choice so you only do this once. This is by far the most likely answer if you've never seen controllers at all.
+
+**If it's on and the list is still empty:** the list follows the map. It shows the controllers whose coverage is **currently on screen**, so that the list and the map can never disagree while you're looking at both — if you've panned to somewhere quiet, or zoomed in past the sector you were expecting, the list empties out even though plenty of people are online elsewhere.
 
 **Solution:** Zoom out or pan back. The wording tells you which situation you're in:
 
@@ -351,13 +353,13 @@ Two related limits worth knowing, since neither is visible on screen: coverage i
 
 ## Other VATSIM traffic isn't showing on the map
 
-**Symptom:** The Dashboard's live operations map shows your own aircraft and any online controllers, but no other VATSIM pilots nearby, even though you can see them in a VATSIM client.
+**Symptom:** The Dashboard's live operations map shows your own aircraft, but no other VATSIM pilots nearby, even though you can see them in a VATSIM client.
 
 **Solutions, in order:**
 
-1. **Switch the layer on — it starts off.** Other pilots' traffic is **hidden by default**, and until you turn it on FSOps doesn't request it at all, so this is by far the most likely answer. The button above the map reads **"Show VATSIM traffic"** while it's off; select it and it becomes "Hide VATSIM traffic". FSOps remembers the choice, so you only do this once. Note that this affects *other people's* aircraft only — your own tracked flight, your virtual pilots and the ATC layer are all shown regardless of it.
+1. **Switch the layer on — it starts off.** Other pilots' traffic is **hidden by default**, and until you turn it on FSOps doesn't request it at all, so this is by far the most likely answer. The button above the map reads **"Show VATSIM traffic"** while it's off; select it and it becomes "Hide VATSIM traffic". FSOps remembers the choice, so you only do this once. Note that this affects *other people's* aircraft only — your own tracked flight and your virtual pilots are shown regardless of it. It's also **independent of the "Show VATSIM ATC" button next to it**: turning traffic on does not turn controllers on, and vice versa, so check the one you actually want.
 2. **Check they're actually near your network.** This layer only shows traffic within about 150 nm of one of your own airports or your active routes' flight paths — it's deliberately not a whole-network traffic display, which would be far more than a dashboard map needs. Someone controlling or flying well away from your network genuinely won't appear.
-3. **Check the feed is reachable.** If VATSIM's public feed can't be read at all, other traffic (and the ATC layer alongside it) both quietly show nothing rather than an error — see [No controllers are showing](#no-controllers-are-showing) for the same underlying feed and how to tell "nobody nearby" apart from "feed unreachable".
+3. **Check the feed is reachable.** If VATSIM's public feed can't be read at all, other traffic (and the ATC layer, when you have it switched on) both quietly show nothing rather than an error — see [No controllers are showing](#no-controllers-are-showing) for the same underlying feed and how to tell "nobody nearby" apart from "feed unreachable".
 Other traffic is drawn deliberately small, faint, and without the accent colour your own aircraft or a controller uses — that's intentional, so it reads as background context rather than competing with your own flight for attention.
 
 ## FSOps never tells me about updates
