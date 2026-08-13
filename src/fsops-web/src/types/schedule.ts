@@ -96,11 +96,6 @@ export interface ScheduleConflictResponse {
   conflicts: string[]
 }
 
-/** Body for POST /pilots/{id}/schedule/aircraft-options - step one of the picker. */
-export interface AircraftOptionsRequest {
-  day: DayOfWeek
-}
-
 /** One fleet aircraft's eligibility for a given duty day - step one of the picker
  *  - the aircraft is picked first, then the leg. Not a full conflict check: only the aircraft's
  *  own state (reserved / grounded) is screened here; `leg-options` checks real conflicts once an
@@ -121,15 +116,6 @@ export interface AircraftOption {
 
 export interface AircraftOptionsResponse {
   options: AircraftOption[]
-}
-
-/** Body for POST /pilots/{id}/schedule/leg-options - step two of the picker. */
-export interface LegOptionsRequest {
-  day: DayOfWeek
-  /** "HH:mm" */
-  time: string
-  fleetAircraftId: string
-  draftDutyDays?: DutyDayInput[] | null
 }
 
 /** One entry in `LegalLegOption.warnings`. `severity` tells the picker how to weight it visually -

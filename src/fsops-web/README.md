@@ -1,32 +1,29 @@
-# React + TypeScript + Vite
+# fsops-web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The FSOps single-page app: React 18, TypeScript (strict), Tailwind CSS v3, and hand-rolled
+shadcn-style components in `src/components/ui/`.
 
-Currently, two official plugins are available:
+It is not a standalone site. In a normal run it is built into the server's `wwwroot` and served by
+FSOps itself on `http://localhost:5977`, so the API and the UI share one origin.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Commands
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```
+npm run dev        # dev server on 5173, proxying /api and /hubs to the server on 5977
+npm run build      # type-check, then build into ../FSOps.Server/wwwroot
+npm run test:run   # Vitest, once
+npm run lint       # oxlint
+npx tsc --noEmit   # type-check only
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`npm run dev` needs the FSOps server running separately for anything that touches data. To see the
+app exactly as a player does, build it and run the server on its own.
+
+## Conventions worth knowing before editing
+
+- **Use the design tokens.** Colours come from CSS custom properties defined in `src/index.css`;
+  no hardcoded hex values. Both light and dark themes have to look right.
+- **Tailwind v3, not v4** — the syntax differs and v4 examples will not work here.
+- **No external runtime network calls.** Fonts and map assets are bundled.
+- **MapLibre is loaded through a dynamic import** so it stays out of the main bundle. Follow the
+  existing pattern in the map components rather than importing it at the top level.

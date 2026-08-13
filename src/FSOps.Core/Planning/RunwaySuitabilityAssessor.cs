@@ -99,13 +99,6 @@ public static class RunwaySuitabilityAssessor
     public static bool IsHeavy(double mtowTonnes) => mtowTonnes >= HeavyMtowTonnesThreshold;
 
     /// <summary>
-    /// Whether ONE aircraft can use ONE airport at all - true only when <see cref="AssessAirport"/>
-    /// finds no problem.
-    /// </summary>
-    public static bool CanUse(Airport airport, int minRunwayFt, double mtowTonnes) =>
-        AssessAirport(airport, minRunwayFt, mtowTonnes) == RunwaySuitabilityProblem.None;
-
-    /// <summary>
     /// The physical reason (if any) this aircraft cannot use this airport. A runway must satisfy
     /// BOTH length and (for a heavy aircraft) surface at once - a long grass strip and a short
     /// paved one at the same airport do not combine into one usable runway, so this checks each

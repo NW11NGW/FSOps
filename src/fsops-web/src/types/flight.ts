@@ -216,11 +216,6 @@ export interface FlightOption {
   aircraftOptions: FlightOptionAircraft[]
 }
 
-export interface StartFlightRequest {
-  routeId: string
-  fleetAircraftId?: string
-}
-
 /** POST /flights/start response (FlightEndpoints.ToFlightStartDto) - the flight itself plus which
  *  provider's plan was actually used for its planned block time/fuel, and why on a fallback. */
 export interface StartFlightResponse {

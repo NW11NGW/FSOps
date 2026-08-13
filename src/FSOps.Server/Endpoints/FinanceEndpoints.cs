@@ -441,6 +441,23 @@ public static class FinanceEndpoints
         var loanPayments = SumFiltered(LedgerCategory.LoanPayment, t => !t.Description.StartsWith("Loan settled early", StringComparison.Ordinal) && !t.Description.StartsWith("Loan overpayment", StringComparison.Ordinal));
         var loanEarlySettlement = SumFiltered(LedgerCategory.LoanPayment, t => t.Description.StartsWith("Loan settled early", StringComparison.Ordinal) || t.Description.StartsWith("Loan overpayment", StringComparison.Ordinal));
 
+        // Fixed versus variable is decided by LedgerCategory alone, never by Description text: a
+        // category is a stable typed fact, whereas wording can change at any time without anyone
+        // considering it a breaking change - and this is the one page whose entire job is being
+        // accurate. CrewCost, ParkingFees, PassengerCharges and TurnaroundFees exist precisely so
+        // this split is possible; before they were added, per-sector crew cost was indistinguishable
+        // from the monthly wage (both Salary) and parking/passenger/turnaround were indistinguishable
+        // from the handling fee (all Handling).
+        //
+        // Rows posted before that split still carry the old bundled categories, because the ledger is
+        // append-only and history is never rewritten. That is harmless for Handling - every sub-fee it
+        // used to bundle is variable in any era, so an old row is still classified correctly, just not
+        // broken down further. It is NOT harmless for Salary: an old row could be the fixed monthly
+        // wage or the variable per-sector crew cost, and the category alone can no longer tell them
+        // apart. Every Salary row is therefore counted as fixed - correct for all rows posted after
+        // the split, and the sensible reading of a row that predates crew cost having its own
+        // category. CountLegacySalaryRows below finds those rows by an exact structural discriminator
+        // so the resulting potential undercount of variable cost is disclosed rather than silent.
         var fixedTotal = leasePayments + Sum(LedgerCategory.Salary) + Sum(LedgerCategory.Insurance) + loanPayments + leaseEarlyTermination + loanEarlySettlement;
         var variableTotal = Sum(LedgerCategory.Fuel) + Sum(LedgerCategory.LandingFees) + Sum(LedgerCategory.Handling) + Sum(LedgerCategory.ParkingFees)
             + Sum(LedgerCategory.PassengerCharges) + Sum(LedgerCategory.TurnaroundFees) + Sum(LedgerCategory.Maintenance) + Sum(LedgerCategory.CrewCost)
@@ -504,10 +521,10 @@ public static class FinanceEndpoints
     /// code path posts a flight-scoped Salary row (only <c>EconomyClockService</c> posts Salary at
     /// all, and always airline-level).
     /// <para>
-    /// Detection only, never used to move money between buckets - see
-    /// <see cref="LedgerCostClassifier"/>'s class doc for why <see cref="CostsAsync"/> counts every
-    /// Salary row as fixed regardless, and surfaces this count as a notice instead of silently
-    /// reclassifying anything.
+    /// Detection only, never used to move money between buckets - see the note above
+    /// <see cref="CostsAsync"/>'s fixed/variable totals for why every Salary row counts as fixed
+    /// regardless, and why this count is surfaced as a notice instead of silently reclassifying
+    /// anything.
     /// </para>
     /// </summary>
     private static int CountLegacySalaryRows(IReadOnlyList<LedgerTransaction> transactions) =>

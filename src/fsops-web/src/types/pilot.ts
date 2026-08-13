@@ -35,11 +35,6 @@ export interface PilotSummary {
   weeklyEstimatedCost?: number | null
 }
 
-/** POST /pilots request body - name is optional, the backend assigns a generated one when omitted. */
-export interface HirePilotRequest {
-  name?: string
-}
-
 /** POST /pilots response: the new pilot plus the airline's cash balance after the hiring cost. */
 export interface HirePilotResponse {
   pilot: PilotSummary

@@ -119,7 +119,7 @@ try {
     # Skip binaries and the one file that legitimately contains the patterns: this script.
     $textFiles = $tracked | Where-Object {
         $_ -ne 'scripts/repo-hygiene.ps1' -and
-        $_ -notmatch '\.(png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot|spb|exe|dll|pdb|zip|gz)$' -and
+        $_ -notmatch '\.(png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot|exe|dll|pdb|zip|gz)$' -and
         (Test-Path $_ -PathType Leaf)
     }
 
