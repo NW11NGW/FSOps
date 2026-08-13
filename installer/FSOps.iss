@@ -51,6 +51,11 @@
 
 #define AppName "FSOps"
 #define AppExeName "FSOps.Desktop.exe"
+; The server, which is a console application and the only thing that understands --uninstall-panel.
+; Kept separate from AppExeName deliberately: AppExeName is the windowed shell a player launches,
+; and handing it a command-line switch it does not recognise makes it start the whole application
+; instead of doing the job - which, under waituntilterminated, hangs the uninstaller forever.
+#define ServerExeName "FSOps.Server.exe"
 #define AppPublisher "FSOps"
 #define AppUrl "https://github.com/NW11NGW/FSOps"
 
@@ -199,7 +204,12 @@ Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
 ; anything the player put there themselves, so tidying it up automatically costs nothing the way
 ; deleting their airline data would. skipifdoesntexist covers the (currently impossible, but cheap
 ; to guard) case of a previous uninstall step having already removed the exe.
-Filename: "{app}\{#AppExeName}"; Parameters: "--uninstall-panel"; \
+; NOTE the executable here is the SERVER, not AppExeName. AppExeName is the windowed shell; given an
+; argument it does not understand it launches the application normally - shell, server and a browser
+; window - and waituntilterminated then waits for a GUI nobody is present to close. That is not
+; hypothetical: it hung a silent uninstall in CI for twenty-nine minutes, leaving FSOps.Desktop and
+; FSOps.Server running as orphans, and it would have hung the uninstall for every real user.
+Filename: "{app}\{#ServerExeName}"; Parameters: "--uninstall-panel"; \
   Flags: runhidden waituntilterminated skipifdoesntexist logoutput
 
 [Code]
