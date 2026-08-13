@@ -106,7 +106,7 @@ You can close the window normally; it shuts the server down with it. If you alre
 3. Select **Install**.
 4. Restart MSFS if it was running. The FSOps button appears in the in-game toolbar.
 
-See [In-game panel](user-guide.md#in-game-panel) in the User Guide for what the panel shows and how it behaves, and [the toolbar button isn't there](troubleshooting.md#the-toolbar-button-isnt-there) if it doesn't appear.
+See [In-game panel](user-guide.md#in-game-panel) in the User Guide for what the panel shows and how it behaves, [the toolbar button isn't there](troubleshooting.md#the-toolbar-button-isnt-there) if it doesn't appear, and [the panel opens but shows nothing](troubleshooting.md#the-panel-opens-but-shows-nothing) if the button's there but the window it opens is blank.
 
 ## Where your data lives
 
