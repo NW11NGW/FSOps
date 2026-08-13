@@ -23,6 +23,8 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [A starting loan was refused at founding](#a-starting-loan-was-refused-at-founding)
 - [A virtual pilot's flight was skipped, cancelled or suspended instead of flown](#a-virtual-pilots-flight-was-skipped-cancelled-or-suspended-instead-of-flown)
 - [A virtual pilot's aircraft isn't where I expected it](#a-virtual-pilots-aircraft-isnt-where-i-expected-it)
+- [The "Move" button on the Fleet page is greyed out](#the-move-button-on-the-fleet-page-is-greyed-out)
+- [The reposition picker doesn't list the airport I want](#the-reposition-picker-doesnt-list-the-airport-i-want)
 - [Why is my pilot worse than they were](#why-is-my-pilot-worse-than-they-were)
 - [I can't release a pilot](#i-cant-release-a-pilot)
 - [SimBrief import did nothing](#simbrief-import-did-nothing)
@@ -223,6 +225,26 @@ Range on its own is rarely the blocker, and it's worth knowing the three outcome
 **Cause:** A completed virtual-pilot flight moves its aircraft's recorded location to wherever it actually landed, exactly the same rule as a player flight — see [Round trips and where your aircraft actually is](user-guide.md#round-trips-and-where-your-aircraft-actually-is). If a pilot's schedule doesn't bring an aircraft back to where the next day's chain expects it to start, that next occurrence won't be flyable — see [above](#a-virtual-pilots-flight-was-skipped-cancelled-or-suspended-instead-of-flown).
 
 **Solution:** Check the aircraft's current location on the Fleet page against what the pilot's schedule assumes for each day, and adjust the schedule so a day's chain always starts from wherever the aircraft's previous chain actually left it.
+
+## The "Move" button on the Fleet page is greyed out
+
+**Symptom:** An aircraft is clearly in the wrong place, but its **Move** button on the Fleet page won't click.
+
+**Cause:** One of three things, and hovering the button says which:
+
+- **It's available to virtual pilots.** Repositioning is a player-only action — an aircraft released to virtual pilots is theirs to fly, so it can't be moved out from under them.
+- **It's in flight.** The sector decides where it ends up.
+- **It's grounded for a maintenance check.** An aircraft that can't fly can't be moved either.
+
+**Solution:** For the first, press **Reserve for you** on that aircraft's row and the Move button becomes available immediately. For the second, finish or abandon the flight — wherever it lands becomes its new location anyway, which may be all you needed. For the third, wait for the check to finish; the Fleet page shows the date it comes back.
+
+## The reposition picker doesn't list the airport I want
+
+**Symptom:** You open **Move** and the airport you had in mind isn't among the choices, or there are no choices at all.
+
+**Cause:** Destinations are restricted to airports your airline has an **active route** to or from — not every airport in the world. Both directions count, so an outstation you only ever fly *into* is still offered. Two things narrow the list further: the airport the aircraft is already at is never listed (there is nothing to move), and a route you've **deactivated** stops offering its airports.
+
+**Solution:** Create a route touching the airport you want (or reactivate the one you deactivated), then re-open the dialog. If your airline has no routes at all, FSOps says so plainly rather than showing an empty picker.
 
 ## Why is my pilot worse than they were
 

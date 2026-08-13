@@ -174,6 +174,15 @@ public sealed class EconomyConfig
     /// </summary>
     public LoanEarlySettlementConfig LoanEarlySettlement { get; init; } = new();
 
+    /// <summary>
+    /// What it costs to reposition an idle aircraft to another airport the airline already serves,
+    /// without flying it there - see <see cref="AircraftRepositioningConfig"/>'s own doc. Lives here
+    /// rather than as a constant in the endpoint for the same reason every other figure in this file
+    /// does: balance is retuned by editing economy-config.json, never by changing code. Shared across
+    /// playstyles.
+    /// </summary>
+    public AircraftRepositioningConfig AircraftRepositioning { get; init; } = new();
+
     /// <summary>Purchasing a used, rather than new, airframe: cheap to buy, expensive to run - the
     /// acquisition saving is repaid through the maintenance cycle, which is what makes buying used
     /// a real decision rather than simply the cheaper option. Shared across playstyles: the
@@ -588,6 +597,16 @@ public sealed class EconomyConfig
                 $"Depreciation.MinResaleFactor must be in (0, Depreciation.NewAircraftResaleFactor={Depreciation.NewAircraftResaleFactor}], was {Depreciation.MinResaleFactor}.");
         }
 
+        // Strictly positive, not merely non-negative: a free reposition would make aircraft
+        // placement meaningless (park anything anywhere, at will, forever), and a config block that
+        // was simply forgotten would resolve to exactly 0 without this catching it - the same
+        // defensive stance as Maintenance's downtime figures above.
+        if (AircraftRepositioning.Cost <= 0)
+        {
+            throw new InvalidOperationException(
+                $"AircraftRepositioning.Cost must be positive - repositioning must never be free, was {AircraftRepositioning.Cost}.");
+        }
+
         if (LeaseEarlyTermination.FeeMonths < 0)
         {
             throw new InvalidOperationException($"LeaseEarlyTermination.FeeMonths cannot be negative, was {LeaseEarlyTermination.FeeMonths}.");
@@ -839,6 +858,11 @@ public sealed class EconomyConfig
             },
             // Shared across playstyles - see Depreciation's own doc.
             Depreciation = new AircraftDepreciationConfig(),
+            // Shared across playstyles - see AircraftRepositioningConfig's own doc for why 2,000 and
+            // why it isn't split by playstyle. Must stay in step with economy-config.json's
+            // "aircraftRepositioning" block, which is the file the server actually loads; this
+            // default only applies when that file is missing.
+            AircraftRepositioning = new AircraftRepositioningConfig { Cost = 2_000m },
             // Casual figures - shared across playstyles (see the Scheduling property's own doc).
             // 10h rest / 13h max duty are ordinary short-haul crewing figures, comfortably inside
             // the 24h/day ceiling Validate() enforces. MinTurnaroundMinutes corrected 2026-08-12 from
@@ -1277,6 +1301,33 @@ public sealed class UsedAircraftConfig
     /// this total), but part of making the age/condition trade-off visible before purchase per the
     /// plan's requirement.</summary>
     public double StartingAirframeHours { get; init; } = 18_000;
+}
+
+/// <summary>
+/// Repositioning an idle aircraft to another airport the airline already serves, without flying it
+/// there. Exists because an aircraft can otherwise end up stranded somewhere with nothing useful to
+/// do and no way back short of flying an empty sector by hand.
+/// <para>
+/// Shared across playstyles rather than split into the "casual"/"trueLife" blocks, and that is a
+/// judgement worth stating: the fee is a flat service charge for a positioning move, not a
+/// game-balance lever like the starter lease rate or insurance, and the user named a single figure
+/// rather than a pair. It does land differently in each playstyle - 2,000 is a meaningful bite
+/// against Casual's ~3,016-per-sector economics and close to noise against True-life's - and if that
+/// asymmetry ever needs correcting, the fix is a per-playstyle override block here, not a constant
+/// somewhere in the endpoint.
+/// </para>
+/// </summary>
+public sealed class AircraftRepositioningConfig
+{
+    /// <summary>
+    /// Flat charge for one repositioning move, in the stored base unit, regardless of distance,
+    /// aircraft type or how long the aircraft has been sitting there. 2,000 is the user's own figure
+    /// (2026-08-13). Deliberately flat rather than distance-scaled: this is a get-unstuck tool, and
+    /// pricing it by distance would make the longest strandings - the ones most in need of the tool -
+    /// the ones least able to afford it. Posted as a single
+    /// <see cref="Entities.LedgerCategory.AircraftRepositioning"/> ledger line.
+    /// </summary>
+    public decimal Cost { get; init; } = 2_000m;
 }
 
 /// <summary>Pilot rest/duty and minimum turnaround for the weekly schedule builder - see

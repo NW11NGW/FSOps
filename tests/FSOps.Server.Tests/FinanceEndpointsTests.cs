@@ -247,6 +247,38 @@ public class FinanceEndpointsTests
     }
 
     [Fact]
+    public async Task Costs_CountsRepositioningAsAVariableCost()
+    {
+        // A positioning fee buys nothing the airline still owns afterwards, so it belongs on the
+        // variable side - never fixed (it is not owed unless the player chooses to move something)
+        // and never capital, which is where an aircraft purchase goes.
+        using var ctx = await RouteTestContext.CreateAsync();
+
+        ctx.Db.LedgerTransactions.Add(new LedgerTransaction
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            Utc = DateTimeOffset.UtcNow,
+            Category = LedgerCategory.AircraftRepositioning,
+            Amount = -2_000m,
+            Description = "Repositioned G-FSOA: EGGD to EGPH",
+        });
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await FinanceEndpoints.CostsAsync(days: 30, ctx.Db, ctx.CurrentUser, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+        var body = BodyOf(result);
+
+        var variableBucket = body.GetType().GetProperty("variable")!.GetValue(body)!;
+        Assert.Equal(-2_000m, Prop<decimal>(variableBucket, "repositioning"));
+        Assert.Equal(-2_000m, Prop<decimal>(variableBucket, "total"));
+
+        // And nowhere near the fixed side.
+        var fixedBucket = body.GetType().GetProperty("fixed")!.GetValue(body)!;
+        Assert.Equal(0m, Prop<decimal>(fixedBucket, "total"));
+    }
+
+    [Fact]
     public async Task Costs_FlagsLegacySalaryRows_ByFlightIdNotDescription()
     {
         using var ctx = await RouteTestContext.CreateAsync();

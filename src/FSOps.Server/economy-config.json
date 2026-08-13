@@ -132,6 +132,19 @@
     "groundedForMaintenancePenalty": 0.05,
     "minResaleFactor": 0.10
   },
+  // Moving an idle aircraft to another airport the airline already serves, without flying it there -
+  // the fix for an airframe stranded somewhere with nothing useful to do. Shared across playstyles:
+  // this is a flat service charge for a positioning move, not a game-balance lever like the starter
+  // lease rate beside it, and the figure below is the user's own (2026-08-13). Flat rather than
+  // distance-scaled on purpose - pricing by distance would make the worst strandings the least
+  // affordable to fix. It does bite harder in Casual (~2/3 of a typical sector's profit) than in
+  // True-life; if that ever needs correcting, add per-playstyle override blocks rather than
+  // hardcoding a figure in the endpoint. Repositioning is a PLAYER-ONLY action - an aircraft
+  // available to virtual pilots must be reserved for the player first (see
+  // AircraftRepositionEvaluator.RepositionRefusal.NotReservedForPlayer).
+  "aircraftRepositioning": {
+    "cost": 2000
+  },
   // Shared across both playstyles - the founding pilot's salary is already a realistic figure and
   // needs no game-balance treatment, unlike the starter lease rate beside it. Everything else that
   // differs by playstyle (starting capital, lease deposit term, starter lease rate, insurance)

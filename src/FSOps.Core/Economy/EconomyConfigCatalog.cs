@@ -268,6 +268,9 @@ public sealed class EconomyConfigCatalog
         // the secondhand market doesn't depend on how realistically the SELLING airline chose to be
         // billed elsewhere).
         Depreciation = baseConfig.Depreciation,
+        // Shared across playstyles - see AircraftRepositioningConfig's own doc: a flat positioning
+        // service charge, not a game-balance lever, and the user named one figure rather than a pair.
+        AircraftRepositioning = baseConfig.AircraftRepositioning,
     };
 
     /// <summary>Shape used only to pick the "casual"/"trueLife" properties out of the same JSON

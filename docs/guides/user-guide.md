@@ -32,6 +32,7 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 - [Fuel billing](#fuel-billing)
 - [Buying, leasing and financing aircraft](#buying-leasing-and-financing-aircraft)
 - [Reserving an aircraft for yourself](#reserving-an-aircraft-for-yourself)
+- [Moving an aircraft to another airport](#moving-an-aircraft-to-another-airport)
 - [Selling an aircraft, ending a lease, and settling a loan early](#selling-an-aircraft-ending-a-lease-and-settling-a-loan-early)
 - [The aircraft catalogue and registrations](#the-aircraft-catalogue-and-registrations)
 - [Maintenance](#maintenance)
@@ -396,6 +397,19 @@ Every aircraft in your fleet shows a **reservation** toggle on the Fleet page: *
 - **With exactly one aircraft, this choice is explicit rather than automatic:** a brand-new airline's founding aircraft starts out reserved to you, and the moment your fleet grows to a second aircraft FSOps makes sure at least one aircraft is still reserved to you (never forcing a specific one — see below). Releasing your only reserved aircraft is allowed, but FSOps warns you plainly first, since it means your whole fleet becomes fair game for virtual pilots and nothing is held back for you — you can reserve one again at any time.
 
 If you're restoring an older save from before this rule existed, see [Troubleshooting](troubleshooting.md#a-restored-save-had-an-aircrafts-reservation-released) for what FSOps does automatically to resolve a database where an aircraft was marked both reserved and scheduled.
+
+### Moving an aircraft to another airport
+
+Aircraft get stranded. You fly a one-way leg, park somewhere with nothing going back out, and that airframe now has nothing useful to do until you fly it home empty. The **Move** button on each Fleet row fixes that: it repositions the aircraft to another airport for a flat **£2,000**, without flying it there.
+
+- **It's instant.** The aircraft arrives the moment you confirm — no block time, no airframe hours, no fuel burn, and nothing added to its maintenance cycle. The fee is the whole cost; nothing else about the aircraft changes. The Fly screen reflects the new location straight away.
+- **You can only move it somewhere you already fly.** The picker lists airports your airline has an **active route** to or from — both directions count, so an outstation you only ever fly *into* is still somewhere you can move an aircraft *back from*. It's never a list of every airport in the world, and it never offers the airport the aircraft is already at. If you have no routes yet, FSOps says so and points you at creating one rather than showing an empty picker.
+- **Only aircraft reserved to you can be moved.** An aircraft released to virtual pilots is theirs to fly, so moving it out from under them isn't yours to do — reserve it to yourself first (the **Reserve for you** button on its row), then move it. FSOps says exactly this if you try.
+- **It's refused while the aircraft can't fly anyway** — in flight (finish or abandon the sector first; wherever it lands becomes its new location regardless) or grounded for a maintenance check (with the date it comes back).
+- **It's refused if you can't afford it**, naming the fee and what you actually have.
+- **It never fires on a single click.** Nothing is pre-selected: you pick a destination, then confirm a summary showing the aircraft, both airports, the fee and the cash balance you'll be left with. The charge appears in the ledger under its own **Aircraft repositioning** category, so "what have I spent shuffling aircraft around" is a question the Finances page can answer on its own.
+
+On the Fleet page the **Move** button stays visible but disabled when an aircraft can't currently be moved, with the reason on hover — a control that vanishes teaches you nothing about why.
 
 ## Selling an aircraft, ending a lease, and settling a loan early
 
