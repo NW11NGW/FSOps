@@ -6,50 +6,85 @@ data, airline cash, next scheduled flights) served from FSOps' local server. Thi
 technique used by Navigraph's in-game panel and by `buzinin/msfs2024-efb-panel` - a toolbar panel
 whose content is just an iframe pointed at `http://localhost:<port>`.
 
-## Status: loaded by the simulator for the first time (2026-08-12) - found broken, root-caused, partially fixed
+## Status: loaded by the simulator for the first time (2026-08-12) - found broken, three fixes applied, none simulator-confirmed
 
-The panel was installed and MSFS 2024 loaded it for real for the first time. Two things were
-proven by that alone, before anything else: the compiled `.spb` **is** read and honoured by the
-sim (the toolbar button appeared, positioned correctly, and opened a window), and the install
-machinery **does** produce a correct `layout.json` (confirmed by reading the actual installed copy
-in the player's Community folder afterwards - present, correctly formatted, listing every file).
-Neither of those was in question before; both now are settled facts, not hypotheses.
+The panel was installed and MSFS 2024 loaded it for real for the first time on 2026-08-12. Two
+things were proven by that alone, before anything else, and remain the most solid facts in this
+document: the compiled `.spb` **is** read and honoured by the sim (the toolbar button appeared,
+positioned correctly, and opened a window), and the install machinery **does** produce a correct
+`layout.json` (confirmed by reading the actual installed copy in the player's Community folder
+afterwards - present, correctly formatted, listing every file).
 
-What was broken, both **still unconfirmed by the simulator** (see the two items below):
+What was broken that same day: the button had no icon, and the window it opened was entirely
+black - no content, no title, and critically **no error, warning, or failed-load message of any
+kind** in anything that could be checked. An empty console is weak evidence; it rules nothing in.
+Three fixes have been applied since, each addressing a specific, plausible read of that symptom.
+**None of the three has been confirmed by actually loading MSFS and seeing panel content** - every
+one of them is a well-evidenced inference from comparing this package against other, genuinely
+working MSFS 2024 packages installed on the same machine, not a result observed after the fix was
+applied. Do not read "fixed" anywhere below as "confirmed working."
 
-1. **Toolbar button had no icon** - rendered as a plain colour square. Root cause (well-evidenced,
-   not simulator-proven): the icon shipped only at the legacy MSFS 2020 path,
-   `html_ui/Textures/Menu/toolbar/`. Two other real, currently-installed MSFS 2024 packages on the
-   machine this was diagnosed on - `fsdreamteam-gsx-pro` (built fresh for 2024) and
-   `fsltl-traffic-injector` (a 2020-era package patched for 2024) - both ship the icon at
-   `html_ui/icons/toolbar/` instead (FSLTL ships it at *both* paths). FSOps now does the same - see
-   "Toolbar icon ships at two paths" below. This is a plain file addition; **no recompile needed**,
-   already applied.
+1. **Toolbar button had no icon** - rendered as a plain colour square. Inferred cause: the icon
+   shipped only at the legacy MSFS 2020 path, `html_ui/Textures/Menu/toolbar/`. Two other real,
+   currently-installed MSFS 2024 packages on the machine this was diagnosed on - `fsdreamteam-gsx-pro`
+   (built fresh for 2024) and `fsltl-traffic-injector` (a 2020-era package patched for 2024) - both
+   ship the icon at `html_ui/icons/toolbar/` instead (FSLTL ships it at *both* paths). FSOps now
+   does the same - see "Toolbar icon ships at two paths" below. This is a plain file addition, no
+   recompile needed, already applied.
 2. **Panel content was entirely black**, and the window's title bar read `FSOPSPANEL` (the `.spb`'s
-   registered `Name`, uppercased) rather than the panel's own title. Root cause (well-evidenced, not
-   simulator-proven): `source/PackageSources/FSOpsPanel.xml` declared
+   registered `Name`, uppercased) rather than the panel's own title. Inferred cause:
+   `source/PackageSources/FSOpsPanel.xml` declared
    `url="html_UI/InGamePanels/FSOpsPanel/FSOpsPanel.html"` (capital `UI`), while the package's real
    folder on disk, and the `layout.json` generated for it, both say `html_ui` (lower-case) - so does
    every other real package checked. That mismatch is fixed in `source/PackageSources/FSOpsPanel.xml`
-   now, but **this one is baked into the compiled `.spb` and needs a recompile** - see "Rebuilding
-   the `.spb`" below.
-   A `<title>FSOps</title>` was also added to `FSOpsPanel.html`'s `<head>` as a low-risk second
-   fix (present in one confirmed-working reference package, absent in another, so not decisive on
-   its own - kept because it costs nothing and is more correct regardless).
+   and the `.spb` was rebuilt to carry it (below). A `<title>FSOps</title>` was also added to
+   `FSOpsPanel.html`'s `<head>` as a low-risk second fix (present in one confirmed-working reference
+   package, absent in another, so not decisive on its own - kept because it costs nothing and is
+   more correct regardless).
+3. **(2026-08-13, `868bec2`) The manifest declared the package as engine content with pinned
+   dependencies.** `manifest.json` had `content_type: "CORE"` - the type MSFS uses for its own
+   internals, not for a Community add-on - and three `dependencies` entries pinned to specific
+   versions of base packages (`fs-base-propdefs`, `fs-base-ui`, `asobo-vcockpits-core`). Both
+   `fsdreamteam-gsx-pro` and `fsltl-traffic-injector`, the same two reference packages used above,
+   declare `content_type` of `SCENERY` and `MISC` respectively and an empty `dependencies` list -
+   see "manifest.json fields" below for the exact values read from both. Either wrong field would
+   produce exactly the symptom seen on 2026-08-12: engine content isn't mounted from a Community
+   folder the way an add-on is, and a dependency that can't be satisfied lets a package be skipped
+   while a toolbar registration already scanned earlier stays behind - registration surviving while
+   files don't is precisely "button present, window empty, nothing logged." `manifest.json` now
+   declares `content_type: "MISC"` and `dependencies: []`, matching what the SDK's own packaging
+   tool generates by default for a package with none. **This is the current best explanation for
+   the empty window, not a confirmed fix** - it has not yet been tested against a running
+   simulator. If the window is still empty after this change, fixes 1 and 2 above remain live
+   possibilities too; a newer finding does not rule out an older one just for being newer.
 
-> **The `.spb` has now been rebuilt (2026-08-13).** `package/InGamePanels/FSOpsPanel.spb` is
-> SHA-256 `B56CA7179FA7223A3A831045BD8DD4777B36B3BFBE53A727E32A7608DDE398D9`, replacing
-> `5AA95E70...`, and carries the corrected lower-case `html_ui` URL. The two files are the same 668
-> bytes and differ in exactly two adjacent bytes - nothing can read a path out of this format, since
-> values are stored by reference, but a two-byte change is what a reference to a same-length path
-> looks like when the only edit was the case of two letters. The build is trustworthy because
-> `source/_out/` was deleted outright beforehand and the file reappeared in it.
+**What's established vs what's still a guess, for a reader in a hurry:**
 
-The icon fix (item 1) is loose files, not compiled, so any Repair from FSOps' Settings picks it up.
-The casing fix (item 2) needed the recompile above. **Both only reach a player through a new build
-of FSOps** - `PanelPackageInstaller` copies from a template bundled inside the installed
-application, so a Repair reinstalls whatever that build happens to carry, not whatever is in this
-repository. Editing files here and telling someone to hit Repair does nothing at all.
+- Established (read directly off disk, or observed on a real, running MSFS 2024 session): the
+  compiled `.spb` is read and the toolbar button appears and opens a window (2026-08-12); the
+  install machinery writes a correct `layout.json`; the folder layout matches two genuinely working
+  2024 packages; the icon-path convention and the two reference manifests' `content_type` and
+  `dependencies` values, both read directly from the installed copies on this machine.
+- Still unproven: that any of fixes 1-3 above actually makes panel content appear inside MSFS. The
+  window has been confirmed empty exactly once, on 2026-08-12, before any of the three fixes
+  existed. It has not been re-tested since.
+
+The icon fix (item 1) and the manifest fix (item 3) are loose files, not compiled, so any Repair
+from FSOps' Settings picks them up. The casing fix (item 2) needed a recompile - see the note on the
+rebuilt `.spb` below. **All three only reach a player through a new build of FSOps** -
+`PanelPackageInstaller` copies from a template bundled inside the installed application, so a
+Repair reinstalls whatever that build happens to carry, not whatever is in this repository. Editing
+files here and telling someone to hit Repair does nothing at all.
+
+> **The `.spb` was rebuilt on 2026-08-13** to carry the item-2 casing fix.
+> `package/InGamePanels/FSOpsPanel.spb` is SHA-256
+> `B56CA7179FA7223A3A831045BD8DD4777B36B3BFBE53A727E32A7608DDE398D9`, replacing `5AA95E70...`. The
+> two files are the same 668 bytes and differ in exactly two adjacent bytes - nothing can read a
+> path out of this format, since values are stored by reference, but a two-byte change is what a
+> reference to a same-length path looks like when the only edit was the case of two letters. The
+> build is trustworthy because `source/_out/` was deleted outright beforehand and the file
+> reappeared in it. Item 3 (the manifest) needed no recompile - `manifest.json` sits outside the
+> compiled `.spb` entirely and is copied to the player's Community folder as-is.
 
 ## Rebuilding the `.spb` (only needed if `source/PackageSources/FSOpsPanel.xml` changes)
 
@@ -205,7 +240,7 @@ copy that has to be kept in sync with the real files is exactly the kind of dupl
 truth mistake that produces a stale, silently-wrong package. `PanelPackageInstaller` generates it
 fresh from the real files it just wrote, every single time it installs, updates, or repairs.
 
-## manifest.json version fields
+## manifest.json fields
 
 `minimum_game_version` and `minimum_compatibility_version` were previously inherited from
 MSFS-2020-era references because no 2024-dated example could be found. They are no longer guesses:
@@ -218,8 +253,32 @@ that is ever reported, lowering `minimum_game_version` back to `1.0.0` is the fi
 the panel uses no version-specific features, so the strict value reflects what it was built
 against rather than anything it actually needs.
 
-The `dependencies` block (`fs-base-propdefs`, `fs-base-ui`, `asobo-vcockpits-core`) is unchanged
-and matches what a known-working community toolbar panel declares.
+**`content_type` and `dependencies` changed on 2026-08-13 (`868bec2`)** - see item 3 under Status
+above for the reasoning. Was `content_type: "CORE"` with three pinned `dependencies`
+(`fs-base-propdefs`, `fs-base-ui`, `asobo-vcockpits-core`); now `content_type: "MISC"` with
+`dependencies: []`. The two reference packages read directly off this machine's installed
+Community folder, for comparison:
+
+| Package | `content_type` | `dependencies` |
+| --- | --- | --- |
+| `fsdreamteam-gsx-pro` (built fresh for 2024) | `SCENERY` | `[]` |
+| `fsltl-traffic-injector` (2020-era, patched for 2024) | `MISC` | `[]` |
+| FSOps panel, before `868bec2` | `CORE` | 3 pinned entries |
+| FSOps panel, now | `MISC` | `[]` |
+
+`MISC` was chosen to match `fsltl-traffic-injector` specifically, since it is - like this panel -
+a UI/toolbar add-on with no scenery of its own; `SCENERY` is presumably right for GSX because it
+also places jetway and ground-service objects in the world. Neither reference package declares any
+dependency, and the packaging tool's own freshly-generated manifest for this package (used as the
+tie-breaker) declares none either, which is why `dependencies` is now empty rather than pointing at
+some other version. **This table records what was compared, not a confirmed outcome** - whether
+`MISC` with no dependencies is actually the combination MSFS 2024 wants for this package is exactly
+what item 3 under Status has not yet confirmed.
+
+Two other fields changed in the same commit, both incidental to the fix: `creator` went from `""`
+to `"FSOps"`, and the `total_package_size` field (a checksum-like placeholder of zeroes,
+`"00000000000000000000"`) was dropped entirely - it does not appear in the packaging tool's own
+freshly-generated manifest either, and nothing was found that reads it.
 
 ## References consulted (not guessed)
 
@@ -227,8 +286,10 @@ and matches what a known-working community toolbar panel declares.
   the identical iframe technique; `manifest.json`, `layout.json`, the
   `InGamePanels.InGamePanelDefinition` XML schema, the project/package-definition file structure,
   and the panel HTML/CSS/JS structure in this package are adapted directly from it.
-- `bymaximus/msfs2020-toolbar-little-nav-map` - a second, independent working panel, used to
-  cross-check the manifest dependency versions above.
+- `bymaximus/msfs2020-toolbar-little-nav-map` - a second, independent working panel, originally
+  used to cross-check the three pinned `dependencies` entries the manifest declared before
+  `868bec2` removed them. Superseded for that specific question by the two real, installed MSFS
+  2024 packages compared under "manifest.json fields" above, which declare no dependencies at all.
 - Official MSFS 2024 SDK docs (`docs.flightsimulator.com/msfs2024`) - Package Tool XML Properties
   and Asset Types pages, which is where the `SPB` asset type and the `<AssetPackage>` schema come
   from.
