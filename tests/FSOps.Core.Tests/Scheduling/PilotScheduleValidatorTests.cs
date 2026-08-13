@@ -193,6 +193,40 @@ public class PilotScheduleValidatorTests
         Assert.False(result.IsValid);
     }
 
+    /// <summary>
+    /// Real-use defect, 2026-08-13: player scheduled an out-and-back (RouteOut then RouteBack, same
+    /// aircraft, same duty day), saved it, then deleted only the OUTBOUND leg and tried to save
+    /// again. The aircraft never actually flew (LocationIcao is still its original base, EGGD - see
+    /// <see cref="Fleet"/>'s default), so the lone remaining RouteBack leg departs EGPH, an airport
+    /// the aircraft was never at. This must be refused, not silently accepted: a saved schedule must
+    /// always be flyable, and an orphaned return is a leg that would otherwise resolve (and pay out)
+    /// for a sector the aircraft could not physically have operated.
+    /// <para>
+    /// Deliberately distinct from <see cref="Validate_SingleWeeklyLegWithNoReturn_ReportsConflict_BecauseTheWeekMustCloseTheLoop"/>
+    /// above: that test's lone leg (RouteOut) departs EGGD, which already matches the aircraft's
+    /// default location, so only the wrap/closure check ever fires there. Here the lone leg
+    /// (RouteBack) departs EGPH - nowhere near the aircraft's recorded location - so this is the one
+    /// that actually proves <see cref="ValidateAircraftChains"/>'s first-leg-location anchor (not just
+    /// closure) is what catches the real reported shape.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Validate_OrphanedReturnLegAfterOutboundRemoved_IsRejected()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.False(result.IsValid);
+        // The first-leg-location anchor is what actually explains the problem to the player - it has
+        // to name where the aircraft is (EGGD) against where this pattern's first (and only) leg
+        // departs (EGPH), not just report a generic broken chain.
+        Assert.Contains(result.Conflicts, c => c.Contains("EGGD") && c.Contains("EGPH") && c.Contains("first leg"));
+    }
+
     [Fact]
     public void Validate_OverlappingLegsOnSameAircraft_AcrossDifferentPilots_ReportsDoubleBooking()
     {
