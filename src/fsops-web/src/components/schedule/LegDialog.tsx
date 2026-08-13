@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plane, TriangleAlert } from 'lucide-react'
+import { Info, Plane, TriangleAlert } from 'lucide-react'
 
 import { AircraftPicker } from './AircraftPicker'
 import { draftLegFromOption, draftWeekToInput, findOverlappingLeg, type DraftDay, type DraftLeg, type DraftWeek } from './draftEntry'
@@ -378,16 +378,29 @@ function LegOptionRow({ option, onPick }: { option: LegalLegOption; onPick: () =
         </span>
       </span>
       {/* Selectable but not consequence-free (real-use defect fix, 2026-08-12) - the warning is the
-       *  backend's own conflict sentence, verbatim, describing what picking this leg leaves unfinished
-       *  (e.g. a later already-drafted day the aircraft won't be in position for). It never blocks the
+       *  backend's own sentence, verbatim, describing what picking this leg leaves unfinished (e.g.
+       *  a later already-drafted day the aircraft won't be in position for). It never blocks the
        *  pick; it is a promise the player is taking on that still has to be kept before the week can
-       *  be saved (PUT /schedule keeps its own full check regardless). */}
-      {option.warnings.length > 0 && (
-        <span className="flex items-start gap-2 pl-6 text-xs text-warning">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 break-words">{option.warnings[0]}</span>
-        </span>
-      )}
+       *  be saved (PUT /schedule keeps its own full check regardless).
+       *
+       *  Styling follows `severity` (2026-08-13 fix) - an "info" continuity gap (this leg leaves the
+       *  aircraft somewhere new; the player's very next leg is the fix) is the ordinary halfway point
+       *  of an ordinary round trip, not a problem, so it reads at the same neutral weight as the
+       *  block time above rather than amber. Amber is reserved for "alert" - a genuine incompatibility
+       *  with something already on the calendar that adding this leg does not by itself resolve. */}
+      {option.warnings.length > 0 &&
+        (() => {
+          const warning = option.warnings[0]
+          if (!warning) return null
+          const isAlert = warning.severity === 'alert'
+          const Icon = isAlert ? TriangleAlert : Info
+          return (
+            <span className={cn('flex items-start gap-2 pl-6 text-xs', isAlert ? 'text-warning' : 'text-muted-foreground')}>
+              <Icon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 break-words">{warning.message}</span>
+            </span>
+          )
+        })()}
     </button>
   )
 }

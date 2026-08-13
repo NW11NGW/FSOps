@@ -132,6 +132,20 @@ export interface LegOptionsRequest {
   draftDutyDays?: DutyDayInput[] | null
 }
 
+/** One entry in `LegalLegOption.warnings`. `severity` tells the picker how to weight it visually -
+ *  it never affects whether the option is selectable (see `LegalLegOption.warnings` doc below).
+ *  `"info"` is a consequence resolvable purely by continuing to build the week - a continuity gap,
+ *  where this leg leaves the aircraft somewhere new and the very next leg the player adds is the
+ *  fix, the ordinary halfway point of an ordinary round trip. `"alert"` is a genuine incompatibility
+ *  with something already committed to elsewhere (double-booking, insufficient turnaround or rest,
+ *  an over-long duty day) that adding this leg does not, by itself, resolve - fixing it means
+ *  changing something else already on the calendar, not just continuing forward. Backend text,
+ *  render `message` verbatim (same convention as `IllegalLegOption.reason`). */
+export interface LegWarning {
+  message: string
+  severity: 'info' | 'alert'
+}
+
 /** A route that can legally depart at the queried day/time/aircraft. `blockMinutes` is computed
  *  against THIS specific aircraft (see PilotEndpoints.GetLegOptionsAsync) - the same figure a save
  *  will resolve to, never a route-level default from a different aircraft type. Null only if the
@@ -143,15 +157,17 @@ export interface LegOptionsRequest {
  *  already drafted LATER in the week - e.g. the aircraft won't be back in position for a day that's
  *  already been built. That's not a reason to refuse it (the player can resolve it with their very
  *  next leg), so it stays legal - the warning is shown, never hidden, and never blocks the pick.
- *  Empty for the common case where the leg has no such consequence. Backend text, render verbatim
- *  (same convention as `IllegalLegOption.reason`). */
+ *  Empty for the common case where the leg has no such consequence. Ordered with `"alert"`-severity
+ *  entries first (2026-08-13: the continuity-gap case used to share amber styling with genuine
+ *  incompatibilities and fire on every ordinary first leg of a round trip, teaching players to
+ *  ignore the colour) - the picker only ever renders `warnings[0]`, so the more urgent kind leads. */
 export interface LegalLegOption {
   routeId: string
   departureIcao: string
   arrivalIcao: string
   flightNumber: string | null
   blockMinutes: number | null
-  warnings: string[]
+  warnings: LegWarning[]
 }
 
 /** A route considered and rejected for the queried day/time/aircraft, with the backend's reason -

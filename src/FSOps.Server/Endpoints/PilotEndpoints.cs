@@ -527,9 +527,10 @@ public static class PilotEndpoints
         var allEntriesForValidation = baseline.Concat(candidates).ToList();
         var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs, airportsByIcao) = await BuildValidationDataAsync(db, airline, economyConfig, allEntriesForValidation, ct);
 
-        var baselineConflicts = PilotScheduleValidator
-            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
-            .Conflicts.ToHashSet();
+        var baselineResult = PilotScheduleValidator
+            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+        var baselineConflicts = baselineResult.Conflicts.ToHashSet();
+        var baselineGaps = baselineResult.ContinuityGaps.ToHashSet();
 
         // The "before" slice: only what's already committed strictly earlier than this slot (any
         // pilot, any aircraft - reservation/range/runway are structural per-entry checks that fire
@@ -583,7 +584,26 @@ public static class PilotEndpoints
             var withCandidate = baseline.Append(candidate).ToList();
             var candidateResult = PilotScheduleValidator.Validate(
                 withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
-            var warnings = candidateResult.Conflicts.Where(c => !baselineConflicts.Contains(c)).ToList();
+
+            // A continuity gap (this leg leaves the aircraft somewhere else; a later already-drafted
+            // leg needs it back) is resolvable purely by continuing to build the week - adding the
+            // bridging leg is the ordinary next step of an ordinary action, not a sign anything is
+            // wrong, so it gets its own forward-looking phrasing ("add a leg after this one") and
+            // "info" severity rather than the validator's own "before"-case wording ("...before this
+            // one to reposition it"), which is correct for ITS case (a leg departing where the
+            // aircraft isn't) but backwards here. See PilotScheduleValidator.ContinuityGap's own
+            // remarks for why this reads the validator's structured facts instead of re-deriving them.
+            // Every OTHER warning reachable here - double-booking, insufficient turnaround/rest, an
+            // over-long duty day - is a genuine incompatibility with something the player already
+            // committed to elsewhere, not resolvable simply by carrying on building, so those keep
+            // "alert" severity and are surfaced first (LegOptionRow only ever shows warnings[0]).
+            var newGaps = candidateResult.ContinuityGaps.Where(g => !baselineGaps.Contains(g)).ToList();
+            var newGapConflictTexts = newGaps.Select(g => g.ConflictText).ToHashSet();
+            var otherWarnings = candidateResult.Conflicts
+                .Where(c => !baselineConflicts.Contains(c) && !newGapConflictTexts.Contains(c))
+                .Select(message => new LegWarning(message, "alert"));
+            var gapWarnings = newGaps.Select(g => new LegWarning(PhraseContinuityGap(g), "info"));
+            var warnings = otherWarnings.Concat(gapWarnings).ToList();
 
             // K34: this MUST be the block time for the aircraft actually chosen for this duty
             // day (blockMinutesByLeg is keyed by (RouteId, FleetAircraftId) - see
@@ -597,6 +617,24 @@ public static class PilotEndpoints
         }
 
         return Results.Ok(new { legal, illegal, aircraftPosition });
+    }
+
+    /// <summary>
+    /// Phrases a <see cref="ContinuityGap"/> for the leg-options picker specifically - a
+    /// consequence and a next step ("this is where the aircraft ends up; add a leg after this one
+    /// to bring it back"), deliberately not the validator's own prose (which is correct for the
+    /// "before" case - a leg departing where the aircraft physically isn't - and would read
+    /// backwards here, telling the player to add a leg BEFORE one they haven't picked yet).
+    /// Mirrors the validator's own "schedule a leg" vs "you'd need to create a route" distinction
+    /// via <see cref="ContinuityGap.RouteExistsForReposition"/>.
+    /// </summary>
+    private static string PhraseContinuityGap(ContinuityGap gap)
+    {
+        var when = $"{gap.NextDepartureDayOfWeek} at {gap.NextDepartureTimeUtc:hh\\:mm}";
+        var fix = gap.RouteExistsForReposition
+            ? $"add a {gap.GapDepartureIcao} -> {gap.GapArrivalIcao} leg after this one"
+            : $"create a {gap.GapDepartureIcao} -> {gap.GapArrivalIcao} route on the Routes page, then add a leg on it after this one";
+        return $"Leaves {gap.AircraftRegistration} at {gap.GapDepartureIcao}. Its next leg departs {gap.GapArrivalIcao} ({when}) - {fix}.";
     }
 
     /// <summary>Same absolute-minute-of-week convention as <see cref="PilotScheduleValidator.WeekMinutes"/>
@@ -1009,3 +1047,15 @@ public record AircraftOptionsRequest(int Day);
 /// progress is judged against the real, up-to-date aircraft position rather than a stale one).
 /// </summary>
 public record LegOptionsRequest(int Day, string Time, Guid? FleetAircraftId, IReadOnlyList<DutyDayRequest>? DraftDutyDays);
+
+/// <summary>
+/// One entry in a legal leg option's `warnings` array (see <see cref="PilotEndpoints.GetLegOptionsAsync"/>).
+/// `Severity` is `"info"` for a consequence resolvable purely by continuing to build the week (a
+/// continuity gap - the aircraft ends up somewhere new and needs a leg after this one to bring it
+/// back, the ordinary halfway point of an ordinary action) and `"alert"` for a genuine
+/// incompatibility with something the player already committed to elsewhere (double-booking,
+/// insufficient turnaround or rest, an over-long duty day) that carrying on building this leg does
+/// not by itself resolve. The frontend uses this to choose neutral vs amber styling; it never
+/// changes whether the option is selectable - see <c>LegalLegOption.warnings</c> doc, `schedule.ts`.
+/// </summary>
+public record LegWarning(string Message, string Severity);

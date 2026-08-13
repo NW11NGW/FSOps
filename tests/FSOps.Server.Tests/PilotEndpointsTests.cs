@@ -720,13 +720,16 @@ public class PilotEndpointsTests
 
         // The two routes that genuinely depart from where the aircraft is (EGGD, after the 10:00
         // return) are LEGAL, each carrying a warning about the Tuesday conflict it creates.
+        // The continuity-gap warning is "info" severity, not "alert" (2026-08-13 fix) - it is
+        // resolvable purely by continuing to build the week (adding a leg after this one), the
+        // ordinary halfway point of an ordinary round trip, never an alarm.
         var outboundOption = Assert.Single(value.Legal, l => l.RouteId == outbound.Id);
         Assert.NotEmpty(outboundOption.Warnings);
-        Assert.Contains(outboundOption.Warnings, w => w.Contains("Tuesday"));
+        Assert.Contains(outboundOption.Warnings, w => w.Message.Contains("Tuesday") && w.Severity == "info");
 
         var thirdOutOption = Assert.Single(value.Legal, l => l.RouteId == thirdOut.Id);
         Assert.NotEmpty(thirdOutOption.Warnings);
-        Assert.Contains(thirdOutOption.Warnings, w => w.Contains("Tuesday"));
+        Assert.Contains(thirdOutOption.Warnings, w => w.Message.Contains("Tuesday") && w.Severity == "info");
 
         // The two routes that depart from the wrong end entirely (the aircraft is at EGGD, not
         // EGPH/EGSS) are still genuinely illegal - a "before" conflict, not a warning.
@@ -800,7 +803,7 @@ public class PilotEndpointsTests
                     $"Expected EGGD->EGPH block time to still be {EggdEgphBlockMinutes} min (RouteTestContext's founding A320neo) - " +
                     $"got {option.BlockMinutes}. The round-trip counts this test asserts are only valid for the pinned figure.");
 
-                report.Add($"trip {trip} @ {timeText}: block={option.BlockMinutes}, warnings=[{string.Join("; ", option.Warnings)}]");
+                report.Add($"trip {trip} @ {timeText}: block={option.BlockMinutes}, warnings=[{string.Join("; ", option.Warnings.Select(w => $"{w.Severity}:{w.Message}"))}]");
                 mondayLegs.Add(new DutyLegRequest($"{timeText}:00", routeId));
                 // 30 minutes - the FLOOR PilotScheduleValidator enforces (SchedulingConfig.MinTurnaroundMinutes,
                 // corrected 2026-08-12 from 45: see economy-config.json's "scheduling" comment) - the
@@ -1140,7 +1143,9 @@ public class PilotEndpointsTests
 
     private sealed record LegOptionsDto(List<LegOptionDto> Legal, List<IllegalLegOptionDto> Illegal);
 
-    private sealed record LegOptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber, int? BlockMinutes, List<string> Warnings);
+    private sealed record LegOptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber, int? BlockMinutes, List<LegWarningDto> Warnings);
+
+    private sealed record LegWarningDto(string Message, string Severity);
 
     private sealed record IllegalLegOptionDto(Guid RouteId, string Reason);
 

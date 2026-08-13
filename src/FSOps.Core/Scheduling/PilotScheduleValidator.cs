@@ -12,10 +12,38 @@ namespace FSOps.Core.Scheduling;
 /// </summary>
 public sealed record PilotScheduleEntryInput(Guid PilotId, DayOfWeek DayOfWeek, TimeSpan DepartureTimeUtc, Guid RouteId, Guid FleetAircraftId);
 
-public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string> Conflicts)
+public sealed record ScheduleValidationResult(bool IsValid, IReadOnlyList<string> Conflicts, IReadOnlyList<ContinuityGap> ContinuityGaps)
 {
-    public static ScheduleValidationResult Ok { get; } = new(true, Array.Empty<string>());
+    public static ScheduleValidationResult Ok { get; } = new(true, Array.Empty<string>(), Array.Empty<ContinuityGap>());
 }
+
+/// <summary>
+/// The structured facts behind one "lands here, but the next already-drafted leg departs
+/// somewhere else" conflict from <see cref="PilotScheduleValidator.ValidateAircraftChains"/> -
+/// captured alongside the existing prose sentence in <see cref="ScheduleValidationResult.Conflicts"/>,
+/// never instead of it, so a caller that wants to phrase this for its own context (see
+/// PilotEndpoints.GetLegOptionsAsync's forward-looking warning on an otherwise-legal option) can
+/// read the two airports and the next departure directly, rather than re-deriving them by
+/// re-running this same chain logic a second time - two implementations of "what does this
+/// schedule imply" would only drift apart. <see cref="ConflictText"/> is the exact sentence this
+/// gap produced in <c>Conflicts</c>, included purely so a caller doing the "before" vs "after" set
+/// difference (as GetLegOptionsAsync already does for every other conflict) can recognise and
+/// exclude this specific sentence when it wants to substitute its own phrasing instead - existing
+/// callers that only ever read <c>Conflicts</c> (PUT /schedule among them) are completely
+/// unaffected by this record's existence.
+/// </summary>
+public sealed record ContinuityGap(
+    string AircraftRegistration,
+    // Where the aircraft is left once the leg that produced this gap lands.
+    string GapDepartureIcao,
+    // Where the next already-drafted leg on this aircraft needs it to be instead.
+    string GapArrivalIcao,
+    DayOfWeek NextDepartureDayOfWeek,
+    TimeSpan NextDepartureTimeUtc,
+    // Mirrors the same "schedule a leg" vs "you'd need to create a route" distinction the prose
+    // conflict draws - see RouteExistsBetween.
+    bool RouteExistsForReposition,
+    string ConflictText);
 
 /// <summary>
 /// Pure validation for a weekly schedule. Every rule it enforces: one aircraft per pilot per duty
@@ -182,7 +210,7 @@ public static class PilotScheduleValidator
 
         if (conflicts.Count > 0)
         {
-            return new ScheduleValidationResult(false, conflicts);
+            return new ScheduleValidationResult(false, conflicts, Array.Empty<ContinuityGap>());
         }
 
         // The aircraft-per-duty-day invariant - see this method's own doc
@@ -197,13 +225,14 @@ public static class PilotScheduleValidator
         ValidateDutyDayAircraftConsistency(entries, fleetById, conflicts);
         if (conflicts.Count > 0)
         {
-            return new ScheduleValidationResult(false, conflicts);
+            return new ScheduleValidationResult(false, conflicts, Array.Empty<ContinuityGap>());
         }
 
-        ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, requireWeekClosure);
+        var continuityGaps = new List<ContinuityGap>();
+        ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, continuityGaps, requireWeekClosure);
         ValidatePilotDutyAndRest(entries, blockMinutesByLeg, config, conflicts, requireWeekClosure);
 
-        return conflicts.Count == 0 ? ScheduleValidationResult.Ok : new ScheduleValidationResult(false, conflicts);
+        return conflicts.Count == 0 ? ScheduleValidationResult.Ok : new ScheduleValidationResult(false, conflicts, continuityGaps);
     }
 
     /// <summary>
@@ -256,6 +285,7 @@ public static class PilotScheduleValidator
         SchedulingConfig config,
         IReadOnlyCollection<(string DepartureIcao, string ArrivalIcao)> existingRoutePairs,
         List<string> conflicts,
+        List<ContinuityGap> continuityGaps,
         bool requireWeekClosure)
     {
         foreach (var group in entries.GroupBy(e => e.FleetAircraftId))
@@ -325,7 +355,8 @@ public static class PilotScheduleValidator
                     // send the player to create it; if it already exists, the gap is a scheduling
                     // gap, not a routing gap, and sending them to create a route they already have
                     // solves nothing.
-                    var fix = RouteExistsBetween(existingRoutePairs, gapDeparture, gapArrival)
+                    var routeExists = RouteExistsBetween(existingRoutePairs, gapDeparture, gapArrival);
+                    var fix = routeExists
                         ? $"schedule a {gapDeparture} -> {gapArrival} leg before this one to reposition it"
                         : $"you'd need to create a {gapDeparture} -> {gapArrival} route on the Routes page for this chain to work";
 
@@ -333,9 +364,18 @@ public static class PilotScheduleValidator
                     // quoting the departure time made the sentence say an aircraft leaving Monday
                     // 08:00 also lands Monday 08:00, which reads as a broken clock next to the
                     // double-booking message below that already prints the real arrival.
-                    conflicts.Add(
+                    var conflictText =
                         $"{aircraft.Registration} lands at {currentRoute.ArrivalIcao} ({FormatArrival(current.Entry.DayOfWeek, current.Entry.DepartureTimeUtc, current.Block)}) " +
-                        $"but {nextLeg} departs {nextRoute.DepartureIcao} ({FormatSlot(next.Entry.DayOfWeek, next.Entry.DepartureTimeUtc)}) - {fix}.");
+                        $"but {nextLeg} departs {nextRoute.DepartureIcao} ({FormatSlot(next.Entry.DayOfWeek, next.Entry.DepartureTimeUtc)}) - {fix}.";
+                    conflicts.Add(conflictText);
+                    continuityGaps.Add(new ContinuityGap(
+                        aircraft.Registration,
+                        gapDeparture,
+                        gapArrival,
+                        next.Entry.DayOfWeek,
+                        next.Entry.DepartureTimeUtc,
+                        routeExists,
+                        conflictText));
                 }
 
                 var currentArrival = current.Departure + current.Block;

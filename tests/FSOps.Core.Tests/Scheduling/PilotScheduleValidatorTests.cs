@@ -178,6 +178,55 @@ public class PilotScheduleValidatorTests
         Assert.DoesNotContain(result.Conflicts, c => c.Contains("you'd need to create"));
     }
 
+    /// <summary>
+    /// The structured counterpart to <see cref="Validate_ChainThatDoesNotConnect_ButTheRouteAlreadyExists_OffersToScheduleALeg_NotCreateARoute"/>
+    /// - a caller phrasing this conflict for its own context (see PilotEndpoints.GetLegOptionsAsync's
+    /// forward-looking warning) needs the two airports and the next departure as data, not just as
+    /// words baked into a sentence written for the "before" case.
+    /// </summary>
+    [Fact]
+    public void Validate_ChainThatDoesNotConnect_ExposesTheGapAsStructuredData_WithConflictTextMatchingTheProseConflict()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteElsewhere, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs(includeHubToElsewhere: true));
+
+        // Two entries with requireWeekClosure: true (the default) also reports the wrap pair closing
+        // back to the first entry - filter to the interior gap this test is actually about, the same
+        // way the prose assertions above scope to "EGPH" && "EGSS".
+        var gap = Assert.Single(result.ContinuityGaps, g => g.GapArrivalIcao == "EGSS");
+        Assert.Equal("G-ONEX", gap.AircraftRegistration);
+        Assert.Equal("EGPH", gap.GapDepartureIcao);
+        Assert.Equal("EGSS", gap.GapArrivalIcao);
+        Assert.Equal(DayOfWeek.Monday, gap.NextDepartureDayOfWeek);
+        Assert.Equal(TimeSpan.FromHours(10), gap.NextDepartureTimeUtc);
+        Assert.True(gap.RouteExistsForReposition);
+        // Verbatim the same sentence Conflicts carries - never a second, independently-derived one.
+        Assert.Contains(gap.ConflictText, result.Conflicts);
+    }
+
+    /// <summary>Same shape, but the airline has no route between the gap airports at all - the
+    /// structured flag flips to match the "you'd need to create a route" wording.</summary>
+    [Fact]
+    public void Validate_ChainThatDoesNotConnect_AndNoRouteExists_StructuredGapSaysSo()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteElsewhere, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        var gap = Assert.Single(result.ContinuityGaps, g => g.GapArrivalIcao == "EGSS");
+        Assert.False(gap.RouteExistsForReposition);
+        Assert.Contains(gap.ConflictText, result.Conflicts);
+    }
+
     [Fact]
     public void Validate_SingleWeeklyLegWithNoReturn_ReportsConflict_BecauseTheWeekMustCloseTheLoop()
     {
