@@ -175,6 +175,62 @@ public class FlightIntegrityFalsePositiveTests
     }
 
     [Theory]
+    [InlineData(40.0, 90)]
+    [InlineData(40.0, 300)]
+    [InlineData(95.0, 90)]
+    [InlineData(5505.0, 120)]
+    public void GlitchAwayAndBackAfterTheAircraftHasSettledOnItsStand_DoesNotVoidTheSector(
+        double glitchAwayNm, double glitchHeldSeconds)
+    {
+        // Case 8, and it is wider than case 7 rather than a variant of it. Case 7 needed the sim to
+        // misbehave inside the first minute of tracking; this one needs the opposite - an aircraft
+        // that has been sitting on its stand for a couple of minutes, which is the ordinary way a
+        // sector begins.
+        //
+        // Nothing about the departure exemption is at fault here: the outbound transition lands
+        // forty miles away, so of course it declines to excuse it. The fault is that the suspicion is
+        // CONFIRMED while the glitch is still being reported - before any return could possibly be
+        // observed - and the finding then latched for good. The aircraft does come back, which is
+        // exactly the rule meant to recognise an excursion that was never real, but it comes back
+        // ninety seconds too late to count.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Hold(Stand, seconds: 120, onGround: true);
+        pipeline.Hold(South(Stand, glitchAwayNm), glitchHeldSeconds, onGround: true);
+        pipeline.Hold(Stand, seconds: 60, onGround: true);
+        pipeline.Fly(Stand, seconds: 600);
+
+        Assert.True(glitchHeldSeconds > FlightIntegrityMonitor.CorroborationDwell.TotalSeconds,
+            "a glitch shorter than the dwell can never be confirmed, so this would prove nothing");
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(6)]
+    public void RepeatedGlitchAndCorrectCycles_DoNotVoidTheSector(int cycles)
+    {
+        // The nastier consequence of case 8: surviving one glitch is what puts a session over the
+        // corroboration line for the next, so a sim that misbehaves twice could not stay on the safe
+        // side however briefly each one lasted. "Glitch twice and lose the sector" is a harder thing
+        // to explain to a pilot than any of the other shapes.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Hold(Stand, seconds: 120, onGround: true);
+        for (var cycle = 0; cycle < cycles; cycle++)
+        {
+            pipeline.Hold(South(Stand, 40.0), seconds: 90, onGround: true);
+            pipeline.Hold(Stand, seconds: 90, onGround: true);
+        }
+
+        pipeline.Fly(Stand, seconds: 600);
+
+        AssertFlownHonestly(pipeline);
+    }
+
+    [Theory]
     [InlineData(2.0, 120)]
     [InlineData(8.0, 120)]
     [InlineData(40.0, 5)]
@@ -281,6 +337,60 @@ public class FlightIntegrityFalsePositiveTests
     // ---------------------------------------------------------------------------------------
     // The other side of the line. Nothing above may be bought at the price of anything below.
     // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void TeleportFollowedByParkingAtTheFarEnd_IsStillCaught()
+    {
+        // The case that rules out the obvious alternative fix. Deferring confirmation until an
+        // excursion is "genuinely left behind" would pay this: a cheat who teleports to the
+        // destination and shuts down never leaves anything behind. Revocation on RETURN has no such
+        // hole - parking at the far end is the opposite of coming back.
+        var pipeline = new Pipeline(Stand);
+
+        var beforeJump = pipeline.Fly(Stand, seconds: 600);
+        pipeline.Hold(North(beforeJump, 600), seconds: 600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void TeleportThenFlyingOnWithoutEverReturning_StaysCaughtForTheWholeFlight()
+    {
+        // Revocation must not decay into "wait long enough and it clears". The flag may only come
+        // off by the aircraft coming home, so a teleport followed by hours of onward flight stays
+        // flagged for every one of them.
+        var pipeline = new Pipeline(Stand);
+
+        var beforeJump = pipeline.Fly(Stand, seconds: 600);
+        var afterJump = North(beforeJump, 600);
+        pipeline.Fly(afterJump, seconds: 600);
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+
+        pipeline.Fly(North(afterJump, 75), seconds: 3600);
+
+        Assert.True(pipeline.Monitor.PositionJumpDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
+
+    [Fact]
+    public void SlewIsNeverRevokedByComingHome()
+    {
+        // Slew is one-way, full stop, and revocation must not be able to reach it: any slewing
+        // invalidates the sector however the flight ends. Here the aircraft slews away and then
+        // comes all the way back to where it started, which is exactly what revokes a position
+        // jump - and must do nothing whatever to the slew finding.
+        var pipeline = new Pipeline(Stand);
+
+        pipeline.Fly(Stand, seconds: 600);
+        pipeline.Sample(North(Stand, 600), slew: true);
+        pipeline.Fly(North(Stand, 600), seconds: 120);
+        pipeline.Sample(Stand);
+        pipeline.Fly(Stand, seconds: 600);
+
+        Assert.True(pipeline.Monitor.SlewDetected);
+        Assert.True(pipeline.Monitor.SectorInvalidForPayment);
+    }
 
     [Fact]
     public void JumpToTheDepartureAirportOnceAirborne_IsStillCaught()

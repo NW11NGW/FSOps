@@ -190,6 +190,13 @@ public sealed class FlightIntegrityMonitor
     /// </summary>
     private double _suspectedJumpDistanceNm;
 
+    /// <summary>Every confirmed jump the aircraft has not since come home from, each carrying the
+    /// distance that scales its own return test. <see cref="PositionJumpDetected"/> is exactly "is
+    /// this list non-empty". Kept per jump rather than as a single flag so that coming back from one
+    /// excursion cannot clear the finding for a different one the aircraft never returned from.
+    /// </summary>
+    private readonly List<(double Lat, double Lon, double DistanceNm)> _outstandingConfirmedJumps = new();
+
     /// <summary>True once the aircraft has been seen to move, plausibly, outside
     /// <see cref="DepartureCorrectionRadiusNm"/> of its expected start. A one-way latch: after this
     /// the departure-correction rule in <see cref="Observe"/> is spent for the rest of the sector.
@@ -292,9 +299,29 @@ public sealed class FlightIntegrityMonitor
     /// <summary>True once any sample reported slew mode active.</summary>
     public bool SlewDetected { get; private set; }
 
-    /// <summary>True once a corroborated position jump has been observed - see <see cref="Observe"/>
-    /// for what "corroborated" requires and why an uncorroborated one is not enough.</summary>
-    public bool PositionJumpDetected { get; private set; }
+    /// <summary>
+    /// True while at least one corroborated position jump is still OUTSTANDING - see
+    /// <see cref="Observe"/> for what "corroborated" requires and why an uncorroborated one is not
+    /// enough.
+    /// <para>
+    /// Deliberately not a one-way latch, unlike <see cref="SlewDetected"/>. A confirmed jump is
+    /// revoked if the aircraft later comes back to where that jump started from, by the same
+    /// proximity rule that dismisses a jump before it is confirmed
+    /// (<see cref="ReturnToOriginFraction"/>) and for the same reason: an aircraft that ends up back
+    /// where it started has flown nothing and gained nothing, so whatever moved it was not a cheat.
+    /// It had to become revocable because confirmation fires MID-EXCURSION - a minute after the jump,
+    /// while a bad reading is still being reported and long before any correction could arrive - so
+    /// a latch made a sector's fate depend on the sim happening to right itself within sixty seconds
+    /// of going wrong.
+    /// </para>
+    /// <para>
+    /// Each confirmed jump is tracked and revoked in its own right, so a flight that jumps twice and
+    /// only returns from one of them stays flagged for the other. Coming back is the ONLY thing that
+    /// revokes: not time, not distance flown, not a later reconnect. A teleport that is never
+    /// returned from - flown on from, or parked at - stays flagged for the rest of the sector.
+    /// </para>
+    /// </summary>
+    public bool PositionJumpDetected => _outstandingConfirmedJumps.Count > 0;
 
     /// <summary>Slew or a position jump both mean the sector cannot be paid for - callers must
     /// check this (or the two flags it combines) structurally rather than subtracting a penalty
@@ -465,6 +492,7 @@ public sealed class FlightIntegrityMonitor
                 }
 
                 ResolveSuspicion(sample);
+                RevokeAnyJumpTheAircraftHasComeHomeFrom(sample);
             }
         }
 
@@ -502,10 +530,41 @@ public sealed class FlightIntegrityMonitor
             // dead one can never be reopened later by an unrelated glitch somewhere else entirely.
             if (_suspectedJumpDistanceNm > NegligibleJumpDistanceNm)
             {
-                PositionJumpDetected = true;
+                // Recorded rather than latched. Confirmation necessarily happens MID-EXCURSION - a
+                // full dwell after the jump, while a bad reading is very often still being reported -
+                // so this cannot be the last word: see PositionJumpDetected, and
+                // RevokeAnyJumpTheAircraftHasComeHomeFrom below.
+                _outstandingConfirmedJumps.Add((origin.Lat, origin.Lon, _suspectedJumpDistanceNm));
             }
 
             _suspectedJumpOrigin = null;
+        }
+    }
+
+    /// <summary>
+    /// Clears any confirmed jump the aircraft has since come back from, by the same proximity rule
+    /// that dismisses one before it is confirmed - see <see cref="ReturnToOriginFraction"/>. Coming
+    /// back means the aircraft was there all along and the excursion was never real; it is the one
+    /// piece of evidence that can arrive AFTER a jump has been confirmed and still settle the
+    /// question, and confirmation happens far too early for it to have been heard already.
+    /// <para>
+    /// This is the only thing that clears a confirmed jump. Nothing about time passing, distance
+    /// flown, a reconnect, or the flight ending touches it, and it cannot reach
+    /// <see cref="SlewDetected"/> at all - slewing invalidates a sector however the flight ends,
+    /// full stop.
+    /// </para>
+    /// </summary>
+    private void RevokeAnyJumpTheAircraftHasComeHomeFrom(FlightTelemetrySample sample)
+    {
+        for (var i = _outstandingConfirmedJumps.Count - 1; i >= 0; i--)
+        {
+            var jump = _outstandingConfirmedJumps[i];
+            var fromOriginNm = GreatCircle.DistanceNm(jump.Lat, jump.Lon, sample.LatitudeDeg, sample.LongitudeDeg);
+
+            if (fromOriginNm <= jump.DistanceNm * ReturnToOriginFraction)
+            {
+                _outstandingConfirmedJumps.RemoveAt(i);
+            }
         }
     }
 
