@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, RadioTower, Route, ShieldCheck, Users } from 'lucide-react'
+import { Clock3, DollarSign, Globe, PlaneTakeoff, Radar, RadioTower, Route, ShieldCheck, TowerControl, Users } from 'lucide-react'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, type BadgeProps } from '@/components/ui/badge'
@@ -20,6 +20,7 @@ import { AtcControllerList, AtcCountBadge } from '@/components/map/AtcController
 import { VatsimHistoryCard } from '@/components/map/VatsimHistoryCard'
 import type { MapBounds } from '@/components/map/atcVisibility'
 import { reputationDemandLabel, reputationDrivers, reputationTrendLabel } from '@/lib/reputation'
+import { readVatsimAtcVisible, writeVatsimAtcVisible } from '@/lib/vatsimAtcVisibility'
 import { readVatsimTrafficVisible, writeVatsimTrafficVisible } from '@/lib/vatsimTrafficVisibility'
 import type { LiveContext } from '@/types/live-context'
 import type { ReputationDirection } from '@/types/airline'
@@ -59,10 +60,17 @@ export function Dashboard() {
   const serverNow = useServerClock(heartbeat)
   const worldData = useWorldDataStatus()
   const liveOps = useLiveOperations()
+  // VATSIM ATC, OFF by default on the same terms as traffic below - see vatsimAtcVisibility for
+  // why the read must never quietly default to on. Gating this switch rather than only the
+  // rendering means a player who never turns ATC on never calls the ATC feed at all.
+  const [showVatsimAtc, setShowVatsimAtc] = useState(readVatsimAtcVisible)
+  useEffect(() => {
+    writeVatsimAtcVisible(showVatsimAtc)
+  }, [showVatsimAtc])
   // The map can show a controller anywhere the user pans, so this asks for the world and the
   // client narrows it to the viewport - see AtcControllerList. Geometry only because this page
   // actually draws the polygons; a map-free consumer must not pay for coordinates it discards.
-  const atc = useVatsimAtc({ scope: 'all', geometry: true })
+  const atc = useVatsimAtc({ scope: 'all', geometry: true, enabled: showVatsimAtc })
   // Null until the lazy-loaded map mounts and reports its first view, which correctly leaves the
   // list showing the server's own network scoping in the meantime rather than nothing.
   const [atcViewport, setAtcViewport] = useState<MapBounds | null>(null)
@@ -284,8 +292,23 @@ export function Dashboard() {
                 {liveOps.data.aircraft.length} airborne
               </Badge>
             )}
-            {/* G11: other people's traffic - toggleable, and OFF until the player asks for it. The
-            toggle also gates the fetch, so a player who never turns it on never calls VATSIM. */}
+            {/* The two VATSIM layer switches, deliberately identical in placement, treatment and
+            wording so a player who works out one immediately understands the other. Both are OFF
+            until asked for, and both gate the fetch rather than just the rendering, so a player
+            who never turns a layer on never calls that VATSIM feed. They live in the card header
+            rather than the map's legend panel because the legend hides itself when there is
+            nothing to key - a control living there would vanish exactly when it was needed. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-pressed={showVatsimAtc}
+              onClick={() => setShowVatsimAtc((v) => !v)}
+              className="h-7 px-2 text-xs"
+            >
+              <TowerControl className="size-3.5" />
+              {showVatsimAtc ? 'Hide VATSIM ATC' : 'Show VATSIM ATC'}
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -308,12 +331,18 @@ export function Dashboard() {
           )}
           {liveOps.status === 'ready' && liveOps.data && (
             <Suspense fallback={<Skeleton className="h-[360px] w-full rounded-lg" />}>
+              {/* Every ATC prop is gated on the switch. Passing no controllers is what empties the
+                  legend's ATC rows too - they are already gated on there being controllers to key,
+                  so the legend never advertises a colour for something that is not on screen. And
+                  only a layer the player actually asked for may report itself unavailable: a
+                  switched-off layer complaining about the feed is noise about a thing they turned
+                  off. */}
               <LiveOpsMap
                 aircraft={liveOps.data.aircraft}
                 network={liveOps.data.network}
-                atcControllers={atc.status === 'ready' && atc.data?.status === 'ok' ? atc.data.controllers : []}
-                atcBoundaries={atc.data?.boundaries ?? null}
-                atcUnavailable={atc.status === 'error' || atc.data?.status === 'unavailable'}
+                atcControllers={showVatsimAtc && atc.status === 'ready' && atc.data?.status === 'ok' ? atc.data.controllers : []}
+                atcBoundaries={showVatsimAtc ? (atc.data?.boundaries ?? null) : null}
+                atcUnavailable={showVatsimAtc && (atc.status === 'error' || atc.data?.status === 'unavailable')}
                 vatsimTraffic={showVatsimTraffic && traffic.status === 'ready' && traffic.data?.status === 'ok' ? traffic.data.pilots : []}
                 onViewportChange={setAtcViewport}
                 className="h-[360px]"
@@ -325,20 +354,28 @@ export function Dashboard() {
 
       <VatsimHistoryCard />
 
-      <Card className="mt-4">
-        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <RadioTower className="size-4" />
-            ATC coverage
-          </CardTitle>
-          <AtcCountBadge status={atc.status} data={atc.data} viewport={atcViewport} />
-        </CardHeader>
-        <CardContent>
-          {/* Same viewport the map above reports, so this list is always describing the picture
-              the user is currently looking at rather than a fixed slice of the world. */}
-          <AtcControllerList status={atc.status} data={atc.data} viewport={atcViewport} />
-        </CardContent>
-      </Card>
+      {/* Hidden entirely while ATC is switched off, rather than left rendering a gated hook. With
+          no fetch running, `atc` sits in its initial 'loading' state forever, and AtcControllerList
+          draws skeletons for 'loading' - so leaving this card mounted would park it on a permanent
+          loading state that reads as a hang. Hiding it also keeps the card and the map telling the
+          same story: ATC is off, so there is no ATC anywhere on this page. The "Show VATSIM ATC"
+          button above is what brings both back. */}
+      {showVatsimAtc && (
+        <Card className="mt-4">
+          <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <RadioTower className="size-4" />
+              ATC coverage
+            </CardTitle>
+            <AtcCountBadge status={atc.status} data={atc.data} viewport={atcViewport} />
+          </CardHeader>
+          <CardContent>
+            {/* Same viewport the map above reports, so this list is always describing the picture
+                the user is currently looking at rather than a fixed slice of the world. */}
+            <AtcControllerList status={atc.status} data={atc.data} viewport={atcViewport} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
