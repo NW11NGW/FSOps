@@ -106,6 +106,62 @@ public sealed class FlightIntegrityMonitor
     /// </summary>
     public static readonly TimeSpan StartingFixAcquisitionWindow = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Total displacement below which a discontinuity is never a teleport, however absurd the speed
+    /// it implies. At 5 Hz even a two-mile correction implies 36,000 kt, so the SPEED test alone
+    /// cannot tell a scenery reload or a ground settle from a reposition - but a jump has to be
+    /// worth something to be a cheat, and one that gains the player nothing must never cost them a
+    /// sector.
+    /// <para>
+    /// Why five miles specifically. The number this replaces is about 62 m: that is all it takes for
+    /// a correction to exceed <see cref="ImpossibleGroundSpeedKt"/> across
+    /// <see cref="MinimumJudgeableInterval"/>, so before this floor existed the effective "teleport"
+    /// threshold was the length of a wide-body aircraft. Five miles is 150 times that. It has to sit
+    /// comfortably ABOVE the corrections that actually occur - the characterised case trips at two
+    /// miles, which is the size of error a scenery load or a ground settle produces - and comfortably
+    /// BELOW anything worth cheating for. Five miles is also already the distance this app uses
+    /// elsewhere to mean "the aircraft is still where we left it" (FlightLifecycleService's reconnect
+    /// resume radius), and it is well under a minute of cruise, so no sector's payment turns on it.
+    /// <para>
+    /// It is deliberately NOT asked to carry the whole opening-fix case on its own: corrections of
+    /// eight, forty and ninety-five miles are closed by the departure rule below
+    /// (<see cref="DepartureCorrectionRadiusNm"/>), not by this floor, precisely because a floor
+    /// large enough to swallow those WOULD be large enough to be worth exploiting.
+    /// </para>
+    /// <para>
+    /// It is measured
+    /// against the excursion's TOTAL displacement from where it started, not against a single
+    /// sample-to-sample hop, so a reposition delivered as a run of small steps is still measured as
+    /// the one large move it really is (see <see cref="Observe"/>).
+    /// </para>
+    /// </summary>
+    public const double NegligibleJumpDistanceNm = 5.0;
+
+    /// <summary>
+    /// How close to the expected starting position a jump has to LAND for it to be read as a
+    /// correction rather than a reposition - see <see cref="Observe"/>. Nobody teleports to the
+    /// stand they are supposed to be standing on, so a jump that puts the aircraft back at its own
+    /// departure airport, before it has ever left it, gains nothing by construction.
+    /// <para>
+    /// Ten miles covers the airport and everything immediately around it. It is deliberately much
+    /// tighter than <see cref="StartingFixToleranceNm"/>, which answers a different question ("is
+    /// this reading a position at all?") and would be far too generous here: excusing a jump that
+    /// landed 95 nm from the departure airport WOULD hand the player most of a short sector.
+    /// </para>
+    /// </summary>
+    public const double DepartureCorrectionRadiusNm = 10.0;
+
+    /// <summary>
+    /// How far the aircraft has to move before the monitor accepts that the position feed is
+    /// genuinely updating rather than repeating itself. About 90 m - a parked aircraft does not
+    /// creep that far, and anything taxiing covers it in seconds, while a stalled feed never covers
+    /// it at all. Used for two things, both of which turn on "did this reading actually change?":
+    /// deciding whether a resumed feed has come back to life (see
+    /// <see cref="NotifyTelemetryInterrupted"/>), and deciding whether the aircraft has really left
+    /// its departure area (see <see cref="Observe"/>).
+    /// </summary>
+    private const double ObservableMovementNm = 0.05;
+
     /// <summary>Where the aircraft is expected to be when tracking starts, or null when the caller
     /// has nothing to offer - see the constructor.</summary>
     private readonly (double Lat, double Lon)? _expectedStartPosition;
@@ -127,9 +183,32 @@ public sealed class FlightIntegrityMonitor
     /// there is no suspicion. See <see cref="Observe"/>.</summary>
     private (double Lat, double Lon)? _suspectedJumpOrigin;
 
-    /// <summary>How far the suspected jump appeared to go, used to scale the "came back" test - see
-    /// <see cref="ReturnToOriginFraction"/>.</summary>
+    /// <summary>How far the suspected jump appeared to go: the greatest distance from
+    /// <see cref="_suspectedJumpOrigin"/> reached while the excursion was still running. Used both
+    /// to scale the "came back" test (see <see cref="ReturnToOriginFraction"/>) and to decide
+    /// whether the excursion was ever worth anything (see <see cref="NegligibleJumpDistanceNm"/>).
+    /// </summary>
     private double _suspectedJumpDistanceNm;
+
+    /// <summary>True once the aircraft has been seen to move, plausibly, outside
+    /// <see cref="DepartureCorrectionRadiusNm"/> of its expected start. A one-way latch: after this
+    /// the departure-correction rule in <see cref="Observe"/> is spent for the rest of the sector.
+    /// </summary>
+    private bool _leftTheStartingArea;
+
+    /// <summary>True between a telemetry interruption and the first evidence that the resumed feed
+    /// is really updating - see <see cref="NotifyTelemetryInterrupted"/>.</summary>
+    private bool _awaitingProofTheFeedResumed;
+
+    /// <summary>The first position reported after an interruption, against which that evidence is
+    /// judged. Null until one arrives.</summary>
+    private (double Lat, double Lon)? _positionWhenFeedResumed;
+
+    /// <summary>Ground the aircraft has been observed to cover, summed over plausible transitions.
+    /// Only ever asked one question - "has this feed ever actually moved?" - so it is never reset.
+    /// A stuck fix reports the same position forever and accumulates nothing, however long it is
+    /// held; see <see cref="NoteWhetherTheAircraftHasLeftItsDepartureArea"/>.</summary>
+    private double _observedTravelNm;
 
     /// <param name="expectedStartPosition">
     /// Where the aircraft should be when tracking begins - normally the flight's departure airport.
@@ -142,6 +221,45 @@ public sealed class FlightIntegrityMonitor
     public FlightIntegrityMonitor((double Lat, double Lon)? expectedStartPosition = null)
     {
         _expectedStartPosition = expectedStartPosition;
+    }
+
+    /// <summary>
+    /// Tells the monitor that the telemetry link went away and has come back, so the samples either
+    /// side of the hole are not consecutive observations of the same continuous motion. Callers must
+    /// raise this for a live sim reconnect exactly as they rebuild
+    /// <see cref="PositionAcquisitionGate"/>, and for the same reason.
+    /// <para>
+    /// The rule is not a heuristic: YOU CANNOT INFER SPEED ACROSS A GAP IN TELEMETRY. A transition
+    /// spanning an outage says nothing about how fast anything moved, so measuring it is simply
+    /// wrong - and it is wrong in the direction that costs a player their sector, because the
+    /// aircraft really did keep flying while nobody was watching, so the first honest position after
+    /// the link returns is genuinely miles from the last one before it went away. Worse, a
+    /// reconnecting SimConnect commonly replays the position it last had for a while, which bridges
+    /// the hole and makes the monitor's own timeline look unbroken; the gap is then invisible in the
+    /// timestamps and only the connection state can reveal it.
+    /// </para>
+    /// <para>
+    /// What is dropped is everything that describes CONTINUITY - the previous sample and the
+    /// unbroken run of plausible movement behind it. What is deliberately kept is everything already
+    /// FOUND: slew, an elevated sim rate, a confirmed jump, and any suspicion still outstanding. A
+    /// reconnect must never launder evidence, or dropping the link would become the cheat.
+    /// </para>
+    /// <para>
+    /// An unusually long gap between two samples with no reconnect behind it is NOT treated this
+    /// way, and that is a considered decision rather than an omission. When samples simply stop and
+    /// restart, the timestamps stay honest, so the implied speed across the gap is still a true
+    /// lower bound on how fast the aircraft moved and an honest flight cannot trip it - there is no
+    /// false positive to fix. Suppressing those transitions would only delete a real detection: a
+    /// telemetry blackout used to cover a reposition. It is staleness, not silence, that breaks the
+    /// arithmetic, and staleness arrives with a reconnect.
+    /// </para>
+    /// </summary>
+    public void NotifyTelemetryInterrupted()
+    {
+        _last = null;
+        _plausibleDwell = TimeSpan.Zero;
+        _awaitingProofTheFeedResumed = true;
+        _positionWhenFeedResumed = null;
     }
 
     /// <summary>True once any sample reported a simulation rate above 1.0.</summary>
@@ -168,8 +286,8 @@ public sealed class FlightIntegrityMonitor
     /// <para>
     /// An implausible transition A-&gt;B, taken alone, says only that ONE of A and B is wrong; it
     /// says nothing about which. A teleport and a single bad fix produce exactly the same pair of
-    /// numbers. What separates them is context, and the monitor now demands two kinds of it before
-    /// it will condemn a sector:
+    /// numbers. What separates them is context, and the monitor demands several kinds of it before
+    /// it will condemn a sector.
     /// </para>
     /// <para>
     /// 1. An opening fix that is nowhere near where the flight is supposed to be starting is thrown
@@ -177,7 +295,21 @@ public sealed class FlightIntegrityMonitor
     /// constructor).
     /// </para>
     /// <para>
-    /// 2. Otherwise, a transition only OPENS A SUSPICION, and only if the aircraft had already been
+    /// 2. A transition is not judged at all when it spans a break in the telemetry - see
+    /// <see cref="NotifyTelemetryInterrupted"/>. You cannot infer speed across a gap.
+    /// </para>
+    /// <para>
+    /// 3. Nor when it puts the aircraft back at the airport this flight is departing from, before
+    /// the aircraft has ever left it. Nobody teleports TO the stand they are supposed to be standing
+    /// on, so that move cannot be a cheat whatever it implies - see
+    /// <see cref="IsACorrectionBackToItsOwnDeparture"/>. This is what makes an opening fix that is
+    /// wrong but BELIEVABLE - two miles out, or ninety - survivable at all: it is inside
+    /// <see cref="StartingFixToleranceNm"/>, so the guard above believes it, and once it has been
+    /// held for a <see cref="CorroborationDwell"/> nothing else stood between the correction and a
+    /// lost sector.
+    /// </para>
+    /// <para>
+    /// 4. Otherwise, a transition only OPENS A SUSPICION, and only if the aircraft had already been
     /// tracked through <see cref="CorroborationDwell"/> of plausible movement before it - proving
     /// the position it left from was really occupied, which is exactly what a bad opening fix, or a
     /// burst of them, can never establish. The suspicion is then confirmed once the aircraft has
@@ -185,6 +317,13 @@ public sealed class FlightIntegrityMonitor
     /// aircraft comes back to where it supposedly left from (see
     /// <see cref="ReturnToOriginFraction"/>) - because coming back means it was there all along and
     /// the excursion was never real.
+    /// </para>
+    /// <para>
+    /// 5. And even a fully corroborated suspicion is only acted on if the excursion was big enough
+    /// to be worth making - see <see cref="NegligibleJumpDistanceNm"/>. "Came back" cannot save an
+    /// honest pilot on its own, because it is scaled to the jump distance from the FALSE origin and
+    /// the aircraft is never going back to a place it has never been; a jump that gains nothing has
+    /// to be dismissed on its own merits rather than on where the aircraft goes next.
     /// </para>
     /// <para>
     /// Confirming on "flew on normally", rather than on the next transition being plausible, is what
@@ -230,16 +369,16 @@ public sealed class FlightIntegrityMonitor
             if (interval > TimeSpan.Zero)
             {
                 var judgedInterval = interval < MinimumJudgeableInterval ? MinimumJudgeableInterval : interval;
-                var simulationRate = Math.Max(1.0, (SafeRate(last.SimulationRate) + SafeRate(sample.SimulationRate)) / 2.0);
+                var simulationRate = NormalisingSimulationRate(last.SimulationRate, sample.SimulationRate);
                 var distanceNm = GreatCircle.DistanceNm(last.LatitudeDeg, last.LongitudeDeg, sample.LatitudeDeg, sample.LongitudeDeg);
 
                 // Time acceleration inflates the position delta covered per wall-clock second by
                 // the same factor, so a routine 4x cruise would otherwise misfire this as a
                 // teleport - normalise back to the aircraft's true ground speed by the reported
-                // rate before comparing to the threshold. A non-positive or unreported rate (an
-                // older replay fixture, or the sim reporting oddly) falls back to 1x, which only
-                // makes the check MORE sensitive, never less, so an unavailable simvar can never
-                // hide a real jump.
+                // rate before comparing to the threshold. See NormalisingSimulationRate for why the
+                // two samples' rates are combined by maximum rather than by average, and for the
+                // false positive that averaging produced on the one transition where the rate
+                // changes.
                 var impliedGroundSpeedKt = distanceNm / judgedInterval.TotalHours / simulationRate;
 
                 if (impliedGroundSpeedKt > ImpossibleGroundSpeedKt)
@@ -247,17 +386,43 @@ public sealed class FlightIntegrityMonitor
                     // Only the FIRST implausible transition of a run opens a suspicion; the rest are
                     // the same excursion continuing, and must not be allowed to displace the origin
                     // that will be used to decide whether the aircraft ever came back.
-                    if (_suspectedJumpOrigin is null && _plausibleDwell >= CorroborationDwell)
+                    if (_suspectedJumpOrigin is null)
                     {
-                        _suspectedJumpOrigin = (last.LatitudeDeg, last.LongitudeDeg);
-                        _suspectedJumpDistanceNm = distanceNm;
+                        if (_plausibleDwell >= CorroborationDwell && !IsACorrectionBackToItsOwnDeparture(sample))
+                        {
+                            _suspectedJumpOrigin = (last.LatitudeDeg, last.LongitudeDeg);
+                            _suspectedJumpDistanceNm = distanceNm;
+                        }
+                    }
+                    else if (_suspectedJumpOrigin is { } running)
+                    {
+                        // The same excursion continuing - a reposition delivered in several steps,
+                        // or an interpolated sweep. Measure it by where it has got to, so a move
+                        // spread over a run of individually small hops is still measured as the one
+                        // large displacement it really is, whether or not the odd ordinary-looking
+                        // frame turns up in the middle of it.
+                        //
+                        // Growth is confined to IMPLAUSIBLE transitions, and that is the whole
+                        // point: an excursion grows when the aircraft is moved, not when it flies.
+                        // Letting ordinary onward flight inflate the distance instead is how a
+                        // two-mile correction ended up condemning a sector, since flying away from
+                        // a false origin looks identical to a jump that keeps getting bigger.
+                        _suspectedJumpDistanceNm = Math.Max(
+                            _suspectedJumpDistanceNm,
+                            GreatCircle.DistanceNm(running.Lat, running.Lon, sample.LatitudeDeg, sample.LongitudeDeg));
                     }
 
+                    _awaitingProofTheFeedResumed = false;
                     _plausibleDwell = TimeSpan.Zero;
                 }
                 else
                 {
-                    _plausibleDwell += interval * simulationRate;
+                    if (HasTheResumedFeedProvedItself(sample))
+                    {
+                        _plausibleDwell += interval * simulationRate;
+                        _observedTravelNm += distanceNm;
+                        NoteWhetherTheAircraftHasLeftItsDepartureArea(sample);
+                    }
                 }
 
                 ResolveSuspicion(sample);
@@ -283,11 +448,6 @@ public sealed class FlightIntegrityMonitor
 
         var fromOriginNm = GreatCircle.DistanceNm(origin.Lat, origin.Lon, sample.LatitudeDeg, sample.LongitudeDeg);
 
-        // Scale "came back" against how far the excursion actually got, not just its first hop -
-        // a reposition covered in several steps (or an interpolated sweep) is one excursion, and
-        // judging it by its opening step would set an unreasonably tight bar for calling it off.
-        _suspectedJumpDistanceNm = Math.Max(_suspectedJumpDistanceNm, fromOriginNm);
-
         if (fromOriginNm <= _suspectedJumpDistanceNm * ReturnToOriginFraction)
         {
             _suspectedJumpOrigin = null;
@@ -296,9 +456,115 @@ public sealed class FlightIntegrityMonitor
 
         if (_plausibleDwell >= CorroborationDwell)
         {
-            PositionJumpDetected = true;
+            // Corroborated on both sides - but only condemn the sector if the excursion was worth
+            // making. An aircraft that ends up five miles from where it was cannot have gained
+            // anything by it, so whatever produced those five miles, it was not a cheat. See
+            // NegligibleJumpDistanceNm. Either way the suspicion is now resolved and cleared, so a
+            // dead one can never be reopened later by an unrelated glitch somewhere else entirely.
+            if (_suspectedJumpDistanceNm > NegligibleJumpDistanceNm)
+            {
+                PositionJumpDetected = true;
+            }
+
             _suspectedJumpOrigin = null;
         }
+    }
+
+    /// <summary>
+    /// True when an implausible transition puts the aircraft back at (or beside) the very airport
+    /// this flight is supposed to be departing from, and it has not yet left it. Nobody teleports TO
+    /// the stand they are meant to be standing on: that move gains nothing, and it is exactly the
+    /// shape of a bad opening fix finally being corrected, whether the bad fix was two miles out or
+    /// five thousand.
+    /// <para>
+    /// Note what this is keyed on, because a near-synonym of it gives a sector away for free. The
+    /// test is on the jump's DESTINATION being the departure airport. It is emphatically NOT "no
+    /// jump counts before the flight has departed": under that reading a cheat taxis, teleports
+    /// along the ground to a mile short of the ARRIVAL airport, takes off, flies a three-minute
+    /// circuit and lands, and is paid the whole fare - because revenue is priced from the route, not
+    /// from the distance actually flown, so skipping the entire sector costs nothing.
+    /// </para>
+    /// <para>
+    /// It is also strictly one-way. The exemption is spent for good the moment the aircraft gets
+    /// airborne or is flown out of the departure area (see
+    /// <see cref="NoteWhetherTheAircraftHasLeftItsDepartureArea"/>) and can never be re-entered.
+    /// That matters because landing back where you departed is a legitimate, PAID outcome - the
+    /// resolver treats it as a diversion - so an exemption still available in the air would let a
+    /// cheat teleport home from anywhere and be paid in full.
+    /// </para>
+    /// </summary>
+    private bool IsACorrectionBackToItsOwnDeparture(FlightTelemetrySample sample)
+    {
+        if (_leftTheStartingArea || _expectedStartPosition is not { } expectedStart)
+        {
+            return false;
+        }
+
+        return GreatCircle.DistanceNm(expectedStart.Lat, expectedStart.Lon, sample.LatitudeDeg, sample.LongitudeDeg)
+            <= DepartureCorrectionRadiusNm;
+    }
+
+    /// <summary>
+    /// Latches, permanently, the fact that the aircraft has genuinely left its departure area -
+    /// either by getting airborne or by being flown out of it. Once this is set the
+    /// departure-correction exemption is gone for the rest of the sector and can never be
+    /// re-entered, which is the point: landing back where you departed is a legitimate, paid outcome
+    /// (the resolver treats it as a diversion), so an exemption that survived into the airborne
+    /// phase would let a cheat teleport home from anywhere and still be paid in full.
+    /// <para>
+    /// Called only for PLAUSIBLE transitions, and only once the feed has been seen to cover some
+    /// ground. That precondition is the load-bearing one: being REPORTED somewhere is not the same
+    /// as having gone there. A fix stuck five thousand miles away reports itself outside the
+    /// departure area - and airborne, and anything else it likes - on every single sample, and if
+    /// that were enough it would spend the exemption on the flight's behalf before the aircraft had
+    /// released its brakes. A stuck fix covers no ground at all however long it is held; a real
+    /// aircraft covers the first ninety metres within seconds of moving.
+    /// </para>
+    /// </summary>
+    private void NoteWhetherTheAircraftHasLeftItsDepartureArea(FlightTelemetrySample sample)
+    {
+        if (_leftTheStartingArea || _observedTravelNm <= ObservableMovementNm || _expectedStartPosition is not { } expectedStart)
+        {
+            return;
+        }
+
+        if (!sample.OnGround
+            || GreatCircle.DistanceNm(expectedStart.Lat, expectedStart.Lon, sample.LatitudeDeg, sample.LongitudeDeg)
+                > DepartureCorrectionRadiusNm)
+        {
+            _leftTheStartingArea = true;
+        }
+    }
+
+    /// <summary>
+    /// After an interruption, decides whether the feed has shown itself to be live again. Until it
+    /// has, a position that never changes must not accumulate corroboration: an unchanging reading
+    /// is precisely what a reconnecting SimConnect replaying its last known state looks like, and
+    /// counting it would rebuild - out of stale packets - the very dwell that then condemns the
+    /// sector when the truth arrives. A parked aircraft looks identical, which is why this only
+    /// applies while a resumed feed is under suspicion and never at any other time.
+    /// </summary>
+    private bool HasTheResumedFeedProvedItself(FlightTelemetrySample sample)
+    {
+        if (!_awaitingProofTheFeedResumed)
+        {
+            return true;
+        }
+
+        if (_positionWhenFeedResumed is not { } resumedAt)
+        {
+            _positionWhenFeedResumed = (sample.LatitudeDeg, sample.LongitudeDeg);
+            return false;
+        }
+
+        if (GreatCircle.DistanceNm(resumedAt.Lat, resumedAt.Lon, sample.LatitudeDeg, sample.LongitudeDeg)
+            <= ObservableMovementNm)
+        {
+            return false;
+        }
+
+        _awaitingProofTheFeedResumed = false;
+        return true;
     }
 
     /// <summary>
@@ -340,6 +606,39 @@ public sealed class FlightIntegrityMonitor
 
         return false;
     }
+
+    /// <summary>
+    /// The simulation rate a transition between two samples must be normalised by: the GREATER of
+    /// the two reported rates, never their average.
+    /// <para>
+    /// Exactly one transition per rate change straddles two different reported rates, and the ground
+    /// it covers was flown at one of them, not at something in between. Averaging under-divides that
+    /// transition badly: for a step from R1 to R2 with the interval actually flown at R2, the implied
+    /// speed comes out as <c>groundSpeed x 2 x R2 / (R1 + R2)</c>, which tends to TWICE the true
+    /// ground speed as the step gets larger. Against a 1,200 kt threshold that condemns anything
+    /// above about 600 kt over the ground on a single 1x -&gt; 64x or 1x -&gt; 128x step - an airliner
+    /// eastbound in a jet stream, not an exotic case. It is worse than it sounds because dwell is
+    /// measured in flight time: at 128x the sixty seconds needed to confirm the suspicion elapse in
+    /// under half a wall-clock second, so the sector goes almost immediately. (The default keybind's
+    /// stepwise doubling only implies 1.33x ground speed and was always safe; a bound "set rate" or
+    /// an add-on produces the large single step.)
+    /// </para>
+    /// <para>
+    /// Taking the ARRIVING sample's rate instead would fix the step up and break the mirror image of
+    /// it: on a step down from 128x to 1x where the interval was flown fast, the arriving rate is 1
+    /// and the same false positive reappears in reverse. The maximum is right in both directions
+    /// because it can never under-divide, only over-divide - and over-dividing is the fail-open
+    /// direction everything here is required to fail in. It costs nothing against cheating: a
+    /// teleport of hundreds of miles in a fifth of a second still implies tens of thousands of knots
+    /// after being divided by 128.
+    /// </para>
+    /// <para>
+    /// A non-positive or unreported rate falls back to 1x, which only ever makes the check MORE
+    /// sensitive, so an unavailable simvar can never hide a real jump.
+    /// </para>
+    /// </summary>
+    public static double NormalisingSimulationRate(double previousRate, double currentRate) =>
+        Math.Max(1.0, Math.Max(SafeRate(previousRate), SafeRate(currentRate)));
 
     private static double SafeRate(double reportedRate) => reportedRate > 0 ? reportedRate : 1.0;
 }

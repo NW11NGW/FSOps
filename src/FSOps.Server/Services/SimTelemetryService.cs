@@ -45,6 +45,20 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     private SimConnectionState _gateConnectionState = SimConnectionState.Disconnected;
 
     /// <summary>
+    /// Set by <see cref="OnSourceConnectionStateChanged"/> when a live link goes away, and consumed
+    /// by the pump on its next sample. Written from the sim source's own connection loop and read
+    /// from the pump loop, hence the volatile access rather than a plain field.
+    /// <para>
+    /// This exists because watching <see cref="ConnectionState"/> once per SAMPLE cannot see an
+    /// outage at all: no samples arrive while the link is down, so by the time the next one turns up
+    /// the state has already walked Connected -&gt; Disconnected -&gt; Connected and reads exactly as
+    /// it did before. The subscription below is the only place the round trip is actually
+    /// observable.
+    /// </para>
+    /// </summary>
+    private int _telemetryInterrupted;
+
+    /// <summary>
     /// Non-zero once <see cref="DisposeAsync"/> has run. This service is deliberately registered
     /// twice - <c>AddSingleton&lt;SimTelemetryService&gt;()</c> so the heartbeat and the sim status
     /// endpoint can inject it directly, and <c>AddHostedService(sp =&gt; sp.GetRequiredService&lt;
@@ -63,6 +77,7 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
         _source = source;
         _hub = hub;
         _logger = logger;
+        _source.ConnectionStateChanged += OnSourceConnectionStateChanged;
     }
 
     public string SourceKind => _source.Kind;
@@ -105,6 +120,40 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     /// </summary>
     public event EventHandler<TelemetrySample>? SampleReceived;
 
+    /// <summary>
+    /// Fires once, on the pump's own loop and before the sample that noticed it, whenever a link
+    /// that was delivering telemetry went away and has come back. Everything downstream that reasons
+    /// about one sample RELATIVE TO THE ONE BEFORE IT has to know, because those two samples are no
+    /// longer consecutive observations of the same continuous motion: there is a hole between them,
+    /// and a reconnecting SimConnect routinely fills it with replays of the position it last had.
+    /// <see cref="FSOps.Core.Flights.FlightIntegrityMonitor.NotifyTelemetryInterrupted"/> is the case
+    /// that costs a player money, and is why this is a published event rather than a private detail
+    /// of the gate: an outage voided a clean sector precisely because the gate was rebuilt on a
+    /// reconnect and nothing else was told.
+    /// <para>
+    /// Same threading contract as <see cref="SampleReceived"/> - handlers run inline on the pump and
+    /// must not block or do I/O.
+    /// </para>
+    /// </summary>
+    public event EventHandler? TelemetryInterrupted;
+
+    /// <summary>
+    /// Records that a live link has dropped. Deliberately flags on the way DOWN rather than on the
+    /// way back up, because that is the edge that is guaranteed to be seen: the source raises this
+    /// from its connection loop whether or not any telemetry is flowing. The pump acts on it when
+    /// the next sample arrives, which keeps every consumer's ordering on one thread.
+    /// </summary>
+    private void OnSourceConnectionStateChanged(object? sender, SimConnectionState state)
+    {
+        // Only a link that was actually delivering telemetry can be interrupted; the ordinary
+        // Disconnected -> Connecting -> Connected walk at startup is not an interruption of
+        // anything, and must not make the first sample of a session look like a resumption.
+        if (state != SimConnectionState.Connected && LastSample is not null)
+        {
+            Volatile.Write(ref _telemetryInterrupted, 1);
+        }
+    }
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _cts = new CancellationTokenSource();
@@ -144,6 +193,7 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
             return;
         }
 
+        _source.ConnectionStateChanged -= OnSourceConnectionStateChanged;
         _cts?.Dispose();
         await _source.DisposeAsync();
     }
@@ -193,13 +243,18 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     {
         // A reconnect starts a fresh acquisition: the first fix after the link comes back is exactly
         // as untrustworthy as the first fix after it was established.
+        if (Volatile.Read(ref _telemetryInterrupted) != 0)
+        {
+            Volatile.Write(ref _telemetryInterrupted, 0);
+            BeginFreshAcquisition();
+        }
+
         var connectionState = ConnectionState;
         if (connectionState != _gateConnectionState)
         {
-            if (_gateConnectionState == SimConnectionState.Disconnected && _positionGate.Acquired)
+            if (_gateConnectionState == SimConnectionState.Disconnected)
             {
-                _positionGate = new PositionAcquisitionGate();
-                _logger.LogDebug("Sim reconnected; waiting for a corroborated position before resuming telemetry.");
+                BeginFreshAcquisition();
             }
 
             _gateConnectionState = connectionState;
@@ -229,6 +284,24 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Puts the whole telemetry path back into acquisition after an outage and tells everything
+    /// downstream that its timeline has a hole in it. Idempotent: a gate that has not acquired is
+    /// already waiting for a fresh corroborated fix, so a second notice for the same outage - the
+    /// two detections above can both fire - changes nothing and is not re-announced.
+    /// </summary>
+    private void BeginFreshAcquisition()
+    {
+        if (!_positionGate.Acquired)
+        {
+            return;
+        }
+
+        _positionGate = new PositionAcquisitionGate();
+        TelemetryInterrupted?.Invoke(this, EventArgs.Empty);
+        _logger.LogDebug("Sim reconnected; waiting for a corroborated position before resuming telemetry.");
     }
 
     private Task BroadcastAsync(TelemetrySample sample, CancellationToken ct)

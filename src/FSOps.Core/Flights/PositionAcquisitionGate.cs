@@ -107,16 +107,16 @@ public sealed class PositionAcquisitionGate
             return false;
         }
 
-        // Same numbers, and the same reasoning, as the integrity monitor's own check - referenced
-        // rather than restated so the two can never drift apart. See FlightIntegrityMonitor.
+        // Same numbers, and the same reasoning, as the integrity monitor's own check - and now the
+        // same arithmetic too: the rate normalisation is CALLED rather than restated, because a
+        // restatement is exactly how the two drifted from each other's intent once already. See
+        // FlightIntegrityMonitor.
         var judgedInterval = interval < FlightIntegrityMonitor.MinimumJudgeableInterval
             ? FlightIntegrityMonitor.MinimumJudgeableInterval
             : interval;
-        var effectiveRate = Math.Max(1.0, (SafeRate(previous.SimulationRate) + SafeRate(simulationRate)) / 2.0);
+        var effectiveRate = FlightIntegrityMonitor.NormalisingSimulationRate(previous.SimulationRate, simulationRate);
         var distanceNm = GreatCircle.DistanceNm(previous.Lat, previous.Lon, latitudeDeg, longitudeDeg);
 
         return distanceNm / judgedInterval.TotalHours / effectiveRate <= FlightIntegrityMonitor.ImpossibleGroundSpeedKt;
     }
-
-    private static double SafeRate(double reportedRate) => reportedRate > 0 ? reportedRate : 1.0;
 }
