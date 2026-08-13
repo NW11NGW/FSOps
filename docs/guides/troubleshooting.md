@@ -32,10 +32,6 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [My flight doesn't show as "flown online"](#my-flight-doesnt-show-as-flown-online)
 - [The "Flown online" history card is empty, or says I haven't set a CID](#the-flown-online-history-card-is-empty-or-says-i-havent-set-a-cid)
 - [Other VATSIM traffic isn't showing on the map](#other-vatsim-traffic-isnt-showing-on-the-map)
-- [The toolbar button isn't there](#the-toolbar-button-isnt-there)
-- [The panel opens but shows nothing](#the-panel-opens-but-shows-nothing)
-- [I moved my Community folder, or reinstalled MSFS](#i-moved-my-community-folder-or-reinstalled-msfs)
-- [The panel wasn't removed when I uninstalled FSOps](#the-panel-wasnt-removed-when-i-uninstalled-fsops)
 - [FSOps never tells me about updates](#fsops-never-tells-me-about-updates)
 - [A downloaded update was rejected, or disappeared](#a-downloaded-update-was-rejected-or-disappeared)
 - [Where a downloaded update goes, and why FSOps won't run it](#where-a-downloaded-update-goes-and-why-fsops-wont-run-it)
@@ -324,62 +320,7 @@ Two related limits worth knowing, since neither is visible on screen: coverage i
 1. **Check the toggle.** The **"Show/Hide VATSIM traffic"** button above the map switches this layer on and off; it's on by default. If it reads "Show VATSIM traffic", select it.
 2. **Check they're actually near your network.** This layer only shows traffic within about 150 nm of one of your own airports or your active routes' flight paths — it's deliberately not a whole-network traffic display, which would be far more than a dashboard map needs. Someone controlling or flying well away from your network genuinely won't appear.
 3. **Check the feed is reachable.** If VATSIM's public feed can't be read at all, other traffic (and the ATC layer alongside it) both quietly show nothing rather than an error — see [No controllers are showing](#no-controllers-are-showing) for the same underlying feed and how to tell "nobody nearby" apart from "feed unreachable".
-4. **On the in-game panel, this is off by design.** The panel has no map at all, so there's nothing to toggle there — this layer only ever appears on the Dashboard's map in a browser.
-
 Other traffic is drawn deliberately small, faint, and without the accent colour your own aircraft or a controller uses — that's intentional, so it reads as background context rather than competing with your own flight for attention.
-
-## The toolbar button isn't there
-
-**Symptom:** No FSOps icon appears on MSFS 2024's own toolbar, even though you've been through the "Connect your MSFS panel" step.
-
-**Cause:** Almost always one of four ordinary things, and Settings → MSFS panel will tell you which. The panel is an ordinary MSFS package: it has to be present in the folder the sim actually reads from, and the sim only looks at that folder while it's starting.
-
-**Solutions, in order:**
-
-1. **Check the status badge in Settings → MSFS panel first.** It reads **Installed**, **Not installed**, **Not set up**, **Update available**, **Needs repair**, or **Needs attention**, and everything below depends on which one you're looking at. If it says anything other than **Installed**, use the **Install panel** or **Reinstall / repair** button right there and skip the rest of this list.
-2. **Restart MSFS.** This is the single most common cause. MSFS scans the Community folder once, at startup — a package added while the sim was already running is invisible to it until the next launch. Quit the simulator completely (not just back to the main menu) and start it again.
-3. **Check the Community folder is the one your sim actually uses.** A machine with more than one MSFS install — Steam and Microsoft Store, or a moved install — has more than one Community folder, and a package in the wrong one is completely inert. Settings → MSFS panel lists the folders it found on this PC; pick the one belonging to the copy of MSFS you actually launch, save it, and reinstall the panel into it.
-4. **Check the package isn't older than your sim expects.** The panel declares a `minimum_game_version` of **1.7.35**. An MSFS 2024 install older than that will ignore the package entirely and give no visible sign of having done so. Update the simulator.
-5. **If Settings says the toolbar button won't appear, believe it.** A normal install ships the compiled component that registers the button, and Settings confirms it with **"Appears in the MSFS toolbar"**. If it says otherwise, that file is genuinely missing from what was installed — not a limitation of this build. **Reinstall / repair** puts it back; if it says the same thing again straight afterwards, that's worth reporting (see [How to report a problem](#how-to-report-a-problem)).
-6. **As a fallback, the panel's view works in a browser.** The same compact view is always available at `http://localhost:5977/panel` in an ordinary browser tab, whether or not the toolbar button is working.
-
-## The panel opens but shows nothing
-
-**Symptom:** The FSOps toolbar button is there and opens a panel window in MSFS, but the window shows no content — while FSOps itself is running fine in your browser. Two different things produce this, and it matters which one you're looking at:
-
-**A) The window shows *something* — stuck loading, or a message that it can't reach FSOps.** This is port drift. The panel is a static package: when it's installed, the address of your FSOps server is baked into it. If FSOps later starts on a *different* port — most often because 5977 was already taken and it fell back to another, or because you set `FSOPS_PORT` yourself — the installed panel carries on calling the old address, which nothing is listening on any more.
-
-FSOps detects this specific case and shows the panel's status badge as **Needs repair** in Settings → MSFS panel, with the mismatch named explicitly.
-
-**Solution:** Open Settings → MSFS panel and select **Reinstall / repair**. That rewrites the package against the port FSOps is actually on. Then restart MSFS so it picks the updated package up. If you'd rather this never happen again, keep FSOps on a fixed port — if 5977 is regularly claimed by something else on your machine, it's worth finding out what (see [The UI won't load / port 5977 is already in use](#the-ui-wont-load--port-5977-is-already-in-use)) rather than letting the port move around underneath the panel.
-
-**B) The window is completely, totally empty — no loading spinner, no error text, nothing at all, and nothing shows up as failed anywhere.** This is a different and harder problem: the panel's own page never ran at all, so it never got as far as trying to reach FSOps and failing. The button appearing at all tells you MSFS read the package's toolbar registration; a window that never shows anything, ever, points at MSFS never having mounted the package's actual files, registration aside.
-
-The current best explanation, worth knowing is still **unconfirmed rather than a settled fix**: `manifest.json` used to declare the package as engine content with three pinned dependencies on internal base packages — the kind of thing that can make a package's files get skipped while its already-scanned toolbar registration survives, which looks exactly like this. That's been changed to declare the package as ordinary, dependency-free add-on content instead, matching how other real, working MSFS 2024 packages describe themselves — see `src/fsops-ingame-panel/README.md` in the source repository for the full reasoning, honestly marked there as not yet tested against a running simulator. Settings' status badges won't tell you anything useful for this case either way — they read what's actually sitting in your Community folder, not what MSFS did with it at runtime, so a completely correct-looking **Installed** badge is consistent with this problem.
-
-**Solution:** Make sure you're on a current build of FSOps (an update carrying the manifest fix reaches you the normal way — see [Updating FSOps](installation.md#updating-fsops)), **Reinstall / repair** from Settings → MSFS panel to pick up whatever manifest that build ships, then restart MSFS completely. If the window is still totally empty afterwards, that's worth reporting (see [How to report a problem](#how-to-report-a-problem)) with your MSFS version and build number — this specific failure mode hasn't been confirmed fixed by anyone yet, and a report either way (still empty, or now showing content) is useful.
-
-## I moved my Community folder, or reinstalled MSFS
-
-**Symptom:** You moved your MSFS install (a different drive, a switch between Steam and Microsoft Store), reinstalled the simulator, or deleted the `fsops-panel` folder by hand — and you're unsure whether the panel followed, or Settings now shows it as **Not installed**.
-
-**Cause:** The panel lives inside your Community folder, so anything that changes or replaces that folder leaves it behind. FSOps checks what's actually on disk each time you open Settings rather than trusting what it installed previously, so the status badge reflects reality even when the change happened entirely outside FSOps.
-
-**Solution:** Open Settings → MSFS panel and set the Community folder to the new location — FSOps lists the folders it can find on this PC, or you can browse for it. When you change the folder and a panel is installed at the old one, FSOps **asks whether to move it**: it can install into the new folder and optionally remove the old copy, or just update the recorded path and leave everything alone. If you'd rather do it in steps, save the new folder first and then use **Install panel** (or **Reinstall / repair** if a stale copy is already there). Restart MSFS afterwards so it rescans. An old `fsops-panel` folder left behind somewhere the sim no longer reads is harmless, but **Remove the panel** will clean it up properly if you point the folder back at it first.
-
-## The panel wasn't removed when I uninstalled FSOps
-
-**Symptom:** After uninstalling FSOps, the `fsops-panel` folder is still sitting in your MSFS Community folder, or MSFS still shows the FSOps toolbar button after uninstalling and restarting the sim.
-
-**Cause:** Uninstalling FSOps removes the in-game panel automatically, with no prompt — see [Uninstalling FSOps](installation.md#uninstalling-fsops). That step runs before FSOps' own program files are deleted, and it needs two things to still be true when it runs: your database at `%LOCALAPPDATA%\FSOps\fsops.db` (to read which Community folder you'd set), and write access to the panel folder itself. A handful of ordinary things can stop it:
-
-- **No Community folder was ever configured**, or you'd deleted `%LOCALAPPDATA%\FSOps` yourself before uninstalling — there's nothing recorded to remove, so nothing happens. This is the same situation as never having installed the panel.
-- **MSFS was still running** and had a file in `fsops-panel` open, so the folder couldn't be deleted — the same reason install and repair can fail while the sim is open (see [The panel opens but shows nothing](#the-panel-opens-but-shows-nothing) for the parallel case).
-- **The Community folder itself had moved, or the folder at that path no longer looks like a Community folder** — FSOps only ever removes a folder it recognises, both by location and by confirming FSOps actually created it, so anything even slightly off refuses rather than guessing.
-
-None of these fail the uninstall itself — FSOps was still removed cleanly either way, this only affects the panel.
-
-**Solution:** Delete the `fsops-panel` folder from your Community folder by hand, then restart MSFS. If you're not sure where that folder is, it's directly inside whichever folder your MSFS install treats as Community — see [I moved my Community folder, or reinstalled MSFS](#i-moved-my-community-folder-or-reinstalled-msfs) for how to find it. There's no player data inside it to worry about losing; it's safe to delete outright.
 
 ## FSOps never tells me about updates
 

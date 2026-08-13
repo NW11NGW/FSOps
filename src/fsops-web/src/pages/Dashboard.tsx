@@ -69,9 +69,6 @@ export function Dashboard() {
   // G11 - other VATSIM traffic, OFF by default (including for a brand-new user with nothing
   // stored yet - see vatsimTrafficVisibility's own doc for why the read must never quietly
   // default to on) so the map is clean on first load, and remembered per-browser once toggled.
-  // There is no equivalent state on the in-game panel because it never mounts LiveOpsMap at all
-  // (see Panel.tsx) - "off by default on the panel" is therefore structural, not a second flag to
-  // keep in sync with this one.
   const [showVatsimTraffic, setShowVatsimTraffic] = useState(readVatsimTrafficVisible)
   useEffect(() => {
     writeVatsimTrafficVisible(showVatsimTraffic)

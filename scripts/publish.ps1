@@ -12,9 +12,9 @@
     verbatim, so keeping them together means there is one layout to get right instead of two.
 
     The script fails loudly rather than producing a half-populated folder. Every asset the app
-    resolves at runtime - the built SPA, the world-data seed, the economy config, the in-game panel
-    template, the WebView2 loader - is asserted for at the end, because each of them is invisible
-    until a user hits the feature that needs it.
+    resolves at runtime - the built SPA, the world-data seed, the economy config, the WebView2
+    loader - is asserted for at the end, because each of them is invisible until a user hits the
+    feature that needs it.
 
 .PARAMETER Configuration
     Build configuration. Release unless you are chasing something.
@@ -177,8 +177,7 @@ $requiredFiles = @(
     @{ Path = 'FSOps.Server.exe';    Why = 'the server the shell starts' },
     @{ Path = 'WebView2Loader.dll';  Why = 'WebView2 cannot initialise without it' },
     @{ Path = 'economy-config.json'; Why = 'every fare, cost and demand constant' },
-    @{ Path = 'wwwroot\index.html';  Why = 'the SPA - without it every page is the not-built fallback' },
-    @{ Path = 'PanelTemplate\manifest.json'; Why = 'the in-game panel package installed into MSFS' }
+    @{ Path = 'wwwroot\index.html';  Why = 'the SPA - without it every page is the not-built fallback' }
 )
 
 $problems = @()

@@ -28,8 +28,7 @@ interface AtcControllerListProps {
   data: VatsimAtcResponse | null
   /** The map's current bounds. When set, the list shows only what is genuinely visible there, so
    *  the two views can never disagree while the user is looking at both. Null when there is no map
-   *  at all (the in-game panel) or before it has mounted, in which case the server's own
-   *  network scoping stands. */
+   *  at all, or before it has mounted, in which case the server's own network scoping stands. */
   viewport?: MapBounds | null
   /** Highlights the row matching the currently-hovered map marker, keeping the list and the map
    *  readable as the same view from two angles instead of two disconnected UIs. */

@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Statistics page, importing your SimBrief flight plan, seeing online VATSIM controllers on your live map, and an in-game panel for MSFS, all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
+This guide covers how to use FSOps, feature by feature. FSOps is under active development: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Statistics page, importing your SimBrief flight plan, and seeing online VATSIM controllers on your live map, all work today and are described below as they actually behave. Features that aren't built yet are clearly marked **Coming in a later update**.
 
 ## Table of contents
 
@@ -11,7 +11,6 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
   - [Starter aircraft](#starter-aircraft)
 - [Settings](#settings)
   - [Airline](#airline)
-  - [MSFS in-game panel](#msfs-in-game-panel)
 - [Building routes](#building-routes)
   - [Your route network on the map](#your-route-network-on-the-map)
   - [Round trips and where your aircraft actually is](#round-trips-and-where-your-aircraft-actually-is)
@@ -44,12 +43,11 @@ This guide covers how to use FSOps, feature by feature. FSOps is under active de
 - [The live operations map](#the-live-operations-map)
   - [Online VATSIM controllers](#online-vatsim-controllers)
 - [Statistics dashboards](#statistics-dashboards)
-- [In-game panel](#in-game-panel)
 - [A worked example, start to finish](#a-worked-example-start-to-finish)
 
 ## Current build
 
-Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page and a Statistics page to see exactly where the money went. You can also import your latest SimBrief flight plan, see online VATSIM controllers on your live map, and use a compact panel inside MSFS itself — see [Statistics dashboards](#statistics-dashboards), [Plan in SimBrief](#plan-in-simbrief) and [In-game panel](#in-game-panel) below for each.
+Start the backend, open `http://localhost:5977` in your browser, and — the very first time, once world data has finished importing — you'll land in the airline setup wizard. From there you can found an airline, adjust settings, build out a route network, fly a route with full live tracking against MSFS ending in a post-flight report card, run a fleet — buying, leasing, selling, maintaining and financing aircraft — all billed on a real monthly cycle whether or not you're actively flying, and hire virtual pilots to fly a standing weekly schedule on the real-world clock, even while FSOps is closed, with a Finances page and a Statistics page to see exactly where the money went. You can also import your latest SimBrief flight plan and see online VATSIM controllers on your live map — see [Statistics dashboards](#statistics-dashboards) and [Plan in SimBrief](#plan-in-simbrief) below for each.
 
 ## Creating your airline
 
@@ -82,7 +80,7 @@ You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-8
 
 ## Settings
 
-Reachable from the main navigation once your airline exists. Most of Settings applies to your account (currency, units, theme, the MSFS in-game panel) rather than to a specific airline — the exception is the **Airline** section below, which edits your airline's own identity and strategy.
+Reachable from the main navigation once your airline exists. Most of Settings applies to your account (currency, units, theme) rather than to a specific airline — the exception is the **Airline** section below, which edits your airline's own identity and strategy.
 
 ### Airline
 
@@ -113,36 +111,6 @@ Switch between light and dark theme at any time.
 Your SimBrief Pilot ID — find it on SimBrief under Account → Pilot ID. Set it and the Fly screen's flight brief pulls your latest OFP's fuel, cruise altitude, block time and filed route instead of FSOps' own estimate, but only when that plan matches the exact route you're about to fly — see [Plan in SimBrief](#plan-in-simbrief) below. Leave it blank (the default) and FSOps always uses its own built-in plan; nothing about your flight is sent anywhere without it, and it's entirely optional.
 
 You can also set this from the setup wizard's "Online flying" step when you first found an airline — this Settings field and the wizard's stay in sync either way, and setting or changing it here works exactly the same after onboarding.
-
-### MSFS in-game panel
-
-One section covering both your MSFS 2024 Community folder and the [in-game panel](#in-game-panel) FSOps installs into it. The two are deliberately together: the folder only matters because of what's installed in it, and keeping them apart is what used to let the two quietly disagree.
-
-Every time you open Settings, FSOps reads what is **actually on disk** rather than remembering what it once did, and tells you:
-
-- **Panel files** — whether the package is really there in the folder you've configured.
-- **Location** — the exact folder it's installed in, which is always a folder called `fsops-panel` directly inside your Community folder, and never anything else.
-- **Version** — the installed version, and whether it matches the one this copy of FSOps expects. If you update FSOps and the panel is older, it says so and asks you to reinstall.
-- **Connects to** — the port the installed panel calls FSOps on. This is written into the package when it's installed, so if FSOps later moves port, the panel goes on calling the old one and simply shows nothing in the sim. FSOps spots that mismatch and tells you to reinstall, because it's the kind of failure that otherwise looks like nothing is wrong at all.
-- **Toolbar button** — whether the compiled component MSFS needs to draw the FSOps button is present.
-
-Three actions sit underneath:
-
-- **Install panel** — appears when a folder is set but nothing is installed there. This is how you add the panel if you skipped it during the setup wizard.
-- **Reinstall / repair** — installs cleanly over whatever is there. Use it to update an older version, fix a package with files missing or edited, or repoint the panel after FSOps changes port. Safe to run as often as you like.
-- **Remove panel** — deletes the `fsops-panel` folder and nothing else. Your other add-ons are untouched, and so is everything about your airline. It asks you to confirm first, and you can install it again from the same place at any time.
-
-**Changing the folder.** If you edit the path and press **Save folder** while the panel is installed in the old one, FSOps asks what to do with the copy already sitting there rather than deciding for you — because both answers are reasonable, depending on whether you're pointing FSOps at a second MSFS install or correcting a mistake:
-
-- **Move the panel** installs it into the new folder and then removes the old copy. The new one is always written first, so if anything goes wrong you're left with the panel you already had, never with none at all.
-- **Just change the folder** saves the new path and leaves the old copy exactly where it is.
-
-Clearing the path entirely asks the same question, offering to remove the panel first rather than abandoning it in your Community folder.
-
-**Two refusals worth knowing about**, both deliberate:
-
-- FSOps will not install into, or delete, a folder called `fsops-panel` that it can't tell it created itself. If something else is using that name, it says so and leaves it alone — deleting a folder you nominated by mistake isn't something you could undo.
-- FSOps will not create a Community folder that isn't there. If the configured folder has been deleted or the sim has moved, it says the folder no longer exists and asks you to pick the new one, rather than helpfully building a folder MSFS will never read and reporting a successful install of a panel that can never appear.
 
 ### Danger zone: start over
 
@@ -569,7 +537,7 @@ The same map shows who's actually controlling the airspace you fly in — no set
 
 **What isn't shown, and why.** Approach TRACONs that aren't named after an airport have no published boundary data available, so FSOps shows nothing rather than inventing a shape — a wrong boundary on a map reads as authoritative. There are **no altitude limits** in this data either, so a sector polygon says nothing about which levels are being worked, and top-down coverage is never inferred. An empty area means "FSOps can't say", not necessarily "nobody is there".
 
-**Other VATSIM traffic near your network is shown too**, off the same feed and toggleable. A small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm) — never your own aircraft, and never anyone's if the feed is unreachable. Toggle it from the button above the map; it's on by default there, and doesn't exist on the in-game panel at all, which has no map to draw it on.
+**Other VATSIM traffic near your network is shown too**, off the same feed and toggleable. A small, deliberately subordinate marker for each pilot online near one of your own airports or along an active route (within about 150 nm) — never your own aircraft, and never anyone's if the feed is unreachable. Toggle it from the button above the map; it's on by default there.
 
 If VATSIM's feed is temporarily unreachable the list says so plainly ("ATC data unavailable right now — the map and your flight are unaffected"), and everything else keeps working exactly as normal. Nothing about your flight or the economy depends on any of this.
 
@@ -601,25 +569,6 @@ The **Stats** page (main navigation) is where your airline's history turns into 
 - **Pilots** — a logbook covering every pilot who's flown in the window, you included: sectors, hours, on-time percentage, and average landing rate. A figure that genuinely couldn't be measured (for example, a pilot whose every sector in the window was a manual completion) reads "Not measured," never a misleading zero.
 
 Every one of the four tabs has its own **Export CSV** button, exporting exactly the rows currently on screen for the period selected — handy for keeping your own record outside FSOps, or just looking at the raw numbers in a spreadsheet.
-
-## In-game panel
-
-A compact, read-only panel that shows your live flight and airline status inside MSFS itself, so you don't need to alt-tab out to a browser mid-flight. It's the same `/panel` page whether you reach it inside MSFS or by browsing to `http://localhost:5977/panel` yourself — large type, high contrast, built to stay readable at a small panel size.
-
-**In the air**, it shows your flight number, phase, progress, ETA and block time remaining, fuel and passengers on board, and your airline's cash balance. **On the ground after landing**, it switches automatically to a short debrief — landing rate, block time variance against the plan, and what the sector earned — for a little while after touchdown. It survives FSOps restarting mid-flight: if the connection drops, it says so and keeps retrying on its own, then catches up automatically the moment it reconnects, exactly the way the main Fly screen does.
-
-### Getting the panel into MSFS
-
-There are two ways in, and they install exactly the same thing:
-
-- **The setup wizard's "Connect your MSFS panel" step** looks for your Community folder automatically, lets you confirm or type a different path, and installs the panel when you finish. It's genuinely optional and skippable.
-- **Settings → [MSFS in-game panel](#msfs-in-game-panel)** does everything afterwards: it shows what's actually installed, and installs, reinstalls, repairs, moves or removes it. If you skipped the wizard step, this is where you add the panel later; if you move MSFS to another drive, this is where you move the panel with it.
-
-After installing, **restart MSFS if it's already running** — the sim reads its Community folder at startup, so a package added underneath a running sim won't appear until the next launch.
-
-**One thing to be aware of.** The compiled component that registers the FSOps button with MSFS's toolbar is built with the Microsoft Flight Simulator SDK and ships with FSOps, so a normal install includes it and Settings reports **"Appears in the MSFS toolbar"**. If Settings ever says the toolbar button won't appear, that's FSOps telling you the file is genuinely missing from the install rather than reassuring you — use **Reinstall / repair**, and see [Troubleshooting](troubleshooting.md#the-toolbar-button-isnt-there) if it persists. The button appearing is not the same guarantee as the window it opens actually showing anything — see [the panel opens but shows nothing](troubleshooting.md#the-panel-opens-but-shows-nothing) if you get a button but a blank window.
-
-Everything else about FSOps works the same with or without the in-game panel — the flight brief, live tracking, the report card and the full web UI at `http://localhost:5977` are unaffected either way.
 
 ## A worked example, start to finish
 

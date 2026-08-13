@@ -70,11 +70,6 @@ export function ReviewStep({ data, onChange, onEditStep, submitting, errorMessag
       stepKey: 'currency',
     },
     {
-      label: 'MSFS panel',
-      value: data.communityFolderPath ? data.communityFolderPath : 'Skipped — set up later in Settings',
-      stepKey: 'communityFolder',
-    },
-    {
       label: 'SimBrief Pilot ID',
       value: data.simBriefPilotId ? data.simBriefPilotId : 'Skipped — set up later in Settings',
       stepKey: 'onlinePresence',

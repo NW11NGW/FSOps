@@ -187,8 +187,8 @@ describe('filterControllersToViewport', () => {
   })
 
   it('passes everything through when there is no viewport at all', () => {
-    // The in-game panel: no map, so nothing to agree with, and the server has already scoped the
-    // response to the airline's own network.
+    // No map means nothing to agree with, and the server has already scoped the response to the
+    // airline's own network.
     const controllers = [terminal(), sector({ callsign: 'EMIRATES_CTR', boundaryId: 'OMAE' })]
     expect(filterControllersToViewport(controllers, boundaries, null)).toEqual(controllers)
   })

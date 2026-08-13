@@ -14,17 +14,6 @@ using FSOps.Sim.Fake;
 using FSOps.Sim.SimConnect;
 using Serilog;
 
-// Uninstall hook: "FSOps.Server.exe --uninstall-panel" is invoked from installer/FSOps.iss's
-// [UninstallRun] entry, before Inno removes any files and before the data-directory prompt (see
-// PanelUninstallCommand's own doc for the ordering this relies on). Short-circuits before any of
-// the normal startup work below - Kestrel, world-data import, hosted services - none of which has
-// any business running during an uninstall. Always returns 0: a failed panel removal must never
-// fail the uninstall itself.
-if (args.Length > 0 && string.Equals(args[0], PanelUninstallCommand.Argument, StringComparison.OrdinalIgnoreCase))
-{
-    return PanelUninstallCommand.Run();
-}
-
 // Pin the content root to the folder the assembly actually lives in, rather than letting it
 // default to the process working directory. The SPA is served from <contentRoot>/wwwroot, so a
 // launch whose working directory is anywhere else - a shortcut with a "Start in" folder, a
@@ -140,8 +129,8 @@ builder.Services.AddHostedService<VirtualFlightResolverService>();
 builder.Services.AddSingleton<StartupReconciliationState>();
 
 // VATSIM's public data feed, fetched server-side only - the SPA never calls it directly, because
-// the UI also runs inside an MSFS panel with no reliable internet and no business making
-// third-party requests. A singleton so one cached fetch is shared by every client rather than one
+// the UI has no business making third-party requests of its own. A singleton so one cached fetch
+// is shared by every client rather than one
 // request per poll; the timeout is deliberately generous but finite, since a slow feed must never
 // hold up a dashboard request.
 builder.Services.AddHttpClient("vatsim", client => client.Timeout = TimeSpan.FromSeconds(15));
@@ -149,7 +138,7 @@ builder.Services.AddSingleton<IVatsimNetworkClient, VatsimNetworkClient>();
 
 // Bundled VAT-Spy FIR/UIR geometry - the only reason en-route (CTR/FSS) controllers can be shown
 // at all. Singleton because it parses two data files once, lazily, on the first request that
-// needs a boundary; nothing is fetched, so this stays true inside the in-game panel and offline.
+// needs a boundary; nothing is fetched, so this stays true offline.
 builder.Services.AddSingleton<IAtcBoundarySource, VatSpyBoundarySource>();
 
 // Recognises the player's own flights on the public feed while a sector is being tracked.
@@ -262,7 +251,6 @@ apiV1.MapMaintenanceEndpoints();
 apiV1.MapStatsEndpoints();
 apiV1.MapVatsimEndpoints();
 apiV1.MapUpdateEndpoints();
-apiV1.MapPanelEndpoints();
 apiV1.MapOperationsEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");

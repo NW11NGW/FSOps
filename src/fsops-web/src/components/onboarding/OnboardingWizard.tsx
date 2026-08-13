@@ -7,10 +7,8 @@ import { ApiError, post } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Airline, AirlineSummary } from '@/types/airline'
 
-import { installPanel } from './panelInstallApi'
 import { WizardProgress } from './WizardProgress'
 import { AircraftStep } from './steps/AircraftStep'
-import { CommunityFolderStep } from './steps/CommunityFolderStep'
 import { HomeBaseStep } from './steps/HomeBaseStep'
 import { IdentityStep } from './steps/IdentityStep'
 import { OnlinePresenceStep } from './steps/OnlinePresenceStep'
@@ -105,29 +103,16 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
       const createdSummary = await post<AirlineSummary>('/airline', payload)
 
       // Best-effort, never blocks finishing onboarding - the airline is already created by this
-      // point. A player who chose a Community folder in the "MSFS panel" step gets it saved (the
-      // one place UserSettings.CommunityFolderPath is written) and the panel installed right away;
-      // if either call fails (no MSFS, a bad path that slipped past client-side validation, a
-      // permissions issue) it's silently retryable later from Settings rather than surfaced as an
-      // airline-creation error the player didn't cause.
-      if (data.communityFolderPath) {
-        try {
-          await updateSettings({ communityFolderPath: data.communityFolderPath })
-          await installPanel(data.communityFolderPath)
-        } catch {
-          // Non-fatal - see comment above.
-        }
-      }
-
-      // Same best-effort posture as the Community folder save above, and safe to send even when
-      // a field arrived here locked (see OnlinePresenceStep): a locked field's value is always
-      // an unedited echo of what settings.simBriefPilotId/vatsimCid already were, so this can
-      // never overwrite or clear a value the player didn't just type themselves.
+      // point, so a failure here must not surface as an airline-creation error the player didn't
+      // cause. Safe to send even when a field arrived here locked (see OnlinePresenceStep): a
+      // locked field's value is always an unedited echo of what settings.simBriefPilotId/vatsimCid
+      // already were, so this can never overwrite or clear a value the player didn't just type
+      // themselves.
       if (data.simBriefPilotId || data.vatsimCid) {
         try {
           await updateSettings({ simBriefPilotId: data.simBriefPilotId, vatsimCid: data.vatsimCid })
         } catch {
-          // Non-fatal - see comment above. Both are always settable later from Settings.
+          // Non-fatal - both are always settable later from Settings.
         }
       }
 
@@ -214,7 +199,6 @@ export function OnboardingWizard({ onCreated }: OnboardingWizardProps) {
               {step.key === 'strategy' && <StrategyStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'aircraft' && <AircraftStep data={data} onChange={update} errorMessage={submitError} />}
               {step.key === 'currency' && <CurrencyStep data={data} onChange={update} errorMessage={submitError} />}
-              {step.key === 'communityFolder' && <CommunityFolderStep data={data} onChange={update} />}
               {step.key === 'onlinePresence' && <OnlinePresenceStep data={data} onChange={update} />}
               {step.key === 'review' && (
                 <ReviewStep

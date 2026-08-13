@@ -34,17 +34,14 @@ function noAirlineYet() {
 /**
  * Mounts App at `path` and lets the lazy route chunk and its effects settle.
  *
- * Both branches below are `React.lazy`, and under vitest a dynamic import resolves only once the
+ * The wizard is behind `React.lazy`, and under vitest a dynamic import resolves only once the
  * module has actually been transformed - which is real I/O, not a microtask, so flushing alone can
- * leave the tree parked on its Suspense fallback forever. Importing both modules first puts them in
- * the module cache, so `lazy` resolves immediately and the test asserts on the rendered branch
- * rather than on a spinner.
+ * leave the tree parked on its Suspense fallback forever. Importing the module first puts it in the
+ * module cache, so `lazy` resolves immediately and the test asserts on the rendered branch rather
+ * than on a spinner.
  */
 async function renderAt(path: string) {
-  await Promise.all([
-    import('@/components/onboarding/OnboardingWizard'),
-    import('@/components/panel/PanelNoAirline'),
-  ])
+  await import('@/components/onboarding/OnboardingWizard')
   const mounted = await mount(
     createElement(
       SettingsProvider,
@@ -68,19 +65,10 @@ describe('App routing when no airline exists', () => {
     unmount()
   })
 
-  /**
-   * The regression this file exists for. /panel is loaded inside an MSFS toolbar iframe, where the
-   * nine-step founding wizard is both far too big for the window and impossible to complete from
-   * the cockpit - so the panel gets its own one-line state instead of the app-wide gate's answer.
-   */
-  it('shows the compact panel state on /panel, never the wizard', async () => {
-    const { container, unmount } = await renderAt('/panel')
-    const rendered = text(container)
-
-    expect(rendered).toContain('No airline yet')
-    expect(rendered).toContain('Set one up in the FSOps app')
-    expect(rendered).not.toContain('Let’s found your airline')
-    expect(rendered).not.toContain('Step 1 of')
+  /** Any route, not just "/", is the wizard until an airline exists - there is no way past it. */
+  it('shows the onboarding wizard on a deep route too', async () => {
+    const { container, unmount } = await renderAt('/fleet')
+    expect(text(container)).toContain('Let’s found your airline')
     unmount()
   })
 })

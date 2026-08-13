@@ -20,9 +20,9 @@ function isBusy(data: WorldDataStatus | null): boolean {
 /**
  * The airport and runway data every route, map and airport search is built on.
  *
- * <p>It ships inside the app rather than being downloaded, deliberately — this UI also runs inside
- * an MSFS in-game panel with no reliable internet, and route planning must never depend on being
- * online. A newer data set arrives with an app update and is applied automatically the first time
+ * <p>It ships inside the app rather than being downloaded, deliberately — route planning must
+ * never depend on being online.
+ * A newer data set arrives with an app update and is applied automatically the first time
  * FSOps starts afterwards; this card exists for the times someone wants it sooner, or suspects
  * their airport list is wrong.</p>
  *
@@ -98,9 +98,9 @@ export function WorldDataSection() {
             </CardTitle>
             <CardDescription className="mt-1.5">
               Every airport and runway FSOps knows about, from the public-domain OurAirports data
-              set. It ships inside the app, so route planning works with no internet connection —
-              including inside the MSFS panel. A newer data set arrives with an FSOps update and is
-              applied automatically the first time you start it afterwards.
+              set. It ships inside the app, so route planning works with no internet connection.
+              A newer data set arrives with an FSOps update and is applied automatically the first
+              time you start it afterwards.
             </CardDescription>
           </div>
           {state === 'loading' ? (

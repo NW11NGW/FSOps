@@ -30,7 +30,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   timeDisplay: 'Utc',
   use24HourClock: true,
   theme: 'dark',
-  communityFolderPath: null,
   simBriefPilotId: null,
   vatsimCid: null,
 }

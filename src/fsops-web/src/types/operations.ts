@@ -107,7 +107,7 @@ export interface VatsimAtcController {
    *
    *  This used to be the filter, and is now emphasis: the dashboard list follows the map's
    *  viewport, so hiding a controller outside the network would contradict the shape the user can
-   *  see on screen. Under the panel's network scope it is always true. */
+   *  see on screen. Under the default network scope it is always true. */
   inNetwork: boolean
   logonTimeUtc: string
 }
@@ -119,9 +119,9 @@ export interface VatsimAtcResponse {
   /** Boundary id -> GeoJSON MultiPolygon `coordinates` (polygon -> ring -> position -> [lon, lat]),
    *  sent once per boundary rather than inlined per controller.
    *
-   *  Null unless the request opted in with `?geometry=true`: the controller list and the in-game
-   *  panel want the same controller data without coordinates they would throw away, and the panel
-   *  is deliberately map-free. Also null when nothing online has a boundary.
+   *  Null unless the request opted in with `?geometry=true`: the controller list wants the same
+   *  controller data without coordinates it would throw away, since it draws no boundaries. Also
+   *  null when nothing online has a boundary.
    *
    *  Lateral footprint only. The source data carries no vertical extent, so nothing here says
    *  anything about altitude bands. */
@@ -131,8 +131,8 @@ export interface VatsimAtcResponse {
 /**
  * GET /vatsim/traffic - G11: other VATSIM pilots' live traffic near the airline's own network,
  * for the live operations map. Deliberately thin (no CID, no pilot name) - this is "other people's
- * traffic" for a subordinate map marker, never a profile. Toggled off by default on the in-game
- * panel, which has no map to draw it on at all - see `Panel.tsx`'s own note that it draws no map.
+ * traffic" for a subordinate map marker, never a profile. Off by default - see
+ * `vatsimTrafficVisibility` for why the stored preference must never quietly resolve to on.
  */
 export type VatsimTrafficStatus = 'ok' | 'unavailable'
 

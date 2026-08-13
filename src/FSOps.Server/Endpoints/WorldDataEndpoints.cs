@@ -14,8 +14,8 @@ public static class WorldDataEndpoints
         // Manual "refresh world data" from Settings. The app applies a newer bundled data set on
         // its own the first time it starts after an update; this is for anyone who wants it sooner
         // or suspects their airport table is wrong. It reads only the files shipped with the app -
-        // there is no network call here, deliberately, because the UI also runs inside an MSFS
-        // in-game panel with no reliable internet.
+        // there is no network call here, deliberately, because route planning must never depend on
+        // being online.
         group.MapPost("/worlddata/refresh", (
             IServiceScopeFactory scopeFactory,
             WorldDataImportProgress progress,

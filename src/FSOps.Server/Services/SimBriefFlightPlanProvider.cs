@@ -19,9 +19,9 @@ namespace FSOps.Server.Services;
 /// flight from starting.
 ///
 /// SERVER-SIDE ONLY: this class must never be reachable from the SPA - the whole point of routing
-/// this through the server is the app's no-external-network rule (the UI also runs inside an
-/// MSFS panel with no reliable internet, and a browser call to simbrief.com would be both a CORS
-/// problem and a privacy one). FlightEndpoints calls this; nothing under fsops-web ever does.
+/// this through the server is the app's no-external-network rule (a browser call to simbrief.com
+/// would be both a CORS problem and a privacy one). FlightEndpoints calls this; nothing under
+/// fsops-web ever does.
 ///
 /// A Pilot ID is a user identifier - it appears in the outbound request URL to SimBrief (the
 /// API's own contract - there is no other way to identify the player to it), but it is never

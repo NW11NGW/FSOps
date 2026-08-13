@@ -21,7 +21,6 @@ export const WIZARD_STEPS = [
   { key: 'strategy', label: 'Strategy' },
   { key: 'aircraft', label: 'Aircraft' },
   { key: 'currency', label: 'Currency' },
-  { key: 'communityFolder', label: 'MSFS panel' },
   { key: 'onlinePresence', label: 'Online flying' },
   { key: 'review', label: 'Review' },
 ] as const
@@ -133,11 +132,7 @@ export interface WizardData {
   loanEnabled: boolean
   loanAmount: number
   loanTermMonths: number
-  /** null = skipped. The "MSFS panel" step is genuinely optional: the panel is an addition, not a
-   *  prerequisite, and the app stays fully usable with no Community folder configured at all.
-   *  Never required to finish founding an airline. */
-  communityFolderPath: string | null
-  /** null = skipped. Same optional/never-required posture as communityFolderPath above: unlocks
+  /** null = skipped. Genuinely optional and never required to finish founding an airline: unlocks
    *  the Fly screen's SimBrief OFP import (see SimBriefSection in Settings) but nothing depends
    *  on it. On an existing install where this is already set (e.g. the airline was re-founded
    *  after being deleted from Settings' danger zone), OnlinePresenceStep shows it locked rather
@@ -173,7 +168,6 @@ export const DEFAULT_WIZARD_DATA: WizardData = {
   loanEnabled: false,
   loanAmount: 0,
   loanTermMonths: 60,
-  communityFolderPath: null,
   simBriefPilotId: null,
   vatsimCid: null,
 }
@@ -219,11 +213,9 @@ export const STEP_VALIDATORS: Record<WizardStepKey, (data: WizardData) => boolea
   strategy: isStrategyValid,
   aircraft: isAircraftValid,
   currency: isCurrencyValid,
-  // Always valid - genuinely skippable, and offered again later from Settings rather than nagged. An
-  // unconfirmed or empty path never blocks founding an airline.
-  communityFolder: () => true,
-  // Same posture, for the same reason: onboarding must never block on either field (see
-  // OnlinePresenceStep for the light, non-blocking local format hint shown instead).
+  // Always valid - genuinely skippable, and offered again later from Settings rather than nagged.
+  // Onboarding must never block on either field (see OnlinePresenceStep for the light,
+  // non-blocking local format hint shown instead).
   onlinePresence: () => true,
   review: isFinanceValid,
 }

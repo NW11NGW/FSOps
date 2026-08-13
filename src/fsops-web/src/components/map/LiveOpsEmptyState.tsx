@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 const STORAGE_KEY = 'fsops-liveops-empty-collapsed'
 
 /** Wrapped in try/catch, same convention as LiveOpsMap's mapDebugEnabled: `localStorage` can
- *  throw in locked-down embeds (e.g. the in-sim panel webview), and this must never break the
+ *  throw in a locked-down embed or a privacy-restricted browser, and this must never break the
  *  map underneath it. */
 function readCollapsed(): boolean {
   try {

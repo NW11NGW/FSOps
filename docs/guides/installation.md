@@ -10,7 +10,7 @@ If you'd rather build FSOps from source — because you want to change it, or yo
 - [1. Download the installer](#1-download-the-installer)
 - [2. Run the installer](#2-run-the-installer)
 - [3. First launch](#3-first-launch)
-- [4. Connect MSFS and install the in-game panel](#4-connect-msfs-and-install-the-in-game-panel)
+- [4. Connect MSFS](#4-connect-msfs)
 - [Where your data lives](#where-your-data-lives)
 - [Running FSOps in your browser instead](#running-fsops-in-your-browser-instead)
 - [Updating FSOps](#updating-fsops)
@@ -95,18 +95,11 @@ FSOps is two processes: a window, and a local web server it starts and stops for
 
 You can close the window normally; it shuts the server down with it. If you already have FSOps running and launch it again, the new window attaches to the server that's already there instead of starting a second one — there's only one database per user, and pointing two servers at it is a good way to corrupt a ledger.
 
-## 4. Connect MSFS and install the in-game panel
+## 4. Connect MSFS
 
 **SimConnect** needs nothing installed or configured. Start MSFS 2024, load into a flight, and FSOps connects on its own, retrying every few seconds until it succeeds. Two indicator pills in the top-right of FSOps' top bar show the state. See [Connect to MSFS](getting-started.md#7-connect-to-msfs) for detail.
 
-**The in-game panel** is installed from inside FSOps, not by this installer. The installer carries the panel package, but it doesn't copy anything into your MSFS Community folder — that's a per-user path that depends on how and where you bought and installed MSFS, and it isn't something an installer can reliably work out. FSOps can, so it does it from Settings where you can see and change the path:
-
-1. Open **Settings** in FSOps.
-2. Find the **MSFS panel** section. FSOps tries to detect your Community folder and offers what it finds; you can browse to it yourself if it guesses wrong.
-3. Select **Install**.
-4. Restart MSFS if it was running. The FSOps button appears in the in-game toolbar.
-
-See [In-game panel](user-guide.md#in-game-panel) in the User Guide for what the panel shows and how it behaves, [the toolbar button isn't there](troubleshooting.md#the-toolbar-button-isnt-there) if it doesn't appear, and [the panel opens but shows nothing](troubleshooting.md#the-panel-opens-but-shows-nothing) if the button's there but the window it opens is blank.
+If it doesn't connect, see [MSFS won't connect over SimConnect](troubleshooting.md#msfs-wont-connect-over-simconnect).
 
 ## Where your data lives
 
@@ -158,10 +151,6 @@ Uninstall FSOps the normal way — **Settings → Apps → Installed apps → FS
 Because some people do want a genuinely clean removal, the uninstaller asks — once, at the end — whether you'd also like to delete that data folder. It names the folder, spells out that it holds your airline, fleet, routes, pilots, flight history and ledger, and **defaults to keeping it**. Answering No, or dismissing it, keeps everything. There is no other circumstance in which uninstalling removes your data.
 
 If you'd rather not be asked at all, or you want to be certain, copy `fsops.db` somewhere else first.
-
-**The in-game panel is removed automatically, with no prompt.** Unlike your airline, the panel in your MSFS Community folder isn't your data — it's a folder of files FSOps copied and generated there itself, and it can be put back at any time with a single click in Settings. So the uninstaller removes it as a normal, silent part of uninstalling, the same way it removes the program folder. There's nothing to confirm and nothing to opt into.
-
-This works by reading the Community folder you last set in Settings out of your own database *before* anything is deleted, so it needs that database to still be there — if you deleted `%LOCALAPPDATA%\FSOps` yourself before uninstalling, or never installed the panel in the first place, there's nothing for it to find, which is the same as nothing to remove. The uninstaller also refuses to touch anything that doesn't look like an FSOps install (so a folder you happened to name `fsops-panel` yourself is never at risk), and never fails the uninstall itself if the panel can't be removed — for example because MSFS is still running and has it open. If that happens, delete the `fsops-panel` folder from your Community folder yourself afterwards; nothing else depends on it being gone. See [the panel wasn't removed when I uninstalled FSOps](troubleshooting.md#the-panel-wasnt-removed-when-i-uninstalled-fsops) if you want to check what happened.
 
 ## If something goes wrong
 

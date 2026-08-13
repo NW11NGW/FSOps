@@ -48,7 +48,6 @@ function mockGetDefault() {
         timeDisplay: 'Utc',
         use24HourClock: true,
         theme: 'dark',
-        communityFolderPath: null,
         simBriefPilotId: null,
       } as unknown as ReturnType<typeof get>
     }

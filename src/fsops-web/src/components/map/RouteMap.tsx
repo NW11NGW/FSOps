@@ -145,7 +145,7 @@ function buildRouteFeatures(
 const ROUTE_LAYER_IDS = [ROUTE_GLOW_LAYER_ID, ROUTE_LINE_LAYER_ID, ROUTE_HIT_LAYER_ID] as const
 
 /** Reads the `fsops:mapdebug` opt-in flag; wrapped in try/catch because `localStorage` can throw
- * in locked-down embeds (e.g. the in-sim panel webview) and this must never break the map. */
+ * in a locked-down embed or a privacy-restricted browser, and this must never break the map. */
 function mapDebugEnabled(): boolean {
   try {
     return typeof window !== 'undefined' && window.localStorage.getItem('fsops:mapdebug') != null

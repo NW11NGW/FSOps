@@ -155,9 +155,9 @@ export function terminalIntersectsViewport(controller: VatsimAtcController, boun
  * runs over data already in hand and is re-run on pan and zoom - it never triggers a fetch, and
  * the feed keeps its own cadence regardless of how much the map is moved.
  *
- * With no viewport (`bounds` null) this returns the controllers unchanged. That is the in-game
- * panel's case: it has no map, so there is nothing to agree with, and the server has already
- * scoped its response to the airline's own network.
+ * With no viewport (`bounds` null) this returns the controllers unchanged. That is a consumer
+ * with no map: there is nothing to agree with, and the server has already scoped its response to
+ * the airline's own network.
  */
 export function filterControllersToViewport(
   controllers: VatsimAtcController[],

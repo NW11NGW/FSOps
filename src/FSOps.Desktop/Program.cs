@@ -9,8 +9,8 @@ namespace FSOps.Desktop;
 /// The shell is a window and a process supervisor, and nothing else. It never touches the database,
 /// never reads world data, and holds no opinion about the economy - all of that stays in
 /// FSOps.Server, which it starts as a child process and stops again on close. Keeping it that thin
-/// is what makes it safe to add: nothing about running the app in a browser, headless, or from the
-/// in-game panel changes because this exists.
+/// is what makes it safe to add: nothing about running the app in a browser or headless changes
+/// because this exists.
 /// </para>
 /// </summary>
 internal static class Program

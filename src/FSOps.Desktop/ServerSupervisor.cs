@@ -31,15 +31,15 @@ internal sealed record ServerStartupResult(
 /// the orphan problem outright, and it was the first choice considered. It was rejected because the
 /// server's composition root - migrations, world-data seeding, reservation reconciliation, six
 /// hosted services - is a top-level-statements Program.cs that is not callable as a method, and
-/// because FSOps.Server must stay independently launchable: it is how the app runs headless, how
-/// the in-game panel is served when the desktop window is closed, and how every integration test
-/// starts it. A child process keeps exactly one startup path in the product instead of two that can
+/// because FSOps.Server must stay independently launchable: it is how the app runs headless, and
+/// how every integration test starts it. A child process keeps exactly one startup path in the
+/// product instead of two that can
 /// drift, and the orphan risk it introduces is fully answered by <see cref="ChildProcessJob"/>,
 /// which is enforced by the kernel rather than by our exit code being lucky.</para>
 ///
 /// <para><b>Shutdown is a kill, not a graceful stop.</b> There is no way to deliver Ctrl+C to a
 /// windowless child that System.Diagnostics.Process started, and adding an HTTP shutdown endpoint
-/// to a server that also answers the in-game panel would be a worse trade. This is safe because of
+/// to a server that also answers the app's own requests would be a worse trade. This is safe because of
 /// how the data is written: FlightEvent and LedgerTransaction are append-only, every write goes
 /// through an EF transaction, and SQLite rolls back a torn transaction on next open. The worst case
 /// is losing the last few seconds of telemetry, which the next sim poll re-reads anyway.</para>
@@ -145,10 +145,8 @@ internal sealed class ServerSupervisor : IDisposable
             RedirectStandardError = true,
         };
 
-        // The port the shell chose, handed to the child explicitly. This is also what
-        // PanelPackageInstaller.ResolveConfiguredPort() reads when the player installs or repairs
-        // the in-game panel, so the panel's generated FSOpsPanel.config.js always names the port the
-        // server is genuinely listening on - the shell and the panel cannot disagree.
+        // The port the shell chose, handed to the child explicitly, so the server always listens
+        // where the web view is about to look rather than on its own default.
         startInfo.Environment[ServerPortPlanner.PortVariable] = Port.ToString(CultureInfo.InvariantCulture);
 
         // We are the window. The server must never also open the user's browser.

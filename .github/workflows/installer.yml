@@ -131,9 +131,7 @@ jobs:
             'FSOps.Server.exe',
             'WebView2Loader.dll',
             'economy-config.json',
-            'wwwroot\index.html',
-            'PanelTemplate\manifest.json',
-            'PanelTemplate\InGamePanels\FSOpsPanel.spb'
+            'wwwroot\index.html'
           )
           foreach ($rel in $required) {
             $full = Join-Path $installDir $rel

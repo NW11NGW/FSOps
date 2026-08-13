@@ -101,13 +101,12 @@ interface LiveOpsMapProps {
   atcBoundaries?: VatsimAtcResponse['boundaries']
   atcUnavailable?: boolean
   /** G11 - other VATSIM pilots' traffic near the airline's own network. Omit (or pass an empty
-   *  array) to show none at all - the caller's own toggle (default on for the dashboard, and this
-   *  component is never even mounted on the in-game panel, which has no map) decides whether this
-   *  is populated; the map itself has no opinion. */
+   *  array) to show none at all - the caller's own toggle decides whether this is populated; the
+   *  map itself has no opinion. */
   vatsimTraffic?: VatsimTrafficPilot[]
   /** Reports the visible map bounds after every pan and zoom, debounced, so the controller list
    *  beside the map can show what is genuinely on screen. Called with the initial view on load.
-   *  A consumer without a map simply never receives one, which is the panel's case. */
+   *  A consumer without a map simply never receives one. */
   onViewportChange?: (bounds: MapBounds) => void
   className?: string
 }
@@ -196,8 +195,8 @@ function networkAirports(network: LiveNetworkRoute[]): { icao: string; lon: numb
 }
 
 /** Reads the `fsops:mapdebug` opt-in flag - same convention as RouteMap.tsx - wrapped in
- *  try/catch because `localStorage` can throw in locked-down embeds (e.g. the in-sim panel
- *  webview) and this must never break the map. */
+ *  try/catch because `localStorage` can throw in a locked-down embed or a privacy-restricted
+ *  browser, and this must never break the map. */
 function mapDebugEnabled(): boolean {
   try {
     return typeof window !== 'undefined' && window.localStorage.getItem('fsops:mapdebug') != null

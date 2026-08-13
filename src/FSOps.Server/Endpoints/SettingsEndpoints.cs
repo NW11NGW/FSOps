@@ -58,7 +58,6 @@ public static class SettingsEndpoints
         settings.TimeDisplay = timeDisplay;
         settings.Use24HourClock = request.Use24HourClock;
         settings.Theme = string.IsNullOrWhiteSpace(request.Theme) ? settings.Theme : request.Theme.Trim();
-        settings.CommunityFolderPath = request.CommunityFolderPath;
         settings.SimBriefPilotId = request.SimBriefPilotId;
         // Stored and validated exactly like SimBriefPilotId above - a non-numeric or blank value
         // just means "not set" (trimmed to null), never a 400. VATSIM CIDs are plain digits; a
@@ -108,7 +107,6 @@ public record UpdateSettingsRequest(
     string? TimeDisplay,
     bool Use24HourClock,
     string? Theme,
-    string? CommunityFolderPath,
     string? SimBriefPilotId,
     string? VatsimCid);
 

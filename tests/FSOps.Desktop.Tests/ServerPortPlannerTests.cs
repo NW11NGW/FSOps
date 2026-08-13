@@ -5,8 +5,8 @@ namespace FSOps.Desktop.Tests;
 /// <summary>
 /// The rules that decide where the desktop shell's UI points. These matter because two of the
 /// three outcomes are invisible when they go wrong: attaching to a server the shell did not start
-/// means it must not kill it on close, and moving to a fallback port means the in-game panel's
-/// stored port can go stale. Both are decided here.
+/// means it must not kill it on close, and moving to a fallback port means the web view must be
+/// pointed at the new one. Both are decided here.
 /// </summary>
 public class ServerPortPlannerTests
 {
@@ -88,7 +88,7 @@ public class ServerPortPlannerTests
     public void A_completely_occupied_range_returns_no_decision_rather_than_guessing()
     {
         // The caller turns this into a real error message. Silently binding somewhere unexpected
-        // would leave the in-game panel pointing at nothing with no explanation.
+        // would leave the shell's web view pointing at nothing with no explanation.
         Assert.Null(ServerPortPlanner.Decide(5977, _ => PortState.SomethingElse));
     }
 

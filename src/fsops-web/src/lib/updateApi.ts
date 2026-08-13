@@ -4,8 +4,8 @@ import { get, post, put } from '@/lib/api'
  * The updater's API surface.
  *
  * Every call here goes to FSOps' own server on localhost. The SPA never talks to GitHub - it
- * cannot, because the UI also runs inside an MSFS in-game panel with no reliable internet and no
- * business making third-party requests. The one outbound call the update check needs is made
+ * cannot, because the UI has no business making third-party requests of its own. The one
+ * outbound call the update check needs is made
  * server-side, once, and only when the feature is switched on.
  */
 

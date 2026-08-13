@@ -8,8 +8,8 @@ import type { VatsimAtcController, VatsimTrafficPilot } from '@/types/operations
 const STORAGE_KEY = 'fsops-liveops-legend-collapsed'
 
 /** Wrapped in try/catch, same convention as LiveOpsMap's mapDebugEnabled and
- *  LiveOpsEmptyState's readCollapsed: `localStorage` can throw in locked-down embeds (e.g. the
- *  in-sim panel webview), and this must never break the map underneath it. */
+ *  LiveOpsEmptyState's readCollapsed: `localStorage` can throw in a locked-down embed or a
+ *  privacy-restricted browser, and this must never break the map underneath it. */
 function readCollapsed(): boolean {
   try {
     return typeof window !== 'undefined' && window.localStorage.getItem(STORAGE_KEY) === 'true'

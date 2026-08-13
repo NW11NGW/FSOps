@@ -21,7 +21,7 @@ export interface VatsimAtcOptions {
   /** `'all'` for every controller FSOps can place worldwide - what a map needs, because the user
    *  can pan anywhere and the list beside it has to agree with what is on screen. `'network'`
    *  (the default) returns only positions covering the airline's own airports, which is the right
-   *  answer for a consumer with no viewport, such as the in-game panel. */
+   *  answer for a consumer with no viewport. */
   scope?: 'all' | 'network'
   /** Whether to ask for boundary polygons. Only a map should: the coordinates are tens of
    *  kilobytes a consumer that draws no map would parse and discard. */

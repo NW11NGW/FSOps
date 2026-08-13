@@ -57,7 +57,7 @@ function mockGetDefault(quoteOverride: SaleQuote = quote) {
     if (path === '/settings') {
       return {
         currencyCode: 'USD', distanceUnit: 'Nm', altitudeUnit: 'Feet', weightUnit: 'Kg',
-        timeDisplay: 'Utc', use24HourClock: true, theme: 'dark', communityFolderPath: null, simBriefPilotId: null,
+        timeDisplay: 'Utc', use24HourClock: true, theme: 'dark', simBriefPilotId: null,
       } as unknown as ReturnType<typeof get>
     }
     if (path === '/settings/currencies') return [] as unknown as ReturnType<typeof get>

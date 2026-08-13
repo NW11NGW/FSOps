@@ -325,8 +325,8 @@ public class VatsimEndpointsTests
     [Fact]
     public async Task GetAtcAsync_BoundaryGeometry_IsOmittedUnlessTheCallerAsksForIt()
     {
-        // The controller list and the map share one endpoint, and the in-game panel is
-        // deliberately map-free - none of them should be paying for coordinates they discard.
+        // The controller list and the map share one endpoint, and the list draws no boundaries -
+        // it should not be paying for coordinates it discards.
         using var ctx = await RouteTestContext.CreateAsync();
         await AddActiveRouteAsync(ctx);
         var snapshot = new VatsimSnapshot(true, Base, new[]
@@ -531,8 +531,8 @@ public class VatsimEndpointsTests
     [Fact]
     public async Task GetAtcAsync_DefaultScope_IsNetworkOnly_SoAViewportFreeConsumerIsUnaffected()
     {
-        // The in-game panel has no map and asks a different question: who is controlling where I
-        // fly. Absent scope, and any unrecognised scope, must keep that answer.
+        // A consumer with no map asks a different question: who is controlling where I fly.
+        // Absent scope, and any unrecognised scope, must keep that answer.
         using var ctx = await RouteTestContext.CreateAsync();
         await AddActiveRouteAsync(ctx);
         var snapshot = new VatsimSnapshot(true, Base, new[]

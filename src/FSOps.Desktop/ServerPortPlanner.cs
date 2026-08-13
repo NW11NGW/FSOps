@@ -40,8 +40,7 @@ internal readonly record struct ServerPortDecision(int Port, ServerStartMode Mod
 /// double-click into a corrupted ledger. Attaching also means the shell must NOT kill that server
 /// when its window closes: it did not start it.</item>
 /// <item>Something that is not FSOps holds the port - step to the next free one rather than
-/// refusing to launch. The port only has to be stable enough for the in-game panel, and the panel's
-/// config is written by the server process from the same FSOPS_PORT value the shell hands it, so
+/// refusing to launch. The shell hands the chosen port to the server it starts as FSOPS_PORT, so
 /// the two cannot disagree about a port chosen here.</item>
 /// </list>
 /// </summary>

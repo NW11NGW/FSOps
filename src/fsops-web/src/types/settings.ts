@@ -11,7 +11,6 @@ export interface AppSettings {
   timeDisplay: TimeDisplay
   use24HourClock: boolean
   theme: string
-  communityFolderPath: string | null
   simBriefPilotId: string | null
   /** VATSIM CID (Certificate/Community ID) - stored locally like any other setting, read only
    *  server-side (see VatsimFlightCorroborationService). Never sent anywhere but back to FSOps'

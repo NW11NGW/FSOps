@@ -9,8 +9,7 @@ import { applyAccentColour } from '@/lib/theme'
 
 // Each page is its own chunk, fetched only when the player navigates there. This matters most for
 // routes that pull in maplibre-gl (Dashboard, Routes, and - via LiveFlightView - Fly indirectly):
-// none of that has to download before the app shell can even paint. It also keeps the compact
-// /panel route (below) from ever paying for the rest of the app's pages.
+// none of that has to download before the app shell can even paint.
 const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const Fly = lazy(() => import('@/pages/Fly').then((m) => ({ default: m.Fly })))
 const RoutesPage = lazy(() => import('@/pages/Routes').then((m) => ({ default: m.RoutesPage })))
@@ -19,17 +18,10 @@ const Pilots = lazy(() => import('@/pages/Pilots').then((m) => ({ default: m.Pil
 const Finances = lazy(() => import('@/pages/Finances').then((m) => ({ default: m.Finances })))
 const Stats = lazy(() => import('@/pages/Stats').then((m) => ({ default: m.Stats })))
 const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
-// Outside AppShell (below) - the in-game toolbar panel gets none of the sidebar/topbar chrome,
-// just its own compact content: same origin, same
-// SignalR live-flight data, but its own route so it never has to download the rest of the app.
-const Panel = lazy(() => import('@/pages/Panel').then((m) => ({ default: m.Panel })))
-// Lazy for the same reason: the wizard drags in the whole onboarding tree, and /panel must never
-// download it. It is the one thing on the "no airline" path that the toolbar panel cannot use.
+// Lazy for the same reason: the wizard drags in the whole onboarding tree, which nothing on the
+// normal in-app path ever needs.
 const OnboardingWizard = lazy(() =>
   import('@/components/onboarding/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })),
-)
-const PanelNoAirline = lazy(() =>
-  import('@/components/panel/PanelNoAirline').then((m) => ({ default: m.PanelNoAirline })),
 )
 
 function FullScreenSplash() {
@@ -55,28 +47,17 @@ function App() {
     return <FullScreenSplash />
   }
 
-  // No airline yet. Everything except the toolbar panel gets the full-screen wizard; /panel gets its
-  // own one-line state instead, because a nine-step founding form is unusable in an MSFS toolbar
-  // iframe and a player in the cockpit cannot complete it there anyway. Routing (rather than an
-  // early return) is what keeps the wizard's chunk from being fetched on the panel path at all.
+  // No airline yet - the whole app is the full-screen founding wizard until there is one.
   if (status === 'wizard') {
     return (
       <ErrorBoundary>
         <Suspense fallback={<FullScreenSplash />}>
-          <Routes>
-            <Route path="panel" element={<PanelNoAirline />} />
-            <Route
-              path="*"
-              element={
-                <OnboardingWizard
-                  onCreated={(created) => {
-                    markCreated(created)
-                    navigate('/', { replace: true })
-                  }}
-                />
-              }
-            />
-          </Routes>
+          <OnboardingWizard
+            onCreated={(created) => {
+              markCreated(created)
+              navigate('/', { replace: true })
+            }}
+          />
         </Suspense>
       </ErrorBoundary>
     )
@@ -86,9 +67,6 @@ function App() {
     <ErrorBoundary>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
-          {/* Not nested under AppShell - the toolbar panel has no sidebar/topbar, only its own
-              compact content (see Panel.tsx). */}
-          <Route path="panel" element={<Panel />} />
           <Route element={<AppShell />}>
             <Route index element={<Dashboard />} />
             <Route path="fly" element={<Fly />} />

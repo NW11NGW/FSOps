@@ -28,7 +28,7 @@ export function toCsv<T extends object>(rows: T[], columns: CsvColumn<T>[]): str
 }
 
 /** Triggers a browser download of `csv` as `filename` - a Blob + object URL, no network call, so
- *  this works identically inside the MSFS in-game panel as it does in a normal browser tab. */
+ *  this works with no internet connection at all. */
 export function downloadCsv(filename: string, csv: string): void {
   // Prefixed so Excel (and other BOM-sniffing tools) reliably detect UTF-8 rather than guessing an
   // 8-bit codepage and mangling any non-ASCII pilot/aircraft name.

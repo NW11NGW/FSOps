@@ -25,8 +25,8 @@ public sealed record AtcBoundary(string Id, string Name, IReadOnlyList<AtcBounda
 
 /// <summary>
 /// Resolves an en-route controller callsign to the published boundary it is working, using data
-/// bundled with FSOps rather than a network call - the UI also runs inside an MSFS in-game panel
-/// with no reliable internet, so anything fetched at runtime would simply be absent there.
+/// bundled with FSOps rather than a network call - FSOps must work with no internet at all, so
+/// anything fetched at runtime would simply be absent when it is most wanted.
 ///
 /// <para><see cref="Resolve"/> returning null is an ordinary, expected outcome and means exactly
 /// "FSOps does not know what this callsign covers". Callers must then leave the controller out

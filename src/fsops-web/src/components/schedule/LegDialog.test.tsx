@@ -23,7 +23,7 @@ import { fetchAircraftOptions, fetchLegOptions } from '@/hooks/useSchedule'
 
 /** Waits past LegDialog's 250ms leg-options debounce. Wrapped in act() because the debounced
  *  setTimeout callback triggers a React state update outside of any event handler React is
- *  already tracking (same pattern as CommunityFolderStep.test.tsx's waitForDebounce). */
+ *  already tracking. */
 async function waitForDebounce() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 400))

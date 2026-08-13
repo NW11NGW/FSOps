@@ -62,9 +62,9 @@ namespace FSOps.Server.Endpoints;
 /// map asks "what is on screen right now" - it must be able to show a controller wherever the user
 /// pans, so hiding anything outside the player's own network would make the list disagree with the
 /// map the user is looking at. It requests <c>scope=all</c> and filters to its own viewport on the
-/// client, from data it already holds, so panning costs nothing and never touches the feed. The
-/// in-game panel has no map at all and asks "who is controlling where I fly", so it takes the
-/// default network scope - the right answer where there is no viewport to speak of.</para>
+/// client, from data it already holds, so panning costs nothing and never touches the feed. A
+/// consumer with no map asks "who is controlling where I fly" instead, so it takes the default
+/// network scope - the right answer where there is no viewport to speak of.</para>
 ///
 /// <para><see cref="VatsimAtcController.InNetwork"/> carries what used to be the filter: whether
 /// the position covers an airport the player actually serves (for a sector, whether the boundary
@@ -105,9 +105,8 @@ public static class VatsimEndpoints
     }
 
     /// <param name="geometry">Opt-in: boundary polygons are only serialised when a client actually
-    /// intends to draw them. The dashboard's controller list and any future panel view want the
-    /// same controller data without tens of kilobytes of coordinates they would throw away, and
-    /// the in-game panel is deliberately map-free.</param>
+    /// intends to draw them. The dashboard's controller list wants the same controller data
+    /// without tens of kilobytes of coordinates it would throw away.</param>
     /// <param name="scope">"all" for every controller FSOps can place anywhere in the world - what
     /// a map needs, since the user can pan anywhere. Anything else (including absent) keeps the
     /// network-only scope, which is what a consumer with no viewport should get.</param>
@@ -248,9 +247,8 @@ public static class VatsimEndpoints
     /// dashboard map has no use for traffic nowhere near what the player is doing. The player's own
     /// aircraft (matched by their configured CID, if any) is excluded - it is already drawn
     /// separately, with full weight, by <c>OperationsEndpoints</c>; this is only ever "other
-    /// people's" traffic. Toggling this off client-side (and its off-by-default state on the
-    /// in-game panel, which has no map to draw it on at all) is a client concern - see
-    /// <c>LiveOpsMap.tsx</c>.
+    /// people's" traffic. Toggling this off client-side, and its off-by-default state, are client
+    /// concerns - see <c>LiveOpsMap.tsx</c>.
     /// </summary>
     internal static async Task<IResult> GetTrafficAsync(
         [FromServices] IVatsimNetworkClient vatsim, [FromServices] FsOpsDbContext db, [FromServices] ICurrentUser currentUser, CancellationToken ct)

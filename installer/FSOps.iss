@@ -18,12 +18,6 @@
 ;   THE USER'S SAVE IS NOT OURS TO DELETE. %LOCALAPPDATA%\FSOps holds the database - their airline,
 ;   fleet, routes, pilots, flight history and ledger. Uninstalling FSOps removes the program and
 ;   leaves that untouched. See CurUninstallStepChanged for the one narrow, opt-in exception.
-;
-;   WHAT FSOPS PUT IN THE COMMUNITY FOLDER, FSOPS TAKES BACK OUT. Unlike the database above, the
-;   in-game panel under <Community>\fsops-panel is not the player's data - it is FSOps' own copied
-;   and generated output, reproducible at any time by pressing Install again. So removing it is not
-;   opt-in the way the database is: see [UninstallRun] below, which runs PanelUninstallCommand
-;   automatically and silently, before anything else in this uninstall happens.
 
 #if VER < EncodeVer(6,3,0)
   #error FSOps.iss needs Inno Setup 6.3 or newer (ArchitecturesAllowed=x64compatible, DownloadTemporaryFile).
@@ -51,11 +45,6 @@
 
 #define AppName "FSOps"
 #define AppExeName "FSOps.Desktop.exe"
-; The server, which is a console application and the only thing that understands --uninstall-panel.
-; Kept separate from AppExeName deliberately: AppExeName is the windowed shell a player launches,
-; and handing it a command-line switch it does not recognise makes it start the whole application
-; instead of doing the job - which, under waituntilterminated, hangs the uninstaller forever.
-#define ServerExeName "FSOps.Server.exe"
 #define AppPublisher "FSOps"
 #define AppUrl "https://github.com/NW11NGW/FSOps"
 
@@ -88,15 +77,6 @@
 #endif
 #if !FileExists(PublishDir + "\wwwroot\index.html")
   #error The publish has no SPA in wwwroot - every page would be the "UI not built yet" fallback.
-#endif
-#if !FileExists(PublishDir + "\PanelTemplate\manifest.json")
-  #error The publish has no in-game panel package under PanelTemplate.
-#endif
-; The compiled .spb is what registers the toolbar button with MSFS. The panel installs and works
-; without it in the sense that files land in the Community folder, but no button ever appears - a
-; failure that looks like the feature simply not existing.
-#if !FileExists(PublishDir + "\PanelTemplate\InGamePanels\FSOpsPanel.spb")
-  #error The publish has no PanelTemplate\InGamePanels\FSOpsPanel.spb - the MSFS toolbar button would never appear.
 #endif
 #if !FileExists(IconFile)
   #error fsops.ico was not found next to the FSOps.Desktop project.
@@ -181,36 +161,6 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
   Flags: nowait postinstall skipifsilent
-
-[UninstallRun]
-; Removes the in-game panel FSOps installed into the player's chosen MSFS Community folder. The
-; player never put those files there - FSOps did, at their request, from Settings - so FSOps cleans
-; them up rather than leaving a folder behind forever with MSFS still showing a toolbar button for
-; an app that is gone.
-;
-; This section's entries run "as the first step of uninstallation" (Inno's own documented wording),
-; which is exactly the ordering this needs: {app}\FSOps.Server.exe still exists, and so does the
-; database PanelUninstallCommand reads the Community folder path from - the optional prompt to
-; delete that database (see CurUninstallStepChanged below) fires much later, at usPostUninstall.
-;
-; PanelUninstallCommand is the whole implementation, deliberately: this line is "call it and don't
-; touch anything else" so the interesting logic lives in C#, where it can be unit tested, rather
-; than in Pascal, where it cannot. It never fails the uninstall - every I/O problem it can hit (a
-; locked file, a missing or moved Community folder, a folder FSOps didn't create) is caught there
-; and turned into "leave it, say so, carry on", never an exception or a non-zero exit code.
-;
-; Runs unconditionally, including during a silent uninstall - unlike the data-directory prompt
-; below there is no Yes/No question here to ask: the panel is FSOps' own generated output, never
-; anything the player put there themselves, so tidying it up automatically costs nothing the way
-; deleting their airline data would. skipifdoesntexist covers the (currently impossible, but cheap
-; to guard) case of a previous uninstall step having already removed the exe.
-; NOTE the executable here is the SERVER, not AppExeName. AppExeName is the windowed shell; given an
-; argument it does not understand it launches the application normally - shell, server and a browser
-; window - and waituntilterminated then waits for a GUI nobody is present to close. That is not
-; hypothetical: it hung a silent uninstall in CI for twenty-nine minutes, leaving FSOps.Desktop and
-; FSOps.Server running as orphans, and it would have hung the uninstall for every real user.
-Filename: "{app}\{#ServerExeName}"; Parameters: "--uninstall-panel"; \
-  Flags: runhidden waituntilterminated skipifdoesntexist logoutput
 
 [Code]
 const
@@ -358,7 +308,7 @@ begin
   Result := True;
 end;
 
-{ Uninstall. The program goes; the airline stays; the panel is already gone by the time this runs.
+{ Uninstall. The program goes; the airline stays.
 
   Inno removes what it installed into the application folder and nothing else, so the default path
   already leaves LocalAppData\FSOps alone. The prompt below is the only way that directory can ever
@@ -366,12 +316,7 @@ end;
   the default button is No, it names the exact folder and what is inside it, and it does not appear
   at all during a silent uninstall or when FSOPS_DATA_DIR has moved the data somewhere this
   installer never knew about. Someone who wants a genuinely clean removal can have one; nobody loses
-  an airline to a reflexive Enter key.
-
-  The in-game panel is a separate, non-optional cleanup step that has already happened by the time
-  usPostUninstall (below) fires - see [UninstallRun] and PanelUninstallCommand. That ordering is
-  deliberate: panel removal needs the database this prompt might be about to delete, so it has to
-  run first, and it does, because [UninstallRun] entries execute before usUninstall even begins. }
+  an airline to a reflexive Enter key. }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
