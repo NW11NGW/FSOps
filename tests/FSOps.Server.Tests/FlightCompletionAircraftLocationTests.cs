@@ -183,11 +183,30 @@ public class FlightCompletionAircraftLocationTests
     private static async Task<Flight> SeedInProgressFlightAsync(
         RouteTestContext ctx, Guid fleetAircraftId, string titleFlown = "Test Aircraft")
     {
+        // A REAL route, not a fabricated id. These tests are about where the aircraft ends up, and a
+        // made-up RouteId used to be a harmless shortcut for that - but completion now refuses to
+        // finish a flight whose route cannot be resolved, because doing so is how a flown sector
+        // ended up Completed and unpayable with no way back. The shortcut would now exercise that
+        // refusal instead of the landing behaviour these tests exist to check.
+        var route = new Route
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            DepartureIcao = "EGGD",
+            ArrivalIcao = "EGPH",
+            FlightNumber = "101",
+            DistanceNm = 280,
+            BaseFare = 90m,
+            IsActive = true,
+            CreatedUtc = Base,
+        };
+        ctx.Db.Routes.Add(route);
+
         var flight = new Flight
         {
             Id = Guid.NewGuid(),
             AirlineId = ctx.Airline.Id,
-            RouteId = Guid.NewGuid(),
+            RouteId = route.Id,
             FleetAircraftId = fleetAircraftId,
             PilotId = Guid.NewGuid(),
             Status = FlightStatus.InProgress,

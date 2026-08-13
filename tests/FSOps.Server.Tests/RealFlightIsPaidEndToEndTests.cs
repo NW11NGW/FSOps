@@ -193,25 +193,24 @@ public class RealFlightIsPaidEndToEndTests
     }
 
     /// <summary>
-    /// DEFECT, CHARACTERISED - and nothing to do with the first-fix work; found while enumerating
-    /// every path that can stop a flown sector being paid.
+    /// CLOSED - this was a defect and is now the guarantee. Nothing to do with the first-fix work;
+    /// it was found while enumerating every path that could stop a flown sector being paid.
     /// <para>
-    /// <c>Route</c> is soft-deleted (<c>RouteEndpoints.DeleteAsync</c>) and carries a global query
-    /// filter on <c>DeletedUtc == null</c>, and <c>RouteEndpoints.DeleteAsync</c> does not check
-    /// whether a flight on that route is in progress. So a player who tidies up their route list
-    /// while flying gets a sector that reaches <c>FlightStatus.Completed</c> with NO ticket revenue,
-    /// no fees, and <c>RevenuePosted</c> still false - because <c>FinalizeFlightAsync</c> resolves
-    /// the route to null and skips its whole economics block, having already set the status.
+    /// A route is soft-deleted behind a global <c>DeletedUtc == null</c> filter, so deleting one
+    /// mid-flight used to leave finalisation unable to resolve it. The status was set before the
+    /// economics block, which then skipped, and the sector ended Completed with no revenue, no fees
+    /// and <c>RevenuePosted</c> false - unrecoverable, because manual completion refuses a flight
+    /// that is no longer in progress. A player tidying their route list lost an hour's flying.
     /// </para>
     /// <para>
-    /// It is also unrecoverable through the UI: <c>CompleteManualAsync</c> only accepts a flight
-    /// that is InProgress or Interrupted, and this one is Completed. The flight is flown, logged,
-    /// charged nothing and paid nothing.
+    /// Two things close it, and this test exercises the first. Deleting a route with a flight on it
+    /// is now refused outright. Behind that, finalisation will no longer mark a flight Completed
+    /// when the data its pay depends on cannot be resolved - it leaves it in progress, which is
+    /// recoverable, rather than finished and unpayable, which is not.
     /// </para>
-    /// Asserts current behaviour so the suite stays honest and green. Invert, do not delete.
     /// </summary>
     [Fact]
-    public async Task DEFECT_RouteDeletedWhileTheFlightIsAirborne_CompletesTheSectorButPaysNothing()
+    public async Task RouteDeletionIsRefusedWhileAFlightIsOnIt_AndTheSectorStillPays()
     {
         var recorded = LoadRecordedFlight();
 
@@ -256,10 +255,11 @@ public class RealFlightIsPaidEndToEndTests
             }
         }
 
-        // ...then the player deletes the route they are in the middle of flying. This is the real
-        // endpoint, with the real (absent) guard.
+        // ...then the player tries to delete the route they are in the middle of flying. The real
+        // endpoint, with the real guard: refused, and the route survives.
         var deleteResult = await RouteEndpoints.DeleteAsync(route.Id, ctx.Db, ctx.CurrentUser, CancellationToken.None);
-        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(deleteResult));
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(deleteResult));
+        Assert.True(await ctx.Db.Routes.AnyAsync(r => r.Id == route.Id));
 
         // ...and then parks and shuts down, which finalises the flight.
         foreach (var sample in samples.Skip(recorded.Count))
@@ -278,22 +278,12 @@ public class RealFlightIsPaidEndToEndTests
         Assert.False(flight.PositionJumpDetected);
         Assert.False(flight.SlewDetected);
 
-        // And yet: nothing was paid, and nothing was charged either.
+        // And it is paid, which is the whole point: an hour of flying survives an attempt to tidy
+        // the route list underneath it.
         var ledger = await ctx.Db.LedgerTransactions.Where(t => t.AirlineId == ctx.Airline.Id).ToListAsync();
-        Assert.DoesNotContain(ledger, t => t.Category == LedgerCategory.TicketRevenue);
-        Assert.Equal(0m, flight.Revenue);
-        Assert.False(flight.RevenuePosted);
-
-        // Unrecoverable: the manual-completion escape hatch refuses a Completed flight.
-        // Deliberately through a FRESH DbContext on the same database, because that is what a real
-        // HTTP request scope gets. Reusing ctx.Db would hand CompleteManualAsync the stale Flight
-        // entity it has tracked since StartAsync - still reading InProgress, since finalisation
-        // wrote through a different scope - and the call would wrongly appear to succeed.
-        using var requestScopedDb = new FsOpsDbContext(
-            new DbContextOptionsBuilder<FsOpsDbContext>().UseSqlite(ctx.Connection).Options);
-        var manualResult = await FlightEndpoints.CompleteManualAsync(
-            flightId, requestScopedDb, ctx.CurrentUser, lifecycle, EconomyConfigCatalog.Default(), CancellationToken.None);
-        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(manualResult));
+        Assert.Contains(ledger, t => t.Category == LedgerCategory.TicketRevenue && t.Amount > 0m);
+        Assert.True(flight.Revenue > 0m);
+        Assert.True(flight.RevenuePosted);
     }
 
     private sealed record CompletionSummary(

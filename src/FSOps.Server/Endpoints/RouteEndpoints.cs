@@ -733,6 +733,45 @@ public static class RouteEndpoints
         var reverse = await db.Routes.FirstOrDefaultAsync(
             r => r.AirlineId == airline.Id && r.DepartureIcao == route.ArrivalIcao && r.ArrivalIcao == route.DepartureIcao, ct);
 
+        // Routes are deleted as a pair, so a flight on EITHER leg is a flight on what is about to
+        // disappear. Refusing is not tidiness: a route deleted while its flight is airborne used to
+        // leave a cleanly flown sector completed with no pay and no way to recover it, because
+        // finalisation resolves the route to price the sector and finds nothing. Completion now
+        // declines to finish such a flight at all, but the player should never reach that either -
+        // losing an hour's flying to tidying a list is not a trade anybody would knowingly make.
+        var affectedRouteIds = reverse is not null ? new[] { route.Id, reverse.Id } : new[] { route.Id };
+        var flightInProgress = await db.Flights
+            .Where(f => affectedRouteIds.Contains(f.RouteId) && f.Status == FlightStatus.InProgress)
+            .Select(f => new { f.RouteId })
+            .FirstOrDefaultAsync(ct);
+
+        if (flightInProgress is not null)
+        {
+            var leg = flightInProgress.RouteId == route.Id
+                ? $"{route.DepartureIcao} → {route.ArrivalIcao}"
+                : $"{route.ArrivalIcao} → {route.DepartureIcao}";
+            return Results.BadRequest(new
+            {
+                message = $"There is a flight in progress on {leg}. Finish or abandon it before deleting this route - deleting it now would leave that sector unable to be paid.",
+            });
+        }
+
+        // A scheduled leg on the pair is a different matter: it is not in the air, but deleting the
+        // route it depends on strands whatever aircraft was going to fly it, which is the same
+        // stranding the schedule builder already refuses to create by hand.
+        var scheduledLeg = await db.PilotScheduleEntries
+            .Where(e => affectedRouteIds.Contains(e.RouteId))
+            .Select(e => new { e.RouteId })
+            .FirstOrDefaultAsync(ct);
+
+        if (scheduledLeg is not null)
+        {
+            return Results.BadRequest(new
+            {
+                message = $"{route.DepartureIcao} ↔ {route.ArrivalIcao} is still on a pilot's schedule. Remove those legs first, or the aircraft flying them would be left with nowhere to go.",
+            });
+        }
+
         var now = DateTimeOffset.UtcNow;
         route.DeletedUtc = now;
         if (reverse is not null)

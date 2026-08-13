@@ -693,6 +693,31 @@ public sealed class FlightLifecycleService : IHostedService
                 : null;
         }
 
+        // Nothing may mark a sector finished and unpayable in the same breath. The economics block
+        // below needs the route (and the airline) and quietly skips if it cannot resolve them - which
+        // was survivable while Completed was set afterwards, and became a silent loss once it was set
+        // here first: a route deleted mid-flight left a cleanly flown sector Completed with no
+        // revenue, no fees, RevenuePosted still false, and manual completion refusing it for no
+        // longer being InProgress. There was no way back through the UI.
+        //
+        // So the flight stays InProgress when the data its pay depends on is missing. That is
+        // recoverable - the route is only soft-deleted, and completing manually pays it once it can
+        // be resolved again - where Completed-and-unpaid is not. Deleting a route with a flight on it
+        // is now refused outright (see RouteEndpoints.DeleteAsync), so this is the second line rather
+        // than the first, and it covers the whole class: the airline, the aircraft type and the
+        // arrival airport can all fail to resolve the same way.
+        var routeForPay = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId);
+        var airlineForPay = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId);
+        if (routeForPay is null || airlineForPay is null)
+        {
+            _logger.LogError(
+                "Flight {FlightId} finished but its {Missing} could not be resolved, so it cannot be paid. Leaving it in progress rather than completing it unpaid - it can be completed manually once the missing record is restored.",
+                flight.Id,
+                routeForPay is null ? "route" : "airline");
+            await db.SaveChangesAsync();
+            return;
+        }
+
         flight.Status = FlightStatus.Completed;
 
         var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == tracker.FleetAircraftId);
