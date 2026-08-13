@@ -164,7 +164,7 @@ describe('clearDay / addLegToDay / removeLegFromDay / updateLegTime', () => {
 
 describe('draftLegFromOption', () => {
   it('pads an "HH:mm" time to "HH:mm:ss"', () => {
-    const option: LegalLegOption = { routeId: 'route-1', departureIcao: 'EGLL', arrivalIcao: 'LFPG', flightNumber: 'FS100', blockMinutes: 90 }
+    const option: LegalLegOption = { routeId: 'route-1', departureIcao: 'EGLL', arrivalIcao: 'LFPG', flightNumber: 'FS100', blockMinutes: 90, warnings: [] }
     const result = draftLegFromOption(option, '08:15', 90)
     expect(result.departureTimeUtc).toBe('08:15:00')
     expect(result.isNew).toBe(true)
@@ -172,13 +172,13 @@ describe('draftLegFromOption', () => {
   })
 
   it('leaves an already-full "HH:mm:ss" time untouched', () => {
-    const option: LegalLegOption = { routeId: 'route-1', departureIcao: 'EGLL', arrivalIcao: 'LFPG', flightNumber: 'FS100', blockMinutes: 90 }
+    const option: LegalLegOption = { routeId: 'route-1', departureIcao: 'EGLL', arrivalIcao: 'LFPG', flightNumber: 'FS100', blockMinutes: 90, warnings: [] }
     const result = draftLegFromOption(option, '08:15:30', 90)
     expect(result.departureTimeUtc).toBe('08:15:30')
   })
 
   it('generates a unique id on every call', () => {
-    const option: LegalLegOption = { routeId: 'route-1', departureIcao: 'EGLL', arrivalIcao: 'LFPG', flightNumber: 'FS100', blockMinutes: 90 }
+    const option: LegalLegOption = { routeId: 'route-1', departureIcao: 'EGLL', arrivalIcao: 'LFPG', flightNumber: 'FS100', blockMinutes: 90, warnings: [] }
     const a = draftLegFromOption(option, '08:15', 90)
     const b = draftLegFromOption(option, '08:15', 90)
     expect(a.id).not.toBe(b.id)

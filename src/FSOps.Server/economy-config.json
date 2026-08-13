@@ -361,12 +361,15 @@
   // Pilot rest/duty and minimum turnaround for the weekly schedule builder.
   // Shared across playstyles: a duty day and a legal rest period are
   // working-time facts, not something that should differ by how realistically the player wants to
-  // be billed. 10h rest / 13h max duty are ordinary short-haul crewing figures; 45 minutes covers a
-  // realistic minimum turnaround (deplane, clean, board).
+  // be billed. 10h rest / 13h max duty are ordinary short-haul crewing figures. minTurnaroundMinutes
+  // corrected 2026-08-12 from 45 to 30: 45 is a full-service average, not the fastest a turnaround
+  // can plausibly go - a low-cost narrowbody figure (which is what this floor represents) turns in
+  // 25-30 minutes. The floor is the fastest legally allowed, not the realistic default; the player
+  // still chooses their own turnaround time per leg, this only bounds how tight they may cut it.
   "scheduling": {
     "minRestHoursBetweenDutyDays": 10,
     "maxDutyHoursPerDay": 13,
-    "minTurnaroundMinutes": 45
+    "minTurnaroundMinutes": 30
   },
   // The modest VATSIM online-flying bonus (G12) - a small revenue uplift plus a small reputation
   // nudge for a sector FSOps itself corroborated as genuinely flown online (see

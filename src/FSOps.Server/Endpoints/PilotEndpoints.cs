@@ -427,6 +427,26 @@ public static class PilotEndpoints
     /// running the full validator, which both matches "say it once, quietly" and avoids reporting a
     /// wall of near-identical per-route reasons for a setting the player already chose.
     /// </para>
+    /// <para>
+    /// <b>A conflict with what comes BEFORE this slot disqualifies a candidate; a conflict that only
+    /// exists against a LATER already-drafted entry does not</b> (real-use defect, 2026-08-12: a
+    /// pilot flying an out-and-back round trip five identical days a week could never add a further
+    /// leg at all, because inserting either half of a new round trip on its own always looked like it
+    /// stranded the aircraft away from the very next already-drafted day - the incremental picker was
+    /// enforcing an END-STATE invariant, closure included, at every intermediate step, so neither half
+    /// of a paired leg could ever be legal before the other existed). Nothing the player does later
+    /// can make "the aircraft isn't there yet" or "this route is out of range" untrue, so those stay
+    /// hard refusals. A LATER conflict is different: it is a consequence of picking this leg that the
+    /// player is about to take on, not a reason they can't - it is resolvable with the very next leg
+    /// they add (a return leg, or an edit to what already follows), so it is surfaced as a
+    /// <c>warnings</c> entry on an otherwise-legal, still-selectable option rather than hidden behind
+    /// "not available". See <see cref="GetLegOptionsAsync"/>'s body for exactly how "before" and
+    /// "after" are told apart - by re-running the same validator against two different slices of the
+    /// same entries, never by relaxing what it checks. Nothing here changes what
+    /// <see cref="SaveScheduleAsync"/> requires: <c>requireWeekClosure: true</c> there still refuses
+    /// an unclosed week outright, so a warning shown here is a promise the player still has to keep
+    /// before the week can actually be saved, never a permission slip.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> GetLegOptionsAsync(
         Guid id, LegOptionsRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
@@ -511,6 +531,32 @@ public static class PilotEndpoints
             .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
             .Conflicts.ToHashSet();
 
+        // The "before" slice: only what's already committed strictly earlier than this slot (any
+        // pilot, any aircraft - reservation/range/runway are structural per-entry checks that fire
+        // regardless, and continuity/rest are pairwise, so nothing chronologically LATER than the
+        // candidate can ever appear as its "next" entry once it's excluded here). Validating against
+        // this slice, and only this slice, is what tells a genuine, permanent disqualifier (the
+        // aircraft isn't there yet, no rest since the last already-drafted duty day, ...) apart from
+        // a conflict that only exists because of something drafted AFTER this slot - see this
+        // method's own remarks above for why that distinction is the whole fix.
+        var slotMinute = AbsoluteWeekMinuteFor(dayOfWeek, departureTime);
+        var beforeBaseline = baseline.Where(e => AbsoluteWeekMinuteFor(e.DayOfWeek, e.DepartureTimeUtc) < slotMinute).ToList();
+        var beforeBaselineConflicts = PilotScheduleValidator
+            .Validate(beforeBaseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
+            .Conflicts.ToHashSet();
+
+        // Display-only - never used to decide legality (see this method's own remarks: every route
+        // is still tested, exactly as before). The arrival ICAO of whichever of THIS aircraft's own
+        // entries in beforeBaseline departs latest, or its recorded LocationIcao if nothing precedes
+        // the slot yet - the same anchor PilotScheduleValidator's own chain check uses for a week's
+        // real first leg. Lets the picker lead with "G-TXFE is at EGGD" instead of making the player
+        // infer it from which options happen to be legal.
+        var aircraftPosition = beforeBaseline
+            .Where(e => e.FleetAircraftId == fleetAircraftId)
+            .OrderByDescending(e => AbsoluteWeekMinuteFor(e.DayOfWeek, e.DepartureTimeUtc))
+            .Select(e => routesById.TryGetValue(e.RouteId, out var r) ? r.ArrivalIcao : null)
+            .FirstOrDefault() ?? fleetAircraft.LocationIcao;
+
         var legal = new List<object>();
         var illegal = new List<object>();
 
@@ -518,31 +564,47 @@ public static class PilotEndpoints
         {
             var route = routesById[candidate.RouteId];
 
+            var beforeWithCandidate = beforeBaseline.Append(candidate).ToList();
+            var beforeResult = PilotScheduleValidator.Validate(
+                beforeWithCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+            var disqualifying = beforeResult.Conflicts.Where(c => !beforeBaselineConflicts.Contains(c)).ToList();
+
+            if (disqualifying.Count > 0)
+            {
+                illegal.Add(new { routeId = candidate.RouteId, reason = disqualifying[0] });
+                continue;
+            }
+
+            // Nothing before the slot rules this out - now check the FULL week (everything already
+            // drafted, including entries later than this slot) to see what picking it takes on. Any
+            // NEW conflict here is, by construction, only reachable through a later entry (a "before"
+            // conflict would already have shown up above) - a consequence to warn about, never a
+            // reason to refuse the option.
             var withCandidate = baseline.Append(candidate).ToList();
             var candidateResult = PilotScheduleValidator.Validate(
                 withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
-            var newConflicts = candidateResult.Conflicts.Where(c => !baselineConflicts.Contains(c)).ToList();
+            var warnings = candidateResult.Conflicts.Where(c => !baselineConflicts.Contains(c)).ToList();
 
-            if (newConflicts.Count == 0)
-            {
-                // K34: this MUST be the block time for the aircraft actually chosen for this duty
-                // day (blockMinutesByLeg is keyed by (RouteId, FleetAircraftId) - see
-                // BuildValidationDataAsync), never a route-level default computed against whatever
-                // aircraft type happens to be first in the fleet. The draft grid used to fall back
-                // to exactly that route-only default because this DTO carried no block time at all,
-                // which is why an ATR duty day could show an A320's faster block time right up until
-                // save recomputed it against the real airframe and the number visibly jumped.
-                var blockMinutes = blockMinutesByLeg.TryGetValue((candidate.RouteId, fleetAircraftId), out var minutes) ? (int?)minutes : null;
-                legal.Add(new { routeId = candidate.RouteId, route.DepartureIcao, route.ArrivalIcao, route.FlightNumber, blockMinutes });
-            }
-            else
-            {
-                illegal.Add(new { routeId = candidate.RouteId, reason = newConflicts[0] });
-            }
+            // K34: this MUST be the block time for the aircraft actually chosen for this duty
+            // day (blockMinutesByLeg is keyed by (RouteId, FleetAircraftId) - see
+            // BuildValidationDataAsync), never a route-level default computed against whatever
+            // aircraft type happens to be first in the fleet. The draft grid used to fall back
+            // to exactly that route-only default because this DTO carried no block time at all,
+            // which is why an ATR duty day could show an A320's faster block time right up until
+            // save recomputed it against the real airframe and the number visibly jumped.
+            var blockMinutes = blockMinutesByLeg.TryGetValue((candidate.RouteId, fleetAircraftId), out var minutes) ? (int?)minutes : null;
+            legal.Add(new { routeId = candidate.RouteId, route.DepartureIcao, route.ArrivalIcao, route.FlightNumber, blockMinutes, warnings });
         }
 
-        return Results.Ok(new { legal, illegal });
+        return Results.Ok(new { legal, illegal, aircraftPosition });
     }
+
+    /// <summary>Same absolute-minute-of-week convention as <see cref="PilotScheduleValidator.WeekMinutes"/>
+    /// (Sunday 00:00 = 0), exposed as its own small helper here rather than reaching into the
+    /// validator's private one - <see cref="GetLegOptionsAsync"/> is answering "is this entry before
+    /// or after that slot", a simpler question than the validator's own chain logic, not a second
+    /// implementation of it.</summary>
+    private static int AbsoluteWeekMinuteFor(DayOfWeek dayOfWeek, TimeSpan timeOfDay) => (int)dayOfWeek * 1440 + (int)timeOfDay.TotalMinutes;
 
     /// <summary>
     /// Read-only, airline-wide: every aircraft as a row, its legs across the week, colour-coded by

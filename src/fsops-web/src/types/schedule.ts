@@ -136,18 +136,29 @@ export interface LegOptionsRequest {
  *  against THIS specific aircraft (see PilotEndpoints.GetLegOptionsAsync) - the same figure a save
  *  will resolve to, never a route-level default from a different aircraft type. Null only if the
  *  backend's own lookup came up empty (e.g. world data gap) - callers should fall back the same way
- *  a saved leg's `ScheduleLeg.blockMinutes` does. */
+ *  a saved leg's `ScheduleLeg.blockMinutes` does.
+ *
+ *  `warnings` - real-use defect fix, 2026-08-12: this leg is genuinely selectable (nothing already
+ *  committed BEFORE this slot rules it out), but picking it creates a consequence against something
+ *  already drafted LATER in the week - e.g. the aircraft won't be back in position for a day that's
+ *  already been built. That's not a reason to refuse it (the player can resolve it with their very
+ *  next leg), so it stays legal - the warning is shown, never hidden, and never blocks the pick.
+ *  Empty for the common case where the leg has no such consequence. Backend text, render verbatim
+ *  (same convention as `IllegalLegOption.reason`). */
 export interface LegalLegOption {
   routeId: string
   departureIcao: string
   arrivalIcao: string
   flightNumber: string | null
   blockMinutes: number | null
+  warnings: string[]
 }
 
 /** A route considered and rejected for the queried day/time/aircraft, with the backend's reason -
  *  always shown, never silently dropped. Already worded and ordered by the backend (a hard
- *  physical blocker outranks reservation) - render verbatim, never re-derive or re-order. */
+ *  physical blocker outranks reservation) - render verbatim, never re-derive or re-order. Unlike
+ *  `LegalLegOption.warnings`, this is a genuine, permanent disqualifier for this slot (a conflict
+ *  with something already committed BEFORE it) - nothing the player does with a later leg changes it. */
 export interface IllegalLegOption {
   routeId: string
   reason: string
@@ -156,6 +167,14 @@ export interface IllegalLegOption {
 export interface LegOptionsResponse {
   legal: LegalLegOption[]
   illegal: IllegalLegOption[]
+  /** Where the aircraft actually is once this slot comes around, resolved from whatever's already
+   *  committed before it (or its recorded location, if nothing precedes it this week yet) -
+   *  informational only, never used to filter which routes are tested (see the backend's own
+   *  remarks on PilotEndpoints.GetLegOptionsAsync: a route that doesn't depart from here still gets
+   *  tested and, if illegal, still shown with its own reason - this is just for leading copy like
+   *  "G-TXFE is at EGGD"). Absent when the aircraft is grounded or reserved (those responses explain
+   *  themselves without needing a position). */
+  aircraftPosition?: string
 }
 
 /** One leg as it appears in GET /pilots/schedule/overview - carries pilot identity so the

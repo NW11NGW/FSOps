@@ -159,7 +159,9 @@ Because some people do want a genuinely clean removal, the uninstaller asks — 
 
 If you'd rather not be asked at all, or you want to be certain, copy `fsops.db` somewhere else first.
 
-Removing FSOps does not remove the in-game panel from your MSFS Community folder. Uninstall the panel from FSOps' Settings **before** you uninstall the app, or delete the `fsops-panel` folder from your Community folder yourself afterwards.
+**The in-game panel is removed automatically, with no prompt.** Unlike your airline, the panel in your MSFS Community folder isn't your data — it's a folder of files FSOps copied and generated there itself, and it can be put back at any time with a single click in Settings. So the uninstaller removes it as a normal, silent part of uninstalling, the same way it removes the program folder. There's nothing to confirm and nothing to opt into.
+
+This works by reading the Community folder you last set in Settings out of your own database *before* anything is deleted, so it needs that database to still be there — if you deleted `%LOCALAPPDATA%\FSOps` yourself before uninstalling, or never installed the panel in the first place, there's nothing for it to find, which is the same as nothing to remove. The uninstaller also refuses to touch anything that doesn't look like an FSOps install (so a folder you happened to name `fsops-panel` yourself is never at risk), and never fails the uninstall itself if the panel can't be removed — for example because MSFS is still running and has it open. If that happens, delete the `fsops-panel` folder from your Community folder yourself afterwards; nothing else depends on it being gone. See [the panel wasn't removed when I uninstalled FSOps](troubleshooting.md#the-panel-wasnt-removed-when-i-uninstalled-fsops) if you want to check what happened.
 
 ## If something goes wrong
 

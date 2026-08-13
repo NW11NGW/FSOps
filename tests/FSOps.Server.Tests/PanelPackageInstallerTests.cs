@@ -326,6 +326,45 @@ public sealed class PanelPackageInstallerTests : IDisposable
         Assert.False(result.Installed);
     }
 
+    /// <summary>
+    /// The uninstall-must-never-fail requirement (see the uninstall-cleanup feature's design notes):
+    /// MSFS holding a file inside the installed package open must produce a refusal the caller can
+    /// show the player, never an unhandled exception that could take down whatever called this - the
+    /// installer's own uninstall command included.
+    /// </summary>
+    [Fact]
+    public void Uninstall_WhenAFileInsideThePackageIsLocked_ReturnsARefusalRatherThanThrowing()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        var lockedFile = Path.Combine(_communityFolder, "fsops-panel", "manifest.json");
+
+        using var lockingHandle = new FileStream(lockedFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var result = PanelPackageInstaller.Uninstall(_communityFolder);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.Reason);
+        Assert.True(Directory.Exists(Path.Combine(_communityFolder, "fsops-panel")));
+    }
+
+    /// <summary>
+    /// Distinct from Uninstall_WhenNothingWasInstalled above: here the Community folder ITSELF - not
+    /// just the fsops-panel sub-folder inside it - is gone, exactly as if the player moved drives,
+    /// reinstalled MSFS somewhere else, or deleted the whole folder. Uninstall must treat this the
+    /// same honest way GetStatus already does elsewhere: nothing to do, not an error.
+    /// </summary>
+    [Fact]
+    public void Uninstall_WhenTheCommunityFolderItselfHasBeenDeleted_SucceedsAsANoOpRatherThanThrowing()
+    {
+        PanelPackageInstaller.InstallOrRepair(_communityFolder, _templateDirectory, "5977");
+        Directory.Delete(_communityFolder, recursive: true);
+
+        var result = PanelPackageInstaller.Uninstall(_communityFolder);
+
+        Assert.True(result.Success);
+        Assert.False(result.Installed);
+    }
+
     // -----------------------------------------------------------------------------------
     // Refusing to delete what FSOps did not create. The Community folder is a path the player
     // typed and "fsops-panel" is a name anyone could have used - a recursive delete of someone

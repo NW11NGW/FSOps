@@ -841,14 +841,15 @@ public sealed class EconomyConfig
             Depreciation = new AircraftDepreciationConfig(),
             // Casual figures - shared across playstyles (see the Scheduling property's own doc).
             // 10h rest / 13h max duty are ordinary short-haul crewing figures, comfortably inside
-            // the 24h/day ceiling Validate() enforces; 45 minutes covers a realistic minimum
-            // turnaround (deplane, clean, board) without being so tight that a modest schedule
-            // trips it constantly.
+            // the 24h/day ceiling Validate() enforces. MinTurnaroundMinutes corrected 2026-08-12 from
+            // 45 to 30 - see economy-config.json's "scheduling" comment for why: 45 was a full-service
+            // average sitting in a floor that should represent a low-cost narrowbody's fastest
+            // plausible turn (25-30 minutes), not a realistic default.
             Scheduling = new SchedulingConfig
             {
                 MinRestHoursBetweenDutyDays = 10,
                 MaxDutyHoursPerDay = 13,
-                MinTurnaroundMinutes = 45,
+                MinTurnaroundMinutes = 30,
             },
             // Casual: 0 (skipped quietly, no penalty). True-life's own figure (positive - cancelled
             // with a real cost) is applied separately in EconomyConfigCatalog.Default()'s Resolve()
@@ -1295,8 +1296,11 @@ public sealed class SchedulingConfig
     /// its next leg's departure - drawn as its own gap in the calendar UI, so a day that cannot
     /// physically fit is visibly over-stuffed rather than silently failing, and enforced here so
     /// the builder can't be saved with
-    /// a day that only looks fine at a glance.</summary>
-    public double MinTurnaroundMinutes { get; init; } = 45;
+    /// a day that only looks fine at a glance. 30 minutes (corrected 2026-08-12 from 45) is the
+    /// fastest a low-cost narrowbody turn plausibly goes (25-30 minutes) - a floor on how tight the
+    /// player may cut it, not a suggestion of how tight to cut it; 45 was a full-service average
+    /// sitting in a slot that wanted the fast-turn figure instead.</summary>
+    public double MinTurnaroundMinutes { get; init; } = 30;
 }
 
 /// <summary>

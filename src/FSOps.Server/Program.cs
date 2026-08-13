@@ -14,6 +14,17 @@ using FSOps.Sim.Fake;
 using FSOps.Sim.SimConnect;
 using Serilog;
 
+// Uninstall hook: "FSOps.Server.exe --uninstall-panel" is invoked from installer/FSOps.iss's
+// [UninstallRun] entry, before Inno removes any files and before the data-directory prompt (see
+// PanelUninstallCommand's own doc for the ordering this relies on). Short-circuits before any of
+// the normal startup work below - Kestrel, world-data import, hosted services - none of which has
+// any business running during an uninstall. Always returns 0: a failed panel removal must never
+// fail the uninstall itself.
+if (args.Length > 0 && string.Equals(args[0], PanelUninstallCommand.Argument, StringComparison.OrdinalIgnoreCase))
+{
+    return PanelUninstallCommand.Run();
+}
+
 // Pin the content root to the folder the assembly actually lives in, rather than letting it
 // default to the process working directory. The SPA is served from <contentRoot>/wwwroot, so a
 // launch whose working directory is anywhere else - a shortcut with a "Start in" folder, a
