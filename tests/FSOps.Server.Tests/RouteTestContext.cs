@@ -27,20 +27,33 @@ internal sealed class RouteTestContext : IDisposable
     /// one against the same live connection instead of getting a separate, empty database.</summary>
     public SqliteConnection Connection => _connection;
 
+    /// <summary>The same database as <see cref="Connection"/>, addressable by name so a caller can
+    /// open its OWN connection to it rather than sharing this one. Hand this to DI instead of the
+    /// connection object whenever the code under test resolves scopes of its own: sharing a single
+    /// connection across scopes means a scope initialising EF while another holds an open reader
+    /// fails with "unable to delete/modify user-function due to active statements", which surfaces
+    /// as a test that passes alone and fails under load. Production gives every scope its own
+    /// connection, so this is also the more faithful arrangement.</summary>
+    public string ConnectionString { get; }
+
     private readonly SqliteConnection _connection;
 
-    private RouteTestContext(SqliteConnection connection, FsOpsDbContext db)
+    private RouteTestContext(SqliteConnection connection, string connectionString, FsOpsDbContext db)
     {
         _connection = connection;
+        ConnectionString = connectionString;
         Db = db;
     }
 
     public static async Task<RouteTestContext> CreateAsync()
     {
-        // Keeping the connection open for the lifetime of the context is what keeps a
-        // ":memory:" SQLite database alive across calls - EF Core never closes a connection it
-        // didn't open itself.
-        var connection = new SqliteConnection("Filename=:memory:");
+        // A NAMED shared-cache in-memory database rather than a bare ":memory:" one, which is
+        // private to the single connection that opened it and therefore impossible to reach from a
+        // second connection. The name is unique per context so tests stay isolated from each other.
+        // Keeping this connection open for the lifetime of the context is still what keeps the
+        // database alive - it is discarded the moment the last connection to it closes.
+        var connectionString = $"Data Source=file:{Guid.NewGuid():N}?Mode=Memory;Cache=Shared";
+        var connection = new SqliteConnection(connectionString);
         connection.Open();
 
         var options = new DbContextOptionsBuilder<FsOpsDbContext>()
@@ -50,7 +63,7 @@ internal sealed class RouteTestContext : IDisposable
         var db = new FsOpsDbContext(options);
         await db.Database.MigrateAsync();
 
-        var context = new RouteTestContext(connection, db);
+        var context = new RouteTestContext(connection, connectionString, db);
         await context.SeedAsync();
         return context;
     }

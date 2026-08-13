@@ -1,4 +1,4 @@
-using FSOps.Core.Flights;
+﻿using FSOps.Core.Flights;
 using FSOps.Core.Planning;
 
 namespace FSOps.Core.Tests.Flights;
@@ -796,7 +796,7 @@ public class SectorPaymentAdversarialTests
     /// Under <see cref="FlightIntegrityMonitor.DepartureCorrectionRadiusNm"/> the reported position
     /// is still "at the departure airport", so the latch's distance disjunct never fires and the
     /// correction is excused. Beyond it, see
-    /// <see cref="DEFECT_GoodOpeningFixThenASustainedGlitchBeyondTheDepartureRadius_VoidsACleanSector"/>.
+    /// <see cref="GoodOpeningFixThenASustainedGlitchBeyondTheDepartureRadius_IsStillPaid"/>.
     /// </param>
     /// <param name="glitchSeconds">
     /// Under <see cref="FlightIntegrityMonitor.CorroborationDwell"/> the glitch never corroborates
@@ -830,35 +830,33 @@ public class SectorPaymentAdversarialTests
     }
 
     /// <summary>
-    /// DEFECT, CHARACTERISED - reported, not fixed here. The mirror of the case the exemption was
-    /// built for, and the one the "never reset" origin invites.
+    /// CLOSED - this was a defect and is now the guarantee. Kept inverted rather than deleted,
+    /// because the shape is the one most likely to come back.
     /// <para>
-    /// Displacement from <c>_firstObservedPosition</c> is evidence that the READING moved, not that
-    /// the AIRCRAFT did. When the origin is the bad fix - the original bug - the two coincide and the
-    /// guard works, because a bad reading has no displacement of its own. Reverse the order and it
-    /// stops working: a good opening fix becomes the origin, a later glitch reports the aircraft
-    /// forty miles away, and that reading really is displaced from the origin even though the
-    /// aircraft has not moved an inch. The latch spends, the exemption goes with it, and the
-    /// correction back to the stand is judged as a teleport.
+    /// It was the mirror of the case the departure exemption was built for. Displacement from the
+    /// first observed position is evidence that the READING moved, not that the AIRCRAFT did. With
+    /// the bad fix first - the original incident - the two coincide and the guard holds, since a bad
+    /// reading has no displacement of its own. Reverse the order and it stopped holding: a good
+    /// opening fix became the origin, a later glitch reported forty miles away, and that reading
+    /// genuinely was displaced from the origin though the aircraft had not moved.
     /// </para>
     /// <para>
-    /// The reading arrives at the glitch position by an IMPLAUSIBLE transition, so the monitor
-    /// already knows the aircraft did not fly there - but the latch is evaluated on the plausible
-    /// transitions of the HOLD that follows, by which point that knowledge has been dropped.
+    /// Two changes closed it. The origin now follows continuity, so an implausible transition moves
+    /// it rather than leaving it fixed for the whole session; and a confirmed jump is withdrawn when
+    /// the aircraft turns out to be back where the jump began, so a correction arriving after the
+    /// dwell has elapsed still counts.
     /// </para>
     /// <para>
-    /// Narrower than the two defects before it, and the passing rows above are the bound: the glitch
-    /// must sit beyond <see cref="FlightIntegrityMonitor.DepartureCorrectionRadiusNm"/> AND hold for
-    /// a full <see cref="FlightIntegrityMonitor.CorroborationDwell"/>. A brief glitch of any size is
-    /// harmless, and a sustained one inside the departure radius is harmless.
+    /// The bounds are kept as assertions rather than comments: the glitch sits beyond
+    /// <see cref="FlightIntegrityMonitor.DepartureCorrectionRadiusNm"/> and outlasts a full
+    /// <see cref="FlightIntegrityMonitor.CorroborationDwell"/>, which is what made it hard.
     /// </para>
-    /// Asserts current behaviour to keep the suite honest and green. Invert, do not delete.
     /// </summary>
     [Theory]
     [InlineData(40.0, 90)]
     [InlineData(95.0, 90)]
     [InlineData(40.0, 300)]
-    public void DEFECT_GoodOpeningFixThenASustainedGlitchBeyondTheDepartureRadius_VoidsACleanSector(
+    public void GoodOpeningFixThenASustainedGlitchBeyondTheDepartureRadius_IsStillPaid(
         double glitchOffsetNm, int glitchSeconds)
     {
         var rig = new Rig((BristolLat, BristolLon));
@@ -869,17 +867,24 @@ public class SectorPaymentAdversarialTests
 
         Assert.True(glitchOffsetNm > FlightIntegrityMonitor.DepartureCorrectionRadiusNm);
         Assert.True(glitchSeconds > FlightIntegrityMonitor.CorroborationDwell.TotalSeconds);
-        Assert.True(rig.Monitor.PositionJumpDetected);
-        Assert.False(rig.SectorWouldBePaid);
+        Assert.False(rig.Monitor.PositionJumpDetected);
+        Assert.True(
+            rig.SectorWouldBePaid,
+            $"a clean sector was voided by a {glitchOffsetNm} nm glitch held {glitchSeconds}s after the aircraft had settled");
     }
 
-    /// <summary>The same defect reached two other ways, kept because each is a route a real session
-    /// could take and because they show the cause is the spent latch rather than anything about the
-    /// first glitch specifically: repeated glitch/correct cycles before departure, and a reconnect
-    /// while still on the stand followed by one. Both would go green with the one-line origin fix.
-    /// Invert, do not delete.</summary>
+    /// <summary>The same shape reached two other ways, kept because each is a route a real session
+    /// could take: repeated glitch/correct cycles before departure, and a reconnect while still on
+    /// the stand followed by one.
+    /// <para>
+    /// The repeated-cycles case is the one worth keeping longest. It used to be unsurvivable for a
+    /// reason that is easy to miss - surviving the first glitch is what put the session over the
+    /// line for the second, because each correction is itself a hold long enough to rebuild the
+    /// dwell. A session that glitched twice could not stay on the safe side however well the first
+    /// one was handled.
+    /// </para></summary>
     [Fact]
-    public void DEFECT_RepeatedGlitchAndCorrectionCyclesBeforeDeparture_VoidsACleanSector()
+    public void RepeatedGlitchAndCorrectionCyclesBeforeDeparture_AreStillPaid()
     {
         var rig = new Rig((BristolLat, BristolLon));
         var t = Hold(rig, BristolLat, BristolLon, 0, 30, onGround: true);
@@ -892,11 +897,11 @@ public class SectorPaymentAdversarialTests
 
         Fly(rig, BristolLat, BristolLon, t, 1800);
 
-        Assert.False(rig.SectorWouldBePaid);
+        Assert.True(rig.SectorWouldBePaid, "a sector was voided by glitching more than once before departure");
     }
 
     [Fact]
-    public void DEFECT_SimReconnectOnTheStandThenAGlitchAndCorrection_VoidsACleanSector()
+    public void SimReconnectOnTheStandThenAGlitchAndCorrection_IsStillPaid()
     {
         var rig = new Rig((BristolLat, BristolLon));
         var t = Hold(rig, BristolLat, BristolLon, 0, 60, onGround: true);
@@ -908,7 +913,7 @@ public class SectorPaymentAdversarialTests
         t = Hold(rig, BristolLat, BristolLon, t, 120, onGround: true);
         Fly(rig, BristolLat, BristolLon, t, 1800);
 
-        Assert.False(rig.SectorWouldBePaid);
+        Assert.True(rig.SectorWouldBePaid, "a sector was voided by a glitch after a reconnect on the stand");
     }
 
     /// <summary>

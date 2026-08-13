@@ -470,7 +470,12 @@ public class RealFlightIsPaidEndToEndTests
         RouteTestContext ctx, SimTelemetryService telemetry, CapturingLogger? logger = null)
     {
         var services = new ServiceCollection();
-        services.AddDbContext<FsOpsDbContext>(o => o.UseSqlite(ctx.Connection));
+        // The connection STRING, not the shared connection object: this replays 280 samples and
+        // finalises on a background task, so a scope can be initialising EF while another still
+        // holds an open reader. Sharing one connection makes that fail with "unable to
+        // delete/modify user-function due to active statements" - which passes alone and fails in a
+        // full-solution run, the most misleading shape a test can have.
+        services.AddDbContext<FsOpsDbContext>(o => o.UseSqlite(ctx.ConnectionString));
         var provider = services.BuildServiceProvider();
 
         return new FlightLifecycleService(
