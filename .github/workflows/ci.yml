@@ -18,6 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Blocking, and first, so it fails in seconds rather than after a full build. It refuses a
+      # commit carrying something the repository should not contain - a stray file in the root,
+      # build output, a database, a credential, or a reference to local-only tooling. That last
+      # category is why this blocks rather than warns: the repository is public, and a warning on a
+      # green run is a warning nobody reads.
+      - name: Repository hygiene
+        shell: pwsh
+        run: ./scripts/repo-hygiene.ps1
+
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:

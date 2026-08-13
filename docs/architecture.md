@@ -551,6 +551,16 @@ The original scope was deliberately narrow, not an oversight: the suite exists b
 
 The tests were checked for teeth rather than assumed to have them: three behaviours were deliberately broken — an A/C-check comparison flipped, a disabled pagination button re-enabled, a minus sign dropped from a loss-making sector — and exactly the expected tests failed, with none firing spuriously and none staying silent.
 
+### Repository hygiene
+
+`scripts/repo-hygiene.ps1` runs first in CI and blocks. It asks the question the old by-hand scan never did: **not "is this content dangerous" but "does this file have any business existing".** That gap is not hypothetical — an empty file named `check` sat in the root of this public repository for two days, because every rule was looking for secrets and none was looking for junk.
+
+It covers three things: files that should not exist (stray root files, build output, editor and OS droppings, empty tracked files), content that must never ship (private keys, access keys, connection strings carrying passwords, database files, and any reference to local-only tooling), and anything excluded via `.git/info/exclude` that has been committed anyway.
+
+Two decisions matter more than coverage. **Every rule explains itself when it fires** — what was found, why it matters, what to do — because a check that only says "no" is a check people learn to route around. And **an exception is made by name, in public, with a reason**, via the `$Allowed` table, rather than by loosening a rule for everything. It also **never deletes anything**: a script that removes files from a repository unattended is a worse problem than the one it solves.
+
+It was proved to fire rather than assumed to: planting an empty `check` in the root reproduces the original case and trips three rules at once.
+
 ## Layering diagram
 
 ```
