@@ -1,4 +1,4 @@
-using System.Threading.Channels;
+﻿using System.Threading.Channels;
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Flights;
@@ -173,7 +173,16 @@ public class ReconnectIntegrityPipelineTests
             telemetry,
             new NoOpHubContext(),
             EconomyConfigCatalog.Default(),
-            new VatsimFlightCorroborationService(new OfflineVatsimClient()),
+            // No corroboration service at all, rather than one wired to an offline feed. The
+            // network is not part of what this test is about either way, but a service that EXISTS
+            // makes ProcessSample fire its VATSIM cycle off the hot path, and that fire-and-forget
+            // task opens a DB scope on the shared in-memory connection which StopAsync never awaits.
+            // The test then tears the connection down underneath it and fails, about one run in
+            // twelve, inside SqliteConnection.Close() - with every integrity assertion having
+            // passed. A one-in-twelve red on the reconnect fix's own verification is exactly the
+            // test people learn to re-run, at which point it can no longer warn anyone about a real
+            // regression.
+            vatsimCorroboration: null,
             NullLogger<FlightLifecycleService>.Instance);
     }
 
@@ -219,11 +228,5 @@ public class ReconnectIntegrityPipelineTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    /// <summary>The network is not part of what this test is about - report it unavailable so no
-    /// corroboration check ever runs.</summary>
-    private sealed class OfflineVatsimClient : IVatsimNetworkClient
-    {
-        public Task<VatsimSnapshot> GetSnapshotAsync(CancellationToken ct) =>
-            Task.FromResult(new VatsimSnapshot(false, DateTimeOffset.UtcNow, Array.Empty<VatsimController>(), Array.Empty<VatsimPilot>()));
-    }
 }
+
