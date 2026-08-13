@@ -22,6 +22,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The recorded telemetry of the flight that exposed the first-fix defect, shared with
+         FSOps.Core.Tests rather than duplicated - one copy of the evidence, so the unit-level and
+         pipeline-level regression tests can never drift onto different data. -->
+    <Content Include="..\FSOps.Core.Tests\Flights\Fixtures\*.json"
+             Link="Flights\Fixtures\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\FSOps.Core\FSOps.Core.csproj" />
     <ProjectReference Include="..\..\src\FSOps.Data\FSOps.Data.csproj" />
     <ProjectReference Include="..\..\src\FSOps.Server\FSOps.Server.csproj" />

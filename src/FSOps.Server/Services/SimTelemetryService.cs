@@ -1,3 +1,4 @@
+using FSOps.Core.Flights;
 using FSOps.Server.Hubs;
 using FSOps.Sim;
 using Microsoft.AspNetCore.SignalR;
@@ -23,6 +24,25 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
     private DateTimeOffset _lastBroadcastUtc = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Withholds telemetry until the sim has reported a position that a second fix agrees with -
+    /// see <see cref="PositionAcquisitionGate"/> for why, and for the bad opening fix that made it
+    /// necessary. This is the right place for it because this pump is the ONLY reader of the sim
+    /// source's channel: every position-consuming feature in the app is fed from here, through
+    /// <see cref="SampleReceived"/>, <see cref="LastSample"/>, or the SignalR broadcast. Guarding
+    /// here means no consumer downstream can be handed a position nothing has vouched for, and no
+    /// consumer added later has to remember to guard itself.
+    /// <para>
+    /// Rebuilt on every reconnect (see <see cref="PumpAsync"/>) because a reconnect is exactly when
+    /// a fresh unvouched opening fix arrives.
+    /// </para>
+    /// </summary>
+    private PositionAcquisitionGate _positionGate = new();
+
+    /// <summary>Connection state as of the last sample, so the pump can notice a reconnect and reset
+    /// the gate. Not read for anything else - <see cref="ConnectionState"/> is the live value.</summary>
+    private SimConnectionState _gateConnectionState = SimConnectionState.Disconnected;
 
     /// <summary>
     /// Non-zero once <see cref="DisposeAsync"/> has run. This service is deliberately registered
@@ -134,6 +154,11 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
         {
             await foreach (var sample in _source.Telemetry.ReadAllAsync(ct))
             {
+                if (!AcceptPosition(sample))
+                {
+                    continue;
+                }
+
                 LastSampleUtc = sample.TimestampUtc;
                 LastSample = sample;
                 SampleReceived?.Invoke(this, sample);
@@ -156,6 +181,54 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
         {
             _logger.LogError(ex, "Telemetry pump stopped unexpectedly.");
         }
+    }
+
+    /// <summary>
+    /// The whole-app position gate - see <see cref="_positionGate"/>. Withheld samples are dropped
+    /// outright rather than passed on with a caveat, because a sample nobody can act on is not
+    /// something to make every consumer reason about individually; "no telemetry yet" is a state
+    /// every one of them already handles, since it is what they see before the sim connects at all.
+    /// </summary>
+    private bool AcceptPosition(TelemetrySample sample)
+    {
+        // A reconnect starts a fresh acquisition: the first fix after the link comes back is exactly
+        // as untrustworthy as the first fix after it was established.
+        var connectionState = ConnectionState;
+        if (connectionState != _gateConnectionState)
+        {
+            if (_gateConnectionState == SimConnectionState.Disconnected && _positionGate.Acquired)
+            {
+                _positionGate = new PositionAcquisitionGate();
+                _logger.LogDebug("Sim reconnected; waiting for a corroborated position before resuming telemetry.");
+            }
+
+            _gateConnectionState = connectionState;
+        }
+
+        var wasAcquired = _positionGate.Acquired;
+        if (!_positionGate.Accept(sample.LatitudeDeg, sample.LongitudeDeg, sample.TimestampUtc, sample.SimulationRate))
+        {
+            return false;
+        }
+
+        if (!wasAcquired && _positionGate.WithheldSampleCount > 0)
+        {
+            if (_positionGate.AcquiredByTimeout)
+            {
+                _logger.LogWarning(
+                    "The sim reported {WithheldCount} position(s) that no later reading agreed with over {Seconds}s; " +
+                    "accepting telemetry anyway so tracking is not blocked, but the opening position is not corroborated.",
+                    _positionGate.WithheldSampleCount, PositionAcquisitionGate.AcquisitionTimeout.TotalSeconds);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Held back {WithheldCount} opening telemetry sample(s) until the sim reported a position a second reading agreed with.",
+                    _positionGate.WithheldSampleCount);
+            }
+        }
+
+        return true;
     }
 
     private Task BroadcastAsync(TelemetrySample sample, CancellationToken ct)
