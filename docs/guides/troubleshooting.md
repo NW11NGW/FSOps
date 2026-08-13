@@ -35,6 +35,7 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [The toolbar button isn't there](#the-toolbar-button-isnt-there)
 - [The panel opens but shows nothing](#the-panel-opens-but-shows-nothing)
 - [I moved my Community folder, or reinstalled MSFS](#i-moved-my-community-folder-or-reinstalled-msfs)
+- [The panel wasn't removed when I uninstalled FSOps](#the-panel-wasnt-removed-when-i-uninstalled-fsops)
 - [FSOps never tells me about updates](#fsops-never-tells-me-about-updates)
 - [A downloaded update was rejected, or disappeared](#a-downloaded-update-was-rejected-or-disappeared)
 - [Where a downloaded update goes, and why FSOps won't run it](#where-a-downloaded-update-goes-and-why-fsops-wont-run-it)
@@ -355,6 +356,20 @@ FSOps detects this specific case and shows the panel's status badge as **Needs r
 **Cause:** The panel lives inside your Community folder, so anything that changes or replaces that folder leaves it behind. FSOps checks what's actually on disk each time you open Settings rather than trusting what it installed previously, so the status badge reflects reality even when the change happened entirely outside FSOps.
 
 **Solution:** Open Settings → MSFS panel and set the Community folder to the new location — FSOps lists the folders it can find on this PC, or you can browse for it. When you change the folder and a panel is installed at the old one, FSOps **asks whether to move it**: it can install into the new folder and optionally remove the old copy, or just update the recorded path and leave everything alone. If you'd rather do it in steps, save the new folder first and then use **Install panel** (or **Reinstall / repair** if a stale copy is already there). Restart MSFS afterwards so it rescans. An old `fsops-panel` folder left behind somewhere the sim no longer reads is harmless, but **Remove the panel** will clean it up properly if you point the folder back at it first.
+
+## The panel wasn't removed when I uninstalled FSOps
+
+**Symptom:** After uninstalling FSOps, the `fsops-panel` folder is still sitting in your MSFS Community folder, or MSFS still shows the FSOps toolbar button after uninstalling and restarting the sim.
+
+**Cause:** Uninstalling FSOps removes the in-game panel automatically, with no prompt — see [Uninstalling FSOps](installation.md#uninstalling-fsops). That step runs before FSOps' own program files are deleted, and it needs two things to still be true when it runs: your database at `%LOCALAPPDATA%\FSOps\fsops.db` (to read which Community folder you'd set), and write access to the panel folder itself. A handful of ordinary things can stop it:
+
+- **No Community folder was ever configured**, or you'd deleted `%LOCALAPPDATA%\FSOps` yourself before uninstalling — there's nothing recorded to remove, so nothing happens. This is the same situation as never having installed the panel.
+- **MSFS was still running** and had a file in `fsops-panel` open, so the folder couldn't be deleted — the same reason install and repair can fail while the sim is open (see [The panel opens but shows nothing](#the-panel-opens-but-shows-nothing) for the parallel case).
+- **The Community folder itself had moved, or the folder at that path no longer looks like a Community folder** — FSOps only ever removes a folder it recognises, both by location and by confirming FSOps actually created it, so anything even slightly off refuses rather than guessing.
+
+None of these fail the uninstall itself — FSOps was still removed cleanly either way, this only affects the panel.
+
+**Solution:** Delete the `fsops-panel` folder from your Community folder by hand, then restart MSFS. If you're not sure where that folder is, it's directly inside whichever folder your MSFS install treats as Community — see [I moved my Community folder, or reinstalled MSFS](#i-moved-my-community-folder-or-reinstalled-msfs) for how to find it. There's no player data inside it to worry about losing; it's safe to delete outright.
 
 ## FSOps never tells me about updates
 

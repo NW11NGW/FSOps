@@ -104,6 +104,26 @@ LocalAppData default would then destroy a folder that is not the one in use).
 If you change anything in `CurUninstallStepChanged`, test it against a throwaway
 `FSOPS_DATA_DIR` and never against a real save.
 
+### Uninstalling does remove the in-game panel
+
+Unlike the database, the panel FSOps installs into the player's MSFS Community folder is not their
+data — it's a folder of files FSOps itself copied and generated there, reproducible at any time by
+pressing Install again. So it's cleaned up automatically and silently, with no prompt, as an
+ordinary part of removing the program: the installer's `[UninstallRun]` section runs
+`FSOps.Server.exe --uninstall-panel`, which reads the Community folder path straight out of the
+player's own database (the app is the only thing that ever knew it) and removes the panel through
+`PanelPackageInstaller.Uninstall` — the same code path Settings uses, including the check that
+refuses to touch a folder FSOps didn't create.
+
+The ordering matters and is why this lives in `[UninstallRun]` rather than
+`CurUninstallStepChanged`: those entries run "as the first step of uninstallation", before Inno
+removes anything from `{app}` and well before the data-directory prompt above (which fires later,
+at `usPostUninstall`). So panel removal always has both a working server executable and an intact
+database to read from, regardless of what the player answers at that later prompt. See
+`PanelUninstallCommand` (in `src/FSOps.Server/Services`) for the implementation and its tests; the
+Pascal side is deliberately just a call to it, since Inno Setup isn't installed in most development
+and CI environments and Pascal can't be unit tested the way C# can.
+
 ## Releasing
 
 The installer's name is a contract, not a convention. `UpdateChecker.SelectInstallerAsset` picks the
