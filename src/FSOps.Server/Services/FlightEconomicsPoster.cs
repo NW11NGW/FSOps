@@ -1,4 +1,4 @@
-using FSOps.Core.Economy;
+﻿using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Data;
 using Microsoft.EntityFrameworkCore;
@@ -133,8 +133,8 @@ public static class FlightEconomicsPoster
             referenceFare,
             aircraftType.PaxCapacity,
             marketDemandPax,
-            upliftKg: 0,
-            pricePerKgAtUpliftAirport: 0m,
+            chargedFuelKg: 0,
+            pricePerKgAtDepartureAirport: 0m,
             arrivalAirport.SizeCategory,
             aircraftType.MtowTonnes,
             flightHours);
@@ -142,7 +142,7 @@ public static class FlightEconomicsPoster
         flight.PaxBooked = result.PaxBooked;
         flight.PaxFlown = result.PaxBooked;
         flight.Revenue = result.TicketRevenue;
-        flight.TotalCost += result.TotalCost; // Fuel is posted separately via PostFuelBurn; result.FuelCost is 0 here (upliftKg: 0 above), so this never double-counts it.
+        flight.TotalCost += result.TotalCost; // Fuel is posted separately via PostFuelBurn; result.FuelCost is 0 here (chargedFuelKg: 0 above), so this never double-counts it.
 
         Post(db, flight, LedgerCategory.TicketRevenue, result.TicketRevenue, utc, $"Ticket revenue: {result.PaxBooked} pax x {route.BaseFare:F2}");
         Post(db, flight, LedgerCategory.LandingFees, -result.LandingFee, utc, $"Landing fee at {arrivalAirport.Icao}");

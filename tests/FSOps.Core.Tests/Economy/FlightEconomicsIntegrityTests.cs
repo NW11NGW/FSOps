@@ -1,4 +1,4 @@
-using FSOps.Core.Economy;
+﻿using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 
 namespace FSOps.Core.Tests.Economy;
@@ -68,7 +68,7 @@ public class FlightEconomicsIntegrityTests
 
         var result = FlightEconomicsCalculator.Calculate(
             Config, profile, fare: referenceFare, referenceFare, seats: 180, marketDemandPax: 0,
-            upliftKg: 2500, pricePerKgAtUpliftAirport: 0.85m,
+            chargedFuelKg: 2500, pricePerKgAtDepartureAirport: 0.85m,
             arrivalAirportSize: AirportSizeCategory.Large, mtowTonnes: 78, flightHours: 0);
 
         Assert.Equal(0, result.PaxBooked);

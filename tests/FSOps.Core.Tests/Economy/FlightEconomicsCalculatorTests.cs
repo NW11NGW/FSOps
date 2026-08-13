@@ -1,4 +1,4 @@
-using FSOps.Core.Economy;
+﻿using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 
 namespace FSOps.Core.Tests.Economy;
@@ -12,7 +12,7 @@ public class FlightEconomicsCalculatorTests
     {
         var result = FlightEconomicsCalculator.Calculate(
             Config, AirlineStrategyProfile.Domestic, fare: 90m, referenceFare: 74.40m,
-            seats: 180, marketDemandPax: 150, upliftKg: 2200, pricePerKgAtUpliftAirport: 0.85m,
+            seats: 180, marketDemandPax: 150, chargedFuelKg: 2200, pricePerKgAtDepartureAirport: 0.85m,
             arrivalAirportSize: AirportSizeCategory.Medium, mtowTonnes: 78, flightHours: 1.4);
 
         var expectedTotalCost = result.FuelCost + result.LandingFee + result.HandlingFee + result.ParkingFee +
@@ -27,7 +27,7 @@ public class FlightEconomicsCalculatorTests
     {
         var result = FlightEconomicsCalculator.Calculate(
             Config, AirlineStrategyProfile.Domestic, fare: 74.40m, referenceFare: 74.40m,
-            seats: 180, marketDemandPax: 150, upliftKg: 0, pricePerKgAtUpliftAirport: 0.85m,
+            seats: 180, marketDemandPax: 150, chargedFuelKg: 0, pricePerKgAtDepartureAirport: 0.85m,
             arrivalAirportSize: AirportSizeCategory.Medium, mtowTonnes: 78, flightHours: 1.4);
 
         Assert.Equal(0m, result.FuelCost);
@@ -40,7 +40,7 @@ public class FlightEconomicsCalculatorTests
     {
         var result = FlightEconomicsCalculator.Calculate(
             Config, AirlineStrategyProfile.Premium, fare: 500m, referenceFare: 300m,
-            seats: 250, marketDemandPax: 180, upliftKg: 8000, pricePerKgAtUpliftAirport: 1.10m,
+            seats: 250, marketDemandPax: 180, chargedFuelKg: 8000, pricePerKgAtDepartureAirport: 1.10m,
             arrivalAirportSize: AirportSizeCategory.Large, mtowTonnes: 180, flightHours: 8.5);
 
         Assert.True(result.FuelCost >= 0);

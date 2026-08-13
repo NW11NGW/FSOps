@@ -1,4 +1,4 @@
-using FSOps.Core.Economy;
+﻿using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Planning;
 using FSOps.Core.Scheduling;
@@ -993,7 +993,7 @@ public static class PilotEndpoints
 
             var result = FlightEconomicsCalculator.Calculate(
                 economyConfig, airline.StrategyProfile, route.BaseFare, referenceFare, type.PaxCapacity, marketDemandPax,
-                upliftKg: plan.FuelBreakdown.ChargedFuelKg, pricePerKgAtUpliftAirport: pricePerKg,
+                chargedFuelKg: plan.FuelBreakdown.ChargedFuelKg, pricePerKgAtDepartureAirport: pricePerKg,
                 arr.SizeCategory, type.MtowTonnes, plan.BlockTimeBreakdown.TotalMinutes / 60.0);
 
             revenue += result.TicketRevenue;

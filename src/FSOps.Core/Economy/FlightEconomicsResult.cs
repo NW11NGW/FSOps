@@ -51,8 +51,14 @@ public static class FlightEconomicsCalculator
         decimal referenceFare,
         int seats,
         int marketDemandPax,
-        double upliftKg,
-        decimal pricePerKgAtUpliftAirport,
+        // Named for BURN, not uplift, and the distinction is the whole of how fuel is billed now: a
+        // sector pays for the fuel it actually consumed, priced where it departed. The old names
+        // survived the change to burn billing and were mistaken for dead weight afterwards - they
+        // are not. A virtual pilot's sector passes a real figure here (see PilotEndpoints), because
+        // nothing tracked its tanks; a flown sector passes zero and is charged separately from
+        // measured burn, which is why both a zero and a real value are correct callers.
+        double chargedFuelKg,
+        decimal pricePerKgAtDepartureAirport,
         AirportSizeCategory arrivalAirportSize,
         double mtowTonnes,
         double flightHours)
@@ -62,7 +68,7 @@ public static class FlightEconomicsCalculator
             config.MaxLoadFactor, strategyConfig, fare, referenceFare, seats, marketDemandPax,
             config.CaptiveFareCeilingMultiple, config.PostCaptiveElasticity);
 
-        var fuelCost = FlightCostCalculator.FuelBurnCost(upliftKg, pricePerKgAtUpliftAirport);
+        var fuelCost = FlightCostCalculator.FuelBurnCost(chargedFuelKg, pricePerKgAtDepartureAirport);
         var landingFee = FlightCostCalculator.LandingFee(config.Costs, arrivalAirportSize, mtowTonnes);
         var handlingFee = FlightCostCalculator.HandlingFee(config.Costs, arrivalAirportSize, mtowTonnes, strategyConfig.CostMultiplier);
         var parkingFee = FlightCostCalculator.ParkingFee(config.Costs, arrivalAirportSize, mtowTonnes, strategyConfig.CostMultiplier);
