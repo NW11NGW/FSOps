@@ -162,6 +162,12 @@ public sealed class FlightLifecycleService : IHostedService
         {
             _active = tracker;
         }
+
+        // The same expected position, handed one layer further up. The integrity monitor uses it to
+        // tell a garbage opening fix from a teleport; the position gate uses it to decide whether an
+        // opening fix is worth handing out at ALL - which is the difference between the junk being
+        // judged and the junk never reaching anything. See PositionAcquisitionGate.
+        _telemetry.SetExpectedPosition(departurePosition);
     }
 
     /// <summary>
@@ -215,12 +221,21 @@ public sealed class FlightLifecycleService : IHostedService
     /// <summary>Detaches live tracking without touching the Flight row - the caller (abandon/complete-manual) owns that.</summary>
     public void StopTracking(Guid flightId)
     {
+        var stopped = false;
         lock (_lock)
         {
             if (_active?.FlightId == flightId)
             {
                 _active = null;
+                stopped = true;
             }
+        }
+
+        if (stopped)
+        {
+            // No flight, no expectation. Leaving the old departure airport in place would have the
+            // next reconnect judging fixes against an airport nothing is flying from.
+            _telemetry.SetExpectedPosition(null);
         }
     }
 

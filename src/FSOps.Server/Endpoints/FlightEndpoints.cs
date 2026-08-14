@@ -834,12 +834,20 @@ public static class FlightEndpoints
             .Where(e => e.FlightId == flight.Id && e.Type == FlightEventType.PositionSnapshot)
             .ToListAsync(ct);
 
-        var track = FlownTrackBuilder.Build(events);
+        // The one fixed point this sector actually knows, and what the opening of the track is
+        // judged against - see FlownTrackBuilder. Resolved here rather than in the builder so the
+        // builder stays pure. Null is a handled answer, not a failure: a route or airport row can
+        // legitimately be gone, and the builder has a weaker rule for that case.
+        var track = FlownTrackBuilder.Build(
+            events,
+            await DepartureAnchorAsync(db, flight, ct),
+            flight.MaxSimulationRateObserved);
 
         return Results.Ok(new
         {
             flightId = flight.Id,
             recordedPointCount = track.RecordedPointCount,
+            discardedLeadingPointCount = track.DiscardedLeadingPointCount,
             thinned = track.Thinned,
             points = track.Points.Select(p => new
             {
@@ -851,6 +859,24 @@ public static class FlightEndpoints
                 phase = p.Phase,
             }).ToList(),
         });
+    }
+
+    /// <summary>
+    /// Where <paramref name="flight"/> departed from, for <see cref="FlownTrackBuilder"/>'s
+    /// opening-fix rule. Returns null when the route or its departure airport can no longer be
+    /// resolved - a deleted route, or an ICAO the seeded airport table does not carry - which the
+    /// builder handles rather than treating as an error.
+    /// </summary>
+    private static async Task<TrackAnchor?> DepartureAnchorAsync(FsOpsDbContext db, Flight flight, CancellationToken ct)
+    {
+        var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
+        if (route is null)
+        {
+            return null;
+        }
+
+        var airport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
+        return airport is null ? null : new TrackAnchor(airport.Latitude, airport.Longitude);
     }
 
     /// <summary>

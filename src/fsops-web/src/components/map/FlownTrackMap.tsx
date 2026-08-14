@@ -26,6 +26,14 @@ interface FlownTrackMapProps {
   plannedPath: LonLat[]
   departureIcao: string | null
   arrivalIcao: string | null
+  /** Where the sector departed from, resolved from the airport record. The departure marker sits
+   *  HERE rather than on the first recorded point - the opening of a track is the least trustworthy
+   *  part of it (see FlownTrackBuilder), and a marker labelled EGGD must be at Bristol whatever the
+   *  simulator happened to report first. Null when the airport could not be resolved, which falls
+   *  back to the start of the track and drops the ICAO from the label. */
+  departure?: LonLat | null
+  /** Where it arrived, on the same terms. */
+  arrival?: LonLat | null
   className?: string
 }
 
@@ -70,17 +78,25 @@ function endpointMarkerElement(label: string, tone: 'start' | 'end'): HTMLDivEle
  * through it. Callers are expected to show an explanatory empty state instead of mounting this at
  * all when there is no track; see FlightTrackCard.
  */
-export function FlownTrackMap({ flownPath, plannedPath, departureIcao, arrivalIcao, className }: FlownTrackMapProps) {
+export function FlownTrackMap({
+  flownPath,
+  plannedPath,
+  departureIcao,
+  arrivalIcao,
+  departure = null,
+  arrival = null,
+  className,
+}: FlownTrackMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Marker[]>([])
   const modeRef = useRef<MapThemeMode>('dark')
   const styleReadyRef = useRef(false)
   const hasFittedRef = useRef(false)
-  const latestRef = useRef({ flownPath, plannedPath, departureIcao, arrivalIcao })
+  const latestRef = useRef({ flownPath, plannedPath, departureIcao, arrivalIcao, departure, arrival })
   const [tilesUnavailable, setTilesUnavailable] = useState(false)
 
-  latestRef.current = { flownPath, plannedPath, departureIcao, arrivalIcao }
+  latestRef.current = { flownPath, plannedPath, departureIcao, arrivalIcao, departure, arrival }
 
   useEffect(() => {
     const container = containerRef.current
@@ -133,7 +149,14 @@ export function FlownTrackMap({ flownPath, plannedPath, departureIcao, arrivalIc
     const sync = () => {
       const current = mapRef.current
       if (!current) return
-      const { flownPath: flown, plannedPath: planned, departureIcao: dep, arrivalIcao: arr } = latestRef.current
+      const {
+        flownPath: flown,
+        plannedPath: planned,
+        departureIcao: dep,
+        arrivalIcao: arr,
+        departure: depAt,
+        arrival: arrAt,
+      } = latestRef.current
 
       ensureLayers()
       ;(current.getSource(PLANNED_SOURCE_ID) as GeoJSONSource | undefined)?.setData(toFeatures(planned))
@@ -142,31 +165,46 @@ export function FlownTrackMap({ flownPath, plannedPath, departureIcao, arrivalIc
       for (const marker of markersRef.current) marker.remove()
       markersRef.current = []
 
-      // Markers sit on where the aircraft actually STARTED and ENDED, not on the airports - for a
-      // diversion those are different places, and the map should show what happened rather than
-      // what was intended. Falls back to the planned endpoints when there is no flown track.
-      const first = flown[0] ?? planned[0]
-      const last = flown[flown.length - 1] ?? planned[planned.length - 1]
-      if (first) {
-        const marker = new Marker({ element: endpointMarkerElement(dep ?? 'Start', 'start'), anchor: 'bottom' })
-          .setLngLat(first)
+      // An ICAO-labelled marker belongs on that AIRPORT, not on an end of the point list. The two
+      // used to be the same thing here, which made the map only as trustworthy as its first
+      // recorded sample - and the opening sample is exactly what cannot be trusted (see
+      // FlownTrackBuilder). A sector whose first snapshot landed in the Indian Ocean drew "EGGD"
+      // there. Where the aircraft actually started and finished is still fully visible: it is the
+      // two ends of the flown line itself, which is the honest place for it. Only when the airport
+      // cannot be resolved at all does this fall back to the track's own ends, and it drops the
+      // ICAO from the label when it does, so the marker never claims to be an airport it isn't.
+      const start = depAt ?? flown[0] ?? planned[0] ?? null
+      const startLabel = depAt ? dep : null
+      const end = arrAt ?? flown[flown.length - 1] ?? planned[planned.length - 1] ?? null
+      const endLabel = arrAt ? arr : null
+      if (start) {
+        const marker = new Marker({ element: endpointMarkerElement(startLabel ?? 'Start', 'start'), anchor: 'bottom' })
+          .setLngLat(start)
           .addTo(current)
-        marker.getElement().setAttribute('aria-label', dep ? `Departure ${dep}` : 'Start of flown track')
+        marker.getElement().setAttribute('aria-label', startLabel ? `Departure ${startLabel}` : 'Start of flown track')
         markersRef.current.push(marker)
       }
-      if (last && last !== first) {
-        const marker = new Marker({ element: endpointMarkerElement(arr ?? 'End', 'end'), anchor: 'bottom' })
-          .setLngLat(last)
+      if (end && end !== start) {
+        const marker = new Marker({ element: endpointMarkerElement(endLabel ?? 'End', 'end'), anchor: 'bottom' })
+          .setLngLat(end)
           .addTo(current)
-        marker.getElement().setAttribute('aria-label', arr ? `Arrival ${arr}` : 'End of flown track')
+        marker.getElement().setAttribute('aria-label', endLabel ? `Arrival ${endLabel}` : 'End of flown track')
         markersRef.current.push(marker)
       }
 
       if (!hasFittedRef.current) {
         // Fit to the FLOWN track when there is one - a track that wandered well off the planned
         // line must be fully visible, and fitting to the plan would crop exactly the part worth
-        // looking at.
-        const fitPoints = flown.length > 1 ? flown : planned.length > 1 ? planned : first ? [first] : []
+        // looking at. The airport markers are folded in because they are DRAWN: on a diversion the
+        // arrival airport sits away from where the track ends, and a marker outside the viewport is
+        // a marker the reader never sees.
+        const markerPoints = [start, end].filter((p): p is LonLat => p !== null)
+        const fitPoints =
+          flown.length > 1
+            ? [...flown, ...markerPoints]
+            : planned.length > 1
+              ? [...planned, ...markerPoints]
+              : markerPoints
         if (fitPoints.length === 1) {
           hasFittedRef.current = true
           current.jumpTo({ center: fitPoints[0], zoom: 8 })
@@ -216,7 +254,7 @@ export function FlownTrackMap({ flownPath, plannedPath, departureIcao, arrivalIc
     const map = mapRef.current
     if (!map || !styleReadyRef.current) return
     ;(map as unknown as { __fsopsResync?: () => void }).__fsopsResync?.()
-  }, [flownPath, plannedPath, departureIcao, arrivalIcao])
+  }, [flownPath, plannedPath, departureIcao, arrivalIcao, departure, arrival])
 
   return (
     <div className={cn('relative isolate overflow-hidden rounded-lg border border-border bg-surface', className)}>

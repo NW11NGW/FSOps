@@ -18,10 +18,39 @@ namespace FSOps.Core.Flights;
 /// </para>
 /// <para>
 /// So the rule is applied once, at the single point every consumer is fed from: a position nothing
-/// has vouched for is not handed out at all. A fix is vouched when the fix after it agrees with it -
-/// when the aircraft could actually have travelled between the two at a possible speed. A bad
+/// has vouched for is not handed out at all.
+/// </para>
+/// <para>
+/// <b>What "vouched for" means was wrong the first time, and the correction is the point of this
+/// class.</b> Originally a fix was vouched when the fix after it agreed with it - when the aircraft
+/// could have travelled between the two at a possible speed - on the stated premise that "a bad
 /// reading cannot satisfy that, because the real position that follows it is thousands of miles
-/// away; two consecutive real fixes satisfy it immediately.
+/// away". That premise quietly assumed the fault happens ONCE. It does not. On 2026-08-13 the same
+/// sim reported the same bad fix for fifteen to thirty seconds, byte-identical, and the second
+/// instance corroborated the first: zero distance over fifteen seconds is zero knots, which is
+/// comfortably possible, so the gate acquired on the junk and handed it out. <b>A stuck bad fix
+/// vouches for itself.</b> It went into that flight's recorded track and drew its departure marker
+/// in the Indian Ocean.
+/// </para>
+/// <para>
+/// The correction is not to demand movement. <b>An aircraft cold and dark on stand genuinely does
+/// not move</b>, and its position is perfectly correct; refusing to believe a static reading would
+/// refuse to acquire on every flight that starts where flights actually start. Zero displacement is
+/// not evidence of falsehood. The discriminator is PLAUSIBILITY, not motion: a fix 5,505 nm from
+/// where this sector departs is not believable however many times it repeats, and a fix sitting
+/// still on the ramp at Bristol is believable immediately. So when the caller can say where the
+/// aircraft is expected to be - see the constructor - that is what a fix is judged against, using
+/// the same tolerance <see cref="FlightIntegrityMonitor.StartingFixToleranceNm"/> the integrity
+/// monitor already applies to its own opening fix. One idea, one number, two places.
+/// </para>
+/// <para>
+/// <b>With no expected position</b> the older corroboration rule is all there is, and it is kept -
+/// but it is honestly the weaker one, and its limit is exactly the fault above: two identical bad
+/// fixes still agree with each other. Nothing available at this layer separates "parked" from
+/// "stuck" when there is no idea where the aircraft ought to be, and inventing a rule that did
+/// would break the parked case, which is the common one. That is precisely why the expected
+/// position is now plumbed through from the flight that is being tracked, and why acquiring without
+/// one should be read as a weaker guarantee rather than an equivalent one.
 /// </para>
 /// <para>
 /// This deliberately only guards ACQUISITION. Once a fix has been vouched for, this gate stands
@@ -46,8 +75,54 @@ public sealed class PositionAcquisitionGate
     /// </summary>
     public static readonly TimeSpan AcquisitionTimeout = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// The same safety valve, for the case where an expected position IS known - and deliberately
+    /// three times as long.
+    /// <para>
+    /// The two windows are different lengths because they are waiting for different things. Without
+    /// an anchor, waiting longer buys nothing: there is no test the next sample can pass that the
+    /// last one could not, so twenty seconds is simply how long it is worth blocking telemetry
+    /// before giving up. With an anchor there is a specific thing being waited for - a reading from
+    /// somewhere the aircraft could actually be - and the observed fault lasted long enough to slip
+    /// past twenty seconds. Sixty is the window
+    /// <see cref="FlightIntegrityMonitor.StartingFixAcquisitionWindow"/> already allows for exactly
+    /// the same situation, so the two agree rather than each having their own number.
+    /// </para>
+    /// <para>
+    /// It still fails OPEN, and it must. The legitimate case behind it is a player who starts
+    /// tracking somewhere other than the route's departure airport; blocking their telemetry
+    /// forever would be a far worse failure than an uncorroborated opening position. The cost is
+    /// that such a player gets no telemetry for up to a minute - no live map, no phase tracking -
+    /// which is bounded, announced in the log, and flagged on <see cref="AcquiredByTimeout"/> so
+    /// nothing downstream mistakes it for a corroborated fix.
+    /// </para>
+    /// </summary>
+    public static readonly TimeSpan AnchoredAcquisitionTimeout = FlightIntegrityMonitor.StartingFixAcquisitionWindow;
+
+    /// <summary>
+    /// Where the aircraft is expected to be as acquisition begins, or null when the caller has
+    /// nothing to offer. Null-safe by design - see the class doc for how much weaker the guarantee
+    /// is without it.
+    /// </summary>
+    private readonly (double Lat, double Lon)? _expectedPosition;
+
     private (double Lat, double Lon, DateTimeOffset Utc, double SimulationRate)? _unvouchedFix;
     private DateTimeOffset? _firstFixUtc;
+
+    /// <param name="expectedPosition">
+    /// Where the aircraft should be when acquisition starts - the flight's departure airport at the
+    /// start of a sector, or wherever it was last credibly seen when a dropped link comes back.
+    /// Optional: the sim can connect long before any flight is being tracked, and there is genuinely
+    /// nothing to anchor on then.
+    /// </param>
+    public PositionAcquisitionGate((double Lat, double Lon)? expectedPosition = null)
+    {
+        _expectedPosition = expectedPosition;
+    }
+
+    /// <summary>True when this gate was given somewhere to judge fixes against - see the class doc
+    /// for why the two paths are not equally strong.</summary>
+    public bool IsAnchored => _expectedPosition is not null;
 
     /// <summary>True once a position has been vouched for and the gate has stood aside for good.</summary>
     public bool Acquired { get; private set; }
@@ -73,6 +148,34 @@ public sealed class PositionAcquisitionGate
         }
 
         _firstFixUtc ??= utc;
+
+        if (_expectedPosition is { } expected)
+        {
+            // Anchored. A fix from somewhere the aircraft could credibly be needs no second opinion
+            // at all - including a completely stationary one, which is what a cold and dark aircraft
+            // on its stand reports and is exactly right. This acquires on the very first sample in
+            // the ordinary case, where the old rule always lost at least one.
+            var fromExpectedNm = GreatCircle.DistanceNm(expected.Lat, expected.Lon, latitudeDeg, longitudeDeg);
+            if (fromExpectedNm <= FlightIntegrityMonitor.StartingFixToleranceNm)
+            {
+                Acquired = true;
+                return true;
+            }
+
+            // And a fix from nowhere near it is NOT vouched for by another fix that is equally
+            // nowhere near it, however perfectly the two agree. That is the whole correction: a
+            // stuck feed agrees with itself forever, and agreement between two implausible readings
+            // is not evidence of anything.
+            if (utc - _firstFixUtc.Value >= AnchoredAcquisitionTimeout)
+            {
+                Acquired = true;
+                AcquiredByTimeout = true;
+                return true;
+            }
+
+            WithheldSampleCount++;
+            return false;
+        }
 
         if (_unvouchedFix is { } previous && AgreesWith(previous, latitudeDeg, longitudeDeg, utc, simulationRate))
         {

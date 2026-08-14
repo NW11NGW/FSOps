@@ -40,6 +40,10 @@ interface FlightTrackCardProps {
  *   <li><b>A track crossing the antimeridian</b> - split into separate segments before drawing (see
  *   lib/geo), so a Pacific crossing draws as two arcs at the map edges instead of one line the
  *   wrong way round the planet.</li>
+ *   <li><b>An opening the simulator had not yet worked out</b> - SimConnect reports roughly 0.0N
+ *   90.0E before it has a real aircraft state, and those samples were written into real flights.
+ *   They are not drawn (see FlownTrackBuilder), and the card says how many and why rather than
+ *   quietly showing fewer positions than it claims were recorded.</li>
  * </ul>
  */
 export function FlightTrackCard({ flightId, departureIcao, arrivalIcao, className }: FlightTrackCardProps) {
@@ -52,12 +56,23 @@ export function FlightTrackCard({ flightId, departureIcao, arrivalIcao, classNam
   )
   const coordsByIcao = useAirportCoordinates(neededIcaos)
 
-  const plannedPath = useMemo<LonLat[]>(() => {
+  // The airports themselves, which is where the labelled markers go - never an end of the point
+  // list. Memoised because they are passed to the map as props and a fresh array each render would
+  // resync it on every paint.
+  const departureAt = useMemo<LonLat | null>(() => {
     const from = departureIcao ? coordsByIcao[departureIcao] : undefined
+    return from ? [from.longitude, from.latitude] : null
+  }, [departureIcao, coordsByIcao])
+
+  const arrivalAt = useMemo<LonLat | null>(() => {
     const to = arrivalIcao ? coordsByIcao[arrivalIcao] : undefined
-    if (!from || !to) return []
-    return sampleGreatCirclePath(from.latitude, from.longitude, to.latitude, to.longitude)
-  }, [departureIcao, arrivalIcao, coordsByIcao])
+    return to ? [to.longitude, to.latitude] : null
+  }, [arrivalIcao, coordsByIcao])
+
+  const plannedPath = useMemo<LonLat[]>(() => {
+    if (!departureAt || !arrivalAt) return []
+    return sampleGreatCirclePath(departureAt[1], departureAt[0], arrivalAt[1], arrivalAt[0])
+  }, [departureAt, arrivalAt])
 
   const flownPath = useMemo<LonLat[]>(
     () => (track?.points ?? []).map((point) => [point.lon, point.lat] as LonLat),
@@ -79,6 +94,7 @@ export function FlightTrackCard({ flightId, departureIcao, arrivalIcao, classNam
     }
 
     const points = track?.points ?? []
+    const discarded = track?.discardedLeadingPointCount ?? 0
 
     if (points.length === 0) {
       return (
@@ -98,6 +114,8 @@ export function FlightTrackCard({ flightId, departureIcao, arrivalIcao, classNam
             plannedPath={plannedPath}
             departureIcao={departureIcao}
             arrivalIcao={arrivalIcao}
+            departure={departureAt}
+            arrival={arrivalAt}
             className="h-[280px] sm:h-[360px]"
           />
         </Suspense>
@@ -127,6 +145,15 @@ export function FlightTrackCard({ flightId, departureIcao, arrivalIcao, classNam
           </span>
           {highestAltitudeFt !== null && <span className="tabular-nums">Highest {fmt.altitude(highestAltitudeFt)}</span>}
         </div>
+
+        {discarded > 0 && (
+          <p className="text-xs text-muted-foreground">
+            The first {discarded === 1 ? 'position was' : `${discarded.toLocaleString('en-US')} positions were`} recorded before
+            the simulator had reported where the aircraft actually was, thousands of miles from {departureIcao ?? 'the departure airport'}
+            , so {discarded === 1 ? 'it is' : 'they are'} not drawn. Nothing was deleted — {discarded === 1 ? 'the row is' : 'the rows are'}{' '}
+            still counted in the {track!.recordedPointCount.toLocaleString('en-US')} above.
+          </p>
+        )}
 
         {track!.thinned && (
           <p className="text-xs text-muted-foreground">

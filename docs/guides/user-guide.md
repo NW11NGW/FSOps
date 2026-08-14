@@ -406,11 +406,14 @@ While FSOps is tracking a flight it records a position roughly every 15 seconds 
 
 Underneath the map it tells you how many positions were recorded, and the highest altitude reached.
 
-Three things it will not do:
+Four things it will not do:
 
 - **It will not draw a track for a flight that has none.** A sector flown by one of your virtual pilots never had a simulator attached to record from, so it has no positions at all — and neither does any flight from before position recording existed. Instead of an empty map you get a short explanation of which of those it is.
 - **It will not draw a line through a single point.** If the simulator disconnected almost immediately, one position was recorded — that is a position, not a path, so it is shown as a marker and the card says so.
 - **It will not draw a track the wrong way round the planet.** A sector crossing the antimeridian is split into separate segments at the edge of the map rather than being joined by a straight line all the way back across it.
+- **It will not draw positions the simulator reported before it knew where your aircraft was.** For a second or two after connecting, Microsoft Flight Simulator can report a position of roughly 0°N 90°E — a spot in the Indian Ocean — because it has not yet worked out where the aircraft really is. Those readings are not drawn, so a Bristol–Edinburgh sector no longer stretches from Scandinavia to the coast of Africa. When it happens the card says how many positions were skipped and why, and **nothing is deleted**: they are still counted in the total, and they are still in your flight's stored record.
+
+The departure and arrival markers sit on the **airports themselves**, so the pin labelled EGGD is always at Bristol whatever the simulator reported first. Where your aircraft actually started and finished is still there to see — it is the two ends of the flown line.
 
 On a very long sector the line is drawn from an evenly-spaced sample of the recorded positions rather than all of them, purely so the map stays quick. When that happens the card says exactly how many of how many are being drawn. The first and last positions are always kept, so the track still begins and ends where it really did, and **nothing that was recorded is ever changed or deleted** — the stored track stays complete whatever the map chooses to draw.
 

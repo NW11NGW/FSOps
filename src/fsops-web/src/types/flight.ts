@@ -227,8 +227,12 @@ export interface FlightTrackPoint {
  */
 export interface FlightTrack {
   flightId: string
-  /** Samples actually recorded, before any thinning - always the honest total. */
+  /** Samples actually recorded, before any thinning or discarding - always the honest total. */
   recordedPointCount: number
+  /** How many samples were dropped off the FRONT of the track because the simulator had not yet
+   *  reported a real position when they were taken - see FlownTrackBuilder. Reported rather than
+   *  silently applied, so "228 recorded" and a 226-point line never look like a contradiction. */
+  discardedLeadingPointCount: number
   /** True when `points` is an evenly-spaced subsample taken purely to keep the payload and the
    *  render cheap. The first and last points are always kept, so the track still begins and ends
    *  where it really did, and the stored rows are untouched. */

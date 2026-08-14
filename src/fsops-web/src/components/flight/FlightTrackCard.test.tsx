@@ -25,6 +25,7 @@ function track(overrides: Partial<FlightTrack> = {}): FlightTrack {
   return {
     flightId: 'flight-1',
     recordedPointCount: 3,
+    discardedLeadingPointCount: 0,
     thinned: false,
     points: [
       { utc: '2026-08-12T09:00:00Z', lat: 51.38, lon: -2.72, altMslFt: 1200, gsKt: 180, phase: 'Climb' },
@@ -113,6 +114,29 @@ describe('FlightTrackCard', () => {
     expect(body).toContain('2,880 recorded')
     expect(body).toContain('The start and end are always kept')
     expect(body).toContain('nothing that was recorded has been changed or removed')
+
+    unmount()
+  })
+
+  it('says how many opening positions were not drawn, and that nothing was deleted', async () => {
+    // The real 2026-08-13 EGGD-EGPH sector opened with two samples in the Indian Ocean. Not drawing
+    // them is right; not MENTIONING them would leave "228 positions recorded" sitting above a line
+    // built from 226, which reads as a miscount.
+    const { unmount } = await render(track({ recordedPointCount: 228, discardedLeadingPointCount: 2 }))
+
+    const body = text(document.body)
+    expect(body).toContain('The first 2 positions were recorded before the simulator had reported')
+    expect(body).toContain('EGGD')
+    expect(body).toContain('Nothing was deleted')
+    expect(body).toContain('228 positions recorded')
+
+    unmount()
+  })
+
+  it('does not mention discarded positions when there were none', async () => {
+    const { unmount } = await render(track())
+
+    expect(text(document.body)).not.toContain('Nothing was deleted')
 
     unmount()
   })

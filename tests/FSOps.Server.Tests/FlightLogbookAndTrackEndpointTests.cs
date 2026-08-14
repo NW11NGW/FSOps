@@ -33,7 +33,8 @@ public class FlightLogbookAndTrackEndpointTests
         int PaxFlown, int? Seats, double? LoadFactorPercent, double? LandingFpmFirst,
         decimal Revenue, decimal Cost, decimal Net, bool? VatsimOnline, bool HasTrack, int TrackPointCount);
 
-    private sealed record TrackProbe(Guid FlightId, int RecordedPointCount, bool Thinned, List<TrackPointProbe> Points);
+    private sealed record TrackProbe(
+        Guid FlightId, int RecordedPointCount, int DiscardedLeadingPointCount, bool Thinned, List<TrackPointProbe> Points);
 
     private sealed record TrackPointProbe(DateTimeOffset Utc, double Lat, double Lon, double? AltMslFt, double? GsKt, string? Phase);
 
@@ -368,6 +369,40 @@ public class FlightLogbookAndTrackEndpointTests
         Assert.Equal([51.38, 51.9, 52.5], body.Points.Select(p => p.Lat));
         Assert.Equal("Cruise", body.Points[0].Phase);
         Assert.Equal(15000.0, body.Points[0].AltMslFt);
+    }
+
+    /// <summary>
+    /// End to end through the real endpoint, with the opening rows of the player's 2026-08-13
+    /// EGGD-EGPH sector exactly as they sit in FlightEvent. This is what proves the departure anchor
+    /// is actually resolved from the route and the airport table rather than only working in the
+    /// builder's own unit tests - break the lookup and this goes red while everything else stays
+    /// green.
+    /// </summary>
+    [Fact]
+    public async Task Track_DiscardsTheOpeningFixesTheSimReportedBeforeItKnewWhereTheAircraftWas()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var route = SeedRoute(ctx);
+        var pilot = SeedPilot(ctx, "Player", isPlayer: true);
+        var aircraft = await ctx.Db.FleetAircraft.FirstAsync();
+        var flight = SeedFlight(ctx, route, aircraft.Id, pilot.Id, FlightStatus.Completed, Base);
+
+        AddSnapshot(ctx, flight, 0, -2.1556893808986427E-07, 90.00032277330374);
+        AddSnapshot(ctx, flight, 15, -2.1556893808986427E-07, 90.00032277330374);
+        AddSnapshot(ctx, flight, 30, 51.38534252774989, -2.7070546666672604);
+        AddSnapshot(ctx, flight, 45, 53.0, -3.0);
+        AddSnapshot(ctx, flight, 60, 55.94836445882101, -3.3665372600875436);
+        await ctx.Db.SaveChangesAsync();
+
+        var body = OkValueOf<TrackProbe>(await FlightEndpoints.TrackAsync(flight.Id, ctx.Db, ctx.CurrentUser, CancellationToken.None));
+
+        Assert.Equal(2, body.DiscardedLeadingPointCount);
+        Assert.Equal(3, body.Points.Count);
+        Assert.DoesNotContain(body.Points, p => Math.Abs(p.Lon - 90.00032277330374) < 1.0);
+
+        // The honest total still counts every recorded row - nothing was deleted, only left undrawn.
+        Assert.Equal(5, body.RecordedPointCount);
+        Assert.Equal(51.38534252774989, body.Points[0].Lat, precision: 9);
     }
 
     [Fact]

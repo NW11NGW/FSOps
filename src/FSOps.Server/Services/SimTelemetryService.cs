@@ -59,6 +59,24 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     private int _telemetryInterrupted;
 
     /// <summary>
+    /// Where the aircraft is expected to be while acquisition is running - see
+    /// <see cref="SetExpectedPosition"/>. Written from a request thread and read from the pump
+    /// loop, hence the lock; it is a single reference-sized nullable tuple, so the lock is only ever
+    /// held for the assignment.
+    /// </summary>
+    private (double Lat, double Lon)? _expectedPosition;
+
+    private readonly object _expectedPositionLock = new();
+
+    /// <summary>
+    /// Set when <see cref="SetExpectedPosition"/> arrives while the gate is still waiting, so the
+    /// pump can rebuild the gate WITH the anchor on its next sample rather than the request thread
+    /// swapping it out underneath the loop that is using it. Same volatile-flag discipline as
+    /// <see cref="_telemetryInterrupted"/>, and for the same reason.
+    /// </summary>
+    private int _expectedPositionPending;
+
+    /// <summary>
     /// Non-zero once <see cref="DisposeAsync"/> has run. This service is deliberately registered
     /// twice - <c>AddSingleton&lt;SimTelemetryService&gt;()</c> so the heartbeat and the sim status
     /// endpoint can inject it directly, and <c>AddHostedService(sp =&gt; sp.GetRequiredService&lt;
@@ -109,6 +127,42 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
     {
         LastSampleUtc = sample.TimestampUtc;
         LastSample = sample;
+    }
+
+    /// <summary>
+    /// Tells the position gate where the aircraft is expected to be, so an opening fix can be judged
+    /// on whether it is CREDIBLE rather than only on whether a second reading agrees with it - see
+    /// <see cref="PositionAcquisitionGate"/> for the stuck fix that agreed with itself and got
+    /// through. Called by <see cref="FlightLifecycleService"/> with the departure airport when a
+    /// sector starts tracking, and with null when it stops.
+    /// <para>
+    /// It takes effect on the next gate: the one built at the next connect or reconnect, and - the
+    /// case that matters - the current one if it has not acquired yet, which is rebuilt with the
+    /// anchor on the pump's next sample. A gate that has ALREADY acquired is deliberately left
+    /// alone. Its position has been vouched for, samples have been handed out on the strength of
+    /// that, and tearing a live believed feed down to re-examine it would blacken telemetry
+    /// mid-session on no new evidence.
+    /// </para>
+    /// </summary>
+    public void SetExpectedPosition((double Lat, double Lon)? position)
+    {
+        lock (_expectedPositionLock)
+        {
+            _expectedPosition = position;
+        }
+
+        if (position is not null)
+        {
+            Volatile.Write(ref _expectedPositionPending, 1);
+        }
+    }
+
+    private (double Lat, double Lon)? ReadExpectedPosition()
+    {
+        lock (_expectedPositionLock)
+        {
+            return _expectedPosition;
+        }
     }
 
     /// <summary>
@@ -260,6 +314,19 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
             _gateConnectionState = connectionState;
         }
 
+        // An expected position that turned up while the gate was still waiting. Rebuilding it here,
+        // on the pump's own thread, is what keeps the request thread out of a field this loop is
+        // reading. Nothing has been handed out yet, so this is not an interruption and is not
+        // announced as one - it is the same acquisition, now with something to judge against.
+        if (Volatile.Read(ref _expectedPositionPending) != 0)
+        {
+            Volatile.Write(ref _expectedPositionPending, 0);
+            if (!_positionGate.Acquired && !_positionGate.IsAnchored)
+            {
+                _positionGate = new PositionAcquisitionGate(ReadExpectedPosition());
+            }
+        }
+
         var wasAcquired = _positionGate.Acquired;
         if (!_positionGate.Accept(sample.LatitudeDeg, sample.LongitudeDeg, sample.TimestampUtc, sample.SimulationRate))
         {
@@ -268,17 +335,21 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
 
         if (!wasAcquired && _positionGate.WithheldSampleCount > 0)
         {
+            var window = _positionGate.IsAnchored
+                ? PositionAcquisitionGate.AnchoredAcquisitionTimeout
+                : PositionAcquisitionGate.AcquisitionTimeout;
+
             if (_positionGate.AcquiredByTimeout)
             {
                 _logger.LogWarning(
-                    "The sim reported {WithheldCount} position(s) that no later reading agreed with over {Seconds}s; " +
+                    "The sim reported {WithheldCount} position(s) nothing could vouch for over {Seconds}s; " +
                     "accepting telemetry anyway so tracking is not blocked, but the opening position is not corroborated.",
-                    _positionGate.WithheldSampleCount, PositionAcquisitionGate.AcquisitionTimeout.TotalSeconds);
+                    _positionGate.WithheldSampleCount, window.TotalSeconds);
             }
             else
             {
                 _logger.LogInformation(
-                    "Held back {WithheldCount} opening telemetry sample(s) until the sim reported a position a second reading agreed with.",
+                    "Held back {WithheldCount} opening telemetry sample(s) until the sim reported a position that could be believed.",
                     _positionGate.WithheldSampleCount);
             }
         }
@@ -299,7 +370,7 @@ public sealed class SimTelemetryService : IHostedService, IAsyncDisposable
             return;
         }
 
-        _positionGate = new PositionAcquisitionGate();
+        _positionGate = new PositionAcquisitionGate(ReadExpectedPosition());
         TelemetryInterrupted?.Invoke(this, EventArgs.Empty);
         _logger.LogDebug("Sim reconnected; waiting for a corroborated position before resuming telemetry.");
     }
