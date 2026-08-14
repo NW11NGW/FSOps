@@ -89,10 +89,12 @@ export function CostBreakdownSection({ status, costs, periodDays }: CostBreakdow
                 <Line label="Maintenance" value={fmt.money(costs.variable.maintenance)} muted />
                 <Line label="Crew" value={fmt.money(costs.variable.crew)} muted />
                 {costs.variable.cancellationFees !== 0 && <Line label="Cancellation fees" value={fmt.money(costs.variable.cancellationFees)} muted />}
+                {costs.variable.repositioning !== 0 && <Line label="Aircraft repositioning" value={fmt.money(costs.variable.repositioning)} muted />}
               </BreakdownCard>
 
               <BreakdownCard title="Revenue" icon={<span className="size-2 rounded-full bg-success" />} total={<span className="text-success">{fmt.money(costs.revenue.total)}</span>}>
                 <Line label="Ticket revenue" value={fmt.money(costs.revenue.ticketRevenue)} muted />
+                {costs.revenue.onlineFlyingBonus !== 0 && <Line label="Online flying bonus" value={fmt.money(costs.revenue.onlineFlyingBonus)} muted />}
                 {costs.revenue.aircraftSaleProceeds !== 0 && <Line label="Aircraft sale proceeds" value={fmt.money(costs.revenue.aircraftSaleProceeds)} muted />}
               </BreakdownCard>
             </div>

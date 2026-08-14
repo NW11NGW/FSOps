@@ -506,11 +506,18 @@ This means an occasional bad reading from the simulator — most commonly right 
 
 ## A saved schedule says its aircraft isn't where the pattern starts
 
-**Symptom:** Saving a virtual pilot's schedule works, but a notice appears afterwards along the lines of *"G-NZHG is at LFPG, but this pattern starts from EGGD. The schedule is saved and keeps repeating — it will start flying as soon as G-NZHG is back at EGGD."*
+**Symptom:** Saving a virtual pilot's schedule works, but a notice appears afterwards saying the aircraft isn't standing where the week begins. There are two versions of it, and **which one you get is the answer to your question**:
 
-**Cause:** Entirely normal, and not an error. A weekly schedule is a pattern that repeats forever, but the aircraft flying it moves around — so a week that begins at your home base is often saved while the airframe is away at the far end of a sector, or still in the air on its way back. FSOps mentions it once because of what happens in the meantime: any occurrence the aircraft can't reach is [skipped or cancelled](user-guide.md#the-wall-clock-economy-flying-while-youre-away), and under True-life a cancellation carries a real fee — so it's worth knowing rather than discovering from your ledger.
+- *"G-NZHG is at EGPH, and this pattern starts from EGGD — but EGPH is on the pattern too, so nothing is stuck. The schedule is saved and keeps repeating, and G-NZHG picks it up when the leg departing EGPH next comes round…"*
+- *"G-NZHG is at LFPG, and no leg in this weekly pattern departs from there. The schedule is saved and keeps repeating, but nothing in it can move the aircraft…"*
 
-**Solution:** Usually nothing. If the aircraft is simply out on a leg, it comes home on its own and the pattern starts flying again. If it's genuinely stranded somewhere with no scheduled way back, either schedule a repositioning leg from where it actually is, or reserve it and use **Reposition** on the Fleet page to move it (see [Repositioning a stranded aircraft](user-guide.md#the-fleet-page)). If the pattern was never meant to start from that airport at all, edit the schedule so its first leg departs from where the aircraft really is.
+**Cause:** Entirely normal, and not an error. A weekly schedule is a pattern that repeats forever, but the aircraft flying it moves around — so a week that begins at your home base is often saved while the airframe is away at the far end of a sector. FSOps mentions it once because of what happens in the meantime: any occurrence the aircraft can't reach is [skipped or cancelled](user-guide.md#the-wall-clock-economy-flying-while-youre-away), and under True-life a cancellation carries a real fee — so it's worth knowing rather than discovering from your ledger.
+
+The distinction the two messages draw is the one that matters. A pattern is a **closed loop**, so if the aircraft is parked at *any* airport the week departs from, that airport's own leg simply flies, moves the aircraft on, and everything after it lines up by itself — the aircraft never has to return to the airport the week happens to begin at. It's only genuinely stuck when it's somewhere **no leg departs from**, because then nothing in the schedule can ever move it.
+
+**Solution:** For the first message, nothing at all — the pattern repairs itself, and the only cost is the legs due before that airport's own leg comes round. For the second, the aircraft needs a hand: either add a leg departing from where it actually is, or reserve it and use **Reposition** on the Fleet page to move it back for the standard fee (see [Repositioning a stranded aircraft](user-guide.md#the-fleet-page)) — flying it back yourself costs nothing and earns a sector, which is why both are offered. If the pattern was never meant to start from that airport at all, edit the schedule so its first leg departs from where the aircraft really is.
+
+If a schedule that's already running gets into the second state, the **Pilots** page flags it there too — deliberately with the same facts and the same two ways out, so the two screens can never tell you different things about the same aircraft.
 
 ## "FSOps couldn't fit a legal starter schedule together"
 

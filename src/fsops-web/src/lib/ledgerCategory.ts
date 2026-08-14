@@ -28,7 +28,6 @@ export const LEDGER_CATEGORIES = [
   'Insurance',
   'StartingCapital',
   'LoanProceeds',
-  'Other',
 ] as const
 
 const LABELS: Record<string, string> = {
@@ -51,7 +50,6 @@ const LABELS: Record<string, string> = {
   Insurance: 'Insurance',
   StartingCapital: 'Starting capital',
   LoanProceeds: 'Loan proceeds',
-  Other: 'Other',
 }
 
 /** e.g. "LandingFees" -> "Landing fees". Falls back to the raw category if unrecognised, so an

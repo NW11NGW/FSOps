@@ -35,9 +35,10 @@ function costs(overrides: Partial<FinanceCosts> = {}): FinanceCosts {
       maintenance: -8000,
       crew: -5500,
       cancellationFees: 0,
+      repositioning: 0,
       total: -58800,
     },
-    revenue: { ticketRevenue: 190000, aircraftSaleProceeds: 0, total: 190000 },
+    revenue: { ticketRevenue: 190000, onlineFlyingBonus: 0, aircraftSaleProceeds: 0, total: 190000 },
     legacyDataNotice: null,
     ...overrides,
   }
@@ -136,7 +137,7 @@ describe('CostBreakdownSection - the fixed/variable/revenue split', () => {
   it('shows aircraft sale proceeds separately from ticket revenue when a sale happened', async () => {
     const { container, unmount } = await render(
       'ready',
-      costs({ revenue: { ticketRevenue: 190000, aircraftSaleProceeds: 24000000, total: 24190000 } }),
+      costs({ revenue: { ticketRevenue: 190000, onlineFlyingBonus: 0, aircraftSaleProceeds: 24000000, total: 24190000 } }),
     )
 
     const body = text(container)
@@ -145,6 +146,43 @@ describe('CostBreakdownSection - the fixed/variable/revenue split', () => {
     expect(body).toContain('Aircraft sale proceeds')
     expect(body).toContain('$24,000,000.00')
     expect(body).toContain('$190,000.00')
+
+    unmount()
+  })
+
+  // The server counted the VATSIM online-flying uplift in NO total on this page until 2026-08-14,
+  // while the cash balance (which just sums the ledger) counted it perfectly - so an online flyer's
+  // Finances page disagreed with their own cash figure. It has its own line for the same reason it
+  // has its own ledger category: it is earned by flying online, not by the fare.
+  it('shows the online flying bonus as its own revenue line when there is one', async () => {
+    const quiet = await render('ready', costs())
+    expect(text(quiet.container)).not.toContain('Online flying bonus')
+    quiet.unmount()
+
+    const { container, unmount } = await render(
+      'ready',
+      costs({ revenue: { ticketRevenue: 190000, onlineFlyingBonus: 5700, aircraftSaleProceeds: 0, total: 195700 } }),
+    )
+
+    const body = text(container)
+    expect(body).toContain('Online flying bonus')
+    expect(body).toContain('$5,700.00')
+    expect(body).toContain('$195,700.00')
+
+    unmount()
+  })
+
+  // Repositioning has always been counted in the variable TOTAL but had no line of its own, so the
+  // card's itemised lines could not add up to the number printed at the top of the same card.
+  it('shows aircraft repositioning as its own variable line when there is one', async () => {
+    const { container, unmount } = await render(
+      'ready',
+      costs({ variable: { ...costs().variable, repositioning: -2000, total: -60800 } }),
+    )
+
+    const body = text(container)
+    expect(body).toContain('Aircraft repositioning')
+    expect(body).toContain('-$2,000.00')
 
     unmount()
   })

@@ -124,11 +124,18 @@ export interface FinanceVariableCosts {
   maintenance: number
   crew: number
   cancellationFees: number
+  /** The flat fee for moving an idle aircraft without flying it (GET /finance/costs has always
+   *  counted this in `total`; it was missing from this interface, so the itemised lines could not
+   *  add up to the card's own total). */
+  repositioning: number
   total: number
 }
 
 export interface FinanceRevenueBreakdown {
   ticketRevenue: number
+  /** The VATSIM online-flying uplift, its own line rather than folded into ticket revenue for the
+   *  same reason it is its own ledger category: it is earned by flying online, not by the fare. */
+  onlineFlyingBonus: number
   aircraftSaleProceeds: number
   total: number
 }

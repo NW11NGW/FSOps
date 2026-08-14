@@ -330,17 +330,115 @@ public static class FinanceEndpoints
     /// copy of the number to stay in sync with it. Deliberately excludes
     /// <see cref="LedgerCategory.CancellationFee"/> - that's never posted against a completed,
     /// revenue-posted flight (the two are mutually exclusive), so it would never match anyway.</summary>
-    private static readonly HashSet<LedgerCategory> FlightOperatingCostCategories = new()
+    internal static readonly HashSet<LedgerCategory> FlightOperatingCostCategories = new()
     {
         LedgerCategory.Fuel, LedgerCategory.LandingFees, LedgerCategory.Handling, LedgerCategory.ParkingFees,
         LedgerCategory.PassengerCharges, LedgerCategory.TurnaroundFees, LedgerCategory.Maintenance, LedgerCategory.CrewCost,
     };
 
     /// <summary>
+    /// Ledger categories that make up what a completed sector EARNED - the mirror of
+    /// <see cref="FlightOperatingCostCategories"/>, and read the same way by
+    /// <see cref="PilotsAsync"/>/<see cref="RoutesAsync"/>.
+    /// <para>
+    /// <see cref="LedgerCategory.VatsimOnlineBonus"/> belongs here, alongside the fare itself,
+    /// because of how it is actually posted: <c>FlightEconomicsPoster.PostVatsimOnlineBonus</c>
+    /// stamps it with the flight's own <see cref="LedgerTransaction.FlightId"/> and computes it as a
+    /// fraction of THAT sector's ticket revenue. It is money the route earned by being flown, not an
+    /// airline-level windfall, so the route that earned it is where it shows up. It was omitted until
+    /// 2026-08-14, which meant one sector could report a bigger Net on the Logbook (which sums every
+    /// line posted against the flight) than the route it was flown on reported earning - two screens
+    /// disagreeing about a single flight. <c>FinanceEndpointsTests</c> now pins the two together.
+    /// </para>
+    /// </summary>
+    internal static readonly HashSet<LedgerCategory> FlightRevenueCategories = new()
+    {
+        LedgerCategory.TicketRevenue, LedgerCategory.VatsimOnlineBonus,
+    };
+
+    /// <summary>Where a <see cref="LedgerCategory"/> belongs on the Finances page - see
+    /// <see cref="BucketFor"/>.</summary>
+    internal enum FinanceBucket
+    {
+        /// <summary>Owed whether or not anything flies: wages, leases, insurance, loan instalments.</summary>
+        Fixed,
+
+        /// <summary>Only owed because something happened - flying, cancelling, or moving an airframe.</summary>
+        Variable,
+
+        /// <summary>Money the airline EARNED by operating. Deliberately not "money in".</summary>
+        OperatingRevenue,
+
+        /// <summary>
+        /// Money in or out that is not trading at all: founding capital, borrowing, and buying or
+        /// selling an aircraft. It moves the cash balance and it is real, but it is never operating
+        /// profit or loss - counting starting capital as revenue would make a brand-new airline that
+        /// has flown nothing look wildly profitable, which is the same "revenue never comes from the
+        /// clock" principle the economy is built on. The page reports the sale half of
+        /// <see cref="LedgerCategory.AircraftPurchase"/> as its own line under Revenue (split by sign,
+        /// see <c>aircraftSaleProceeds</c>) rather than folding it into ticket revenue.
+        /// </summary>
+        CapitalAndFinancing,
+    }
+
+    /// <summary>
+    /// The single, exhaustive answer to "where does this money go on the Finances page". Every
+    /// <see cref="LedgerCategory"/> is named here, and <see cref="CostsAsync"/> builds its totals from
+    /// this rather than from hand-written lists of categories - which is what makes it impossible for
+    /// a category to exist in the enum and yet be summed into no total at all.
+    /// <para>
+    /// That was not a hypothetical. Until 2026-08-14 <c>LedgerCategory.Other</c> was in neither the
+    /// fixed nor the variable total (it has since been removed - nothing had ever written one, see
+    /// <see cref="LedgerCategory"/>'s own doc), and <see cref="LedgerCategory.VatsimOnlineBonus"/> was
+    /// in no total either - which was worse, because that one IS written, so a player flying online
+    /// had real money in the ledger that this page reported nowhere while the cash balance counted it
+    /// perfectly. Three screens, one truth, two of them wrong. <c>FinanceEndpointsTests</c> now walks
+    /// the enum and fails on any category this method cannot place, so adding one is a decision
+    /// rather than an omission.
+    /// </para>
+    /// </summary>
+    internal static FinanceBucket BucketFor(LedgerCategory category) => category switch
+    {
+        LedgerCategory.LeasePayment => FinanceBucket.Fixed,
+        LedgerCategory.Salary => FinanceBucket.Fixed,
+        LedgerCategory.Insurance => FinanceBucket.Fixed,
+        LedgerCategory.LoanPayment => FinanceBucket.Fixed,
+
+        LedgerCategory.Fuel => FinanceBucket.Variable,
+        LedgerCategory.LandingFees => FinanceBucket.Variable,
+        LedgerCategory.Handling => FinanceBucket.Variable,
+        LedgerCategory.ParkingFees => FinanceBucket.Variable,
+        LedgerCategory.PassengerCharges => FinanceBucket.Variable,
+        LedgerCategory.TurnaroundFees => FinanceBucket.Variable,
+        LedgerCategory.Maintenance => FinanceBucket.Variable,
+        LedgerCategory.CrewCost => FinanceBucket.Variable,
+        LedgerCategory.CancellationFee => FinanceBucket.Variable,
+        LedgerCategory.AircraftRepositioning => FinanceBucket.Variable,
+
+        LedgerCategory.TicketRevenue => FinanceBucket.OperatingRevenue,
+        LedgerCategory.VatsimOnlineBonus => FinanceBucket.OperatingRevenue,
+
+        LedgerCategory.StartingCapital => FinanceBucket.CapitalAndFinancing,
+        LedgerCategory.LoanProceeds => FinanceBucket.CapitalAndFinancing,
+        LedgerCategory.AircraftPurchase => FinanceBucket.CapitalAndFinancing,
+
+        // Unreachable for any declared member - the arm exists only because a switch expression over
+        // an enum cannot be proved exhaustive to the compiler. A NEW member lands here, and the
+        // enum-walking test in FinanceEndpointsTests turns that into a failure that names it.
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(category),
+            category,
+            "This LedgerCategory has no place on the Finances page yet. Assign it to a FinanceBucket " +
+            "(fixed cost, variable cost, operating revenue, or capital and financing) - or remove the " +
+            "category if nothing writes it. A category in no bucket is money the page silently fails to report."),
+    };
+
+    /// <summary>
     /// Per-pilot revenue vs cost - this is the screen that answers "should I keep this pilot", so
     /// the comparison is made directly rather than left as arithmetic across two tables. `revenue` and
     /// `operatingCost` are ledger-derived (summed straight from posted <see cref="LedgerTransaction"/>
-    /// rows for the pilot's flights in the window - real money that actually moved). `totalCost`/
+    /// rows for the pilot's flights in the window - real money that actually moved, using
+    /// <see cref="FlightRevenueCategories"/>/<see cref="FlightOperatingCostCategories"/>). `totalCost`/
     /// `netContribution` are NOT: they add the pilot's <see cref="Pilot.MonthlySalary"/>, prorated to
     /// the requested window, and a prorated salary is never itself a ledger posting (the real
     /// monthly-salary line posts in full, on the billing cycle, wherever that falls relative to this
@@ -377,7 +475,7 @@ public static class FinanceEndpoints
 
         var flightIds = flights.Select(f => f.Id).ToList();
         var ledgerLines = await db.LedgerTransactions.Where(t => t.FlightId != null && flightIds.Contains(t.FlightId.Value)).ToListAsync(ct);
-        var revenueByFlight = ledgerLines.Where(t => t.Category == LedgerCategory.TicketRevenue)
+        var revenueByFlight = ledgerLines.Where(t => FlightRevenueCategories.Contains(t.Category))
             .GroupBy(t => t.FlightId!.Value).ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
         var costByFlight = ledgerLines.Where(t => FlightOperatingCostCategories.Contains(t.Category))
             .GroupBy(t => t.FlightId!.Value).ToDictionary(g => g.Key, g => -g.Sum(t => t.Amount)); // ledger cost lines are negative - flip to a positive cost figure
@@ -458,10 +556,16 @@ public static class FinanceEndpoints
         // the split, and the sensible reading of a row that predates crew cost having its own
         // category. CountLegacySalaryRows below finds those rows by an exact structural discriminator
         // so the resulting potential undercount of variable cost is disclosed rather than silent.
-        var fixedTotal = leasePayments + Sum(LedgerCategory.Salary) + Sum(LedgerCategory.Insurance) + loanPayments + leaseEarlyTermination + loanEarlySettlement;
-        var variableTotal = Sum(LedgerCategory.Fuel) + Sum(LedgerCategory.LandingFees) + Sum(LedgerCategory.Handling) + Sum(LedgerCategory.ParkingFees)
-            + Sum(LedgerCategory.PassengerCharges) + Sum(LedgerCategory.TurnaroundFees) + Sum(LedgerCategory.Maintenance) + Sum(LedgerCategory.CrewCost)
-            + Sum(LedgerCategory.CancellationFee) + Sum(LedgerCategory.AircraftRepositioning);
+        //
+        // Both totals are summed by BUCKET rather than by a hand-written list of categories. The
+        // itemised lines below are still listed one by one (they are a display breakdown, and a
+        // category with no line of its own is a cosmetic gap), but the totals cannot be: a category
+        // missing from a hand-written total is the page silently disagreeing with the ledger, which
+        // has now happened twice. See BucketFor.
+        decimal TotalOf(FinanceBucket bucket) => transactions.Where(t => BucketFor(t.Category) == bucket).Sum(t => t.Amount);
+
+        var fixedTotal = TotalOf(FinanceBucket.Fixed);
+        var variableTotal = TotalOf(FinanceBucket.Variable);
 
         var aircraftSaleProceeds = SumFiltered(LedgerCategory.AircraftPurchase, t => t.Amount > 0);
 
@@ -503,8 +607,14 @@ public static class FinanceEndpoints
             revenue = new
             {
                 ticketRevenue = Sum(LedgerCategory.TicketRevenue),
+                // Its own line rather than folded into ticket revenue, for the same reason it is its
+                // own ledger category: it is earned by flying online, not by the fare. Added
+                // 2026-08-14 - until then this bucket was ticket revenue plus sale proceeds and
+                // nothing else, so an online flyer's bonus was money the ledger held, the cash
+                // balance counted, and this page reported nowhere at all.
+                onlineFlyingBonus = Sum(LedgerCategory.VatsimOnlineBonus),
                 aircraftSaleProceeds,
-                total = Sum(LedgerCategory.TicketRevenue) + aircraftSaleProceeds,
+                total = TotalOf(FinanceBucket.OperatingRevenue) + aircraftSaleProceeds,
             },
             legacyDataNotice,
         });
@@ -537,11 +647,14 @@ public static class FinanceEndpoints
     /// P&amp;L per directional route - which routes actually make money, given every real cost.
     /// <c>revenue</c>/<c>cost</c>/<c>profit</c> are entirely ledger-derived: summed straight
     /// from posted <see cref="LedgerTransaction"/> rows for each route's flights in the window (see
-    /// <see cref="FlightOperatingCostCategories"/>), never from the <see cref="Flight.Revenue"/>/
+    /// <see cref="FlightRevenueCategories"/> and <see cref="FlightOperatingCostCategories"/>), never
+    /// from the <see cref="Flight.Revenue"/>/
     /// <see cref="Flight.TotalCost"/> cache columns - so this can never disagree with what actually
     /// moved the cash balance. Unlike <see cref="PilotsAsync"/> there is no fixed cost to prorate
     /// here (a route has no monthly wage of its own), so every figure this endpoint returns is real
-    /// money, not an estimate.
+    /// money, not an estimate - and a sector's contribution to <c>profit</c> is exactly the "Net" its
+    /// own logbook row and report card show, because between them the two category sets account for
+    /// every line posted against a completed, revenue-posted flight.
     /// <para>
     /// <c>paxFlown</c>/<c>seatsFlown</c>/<c>loadFactorPercent</c> answer the other half of "is this
     /// route any good": whether the sectors are full. They are counted off the same flights this
@@ -580,7 +693,7 @@ public static class FinanceEndpoints
 
         var flightIds = flights.Select(f => f.Id).ToList();
         var ledgerLines = await db.LedgerTransactions.Where(t => t.FlightId != null && flightIds.Contains(t.FlightId.Value)).ToListAsync(ct);
-        var revenueByFlight = ledgerLines.Where(t => t.Category == LedgerCategory.TicketRevenue)
+        var revenueByFlight = ledgerLines.Where(t => FlightRevenueCategories.Contains(t.Category))
             .GroupBy(t => t.FlightId!.Value).ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
         var costByFlight = ledgerLines.Where(t => FlightOperatingCostCategories.Contains(t.Category))
             .GroupBy(t => t.FlightId!.Value).ToDictionary(g => g.Key, g => -g.Sum(t => t.Amount));

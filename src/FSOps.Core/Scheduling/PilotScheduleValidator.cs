@@ -363,13 +363,31 @@ public static class PilotScheduleValidator
                     // the earliest on this AIRCRAFT across every pilot, so the slot it falls in can
                     // belong to somebody else's duty day - and quoting a Monday 08:00 the reader
                     // cannot find anywhere on their own screen is the exact species of unactionable
-                    // message this whole change exists to remove. Where the aircraft is, and where
-                    // the pattern starts, is the whole of what they can act on.
-                    advisories.Add(
-                        $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern starts from " +
-                        $"{firstRoute.DepartureIcao}. The schedule is saved and keeps repeating - it will start " +
-                        $"flying as soon as {aircraft.Registration} is back at {firstRoute.DepartureIcao}, and any leg it " +
-                        "misses until then is reported on the pilot's flight history.");
+                    // message this whole change exists to remove.
+                    //
+                    // What it SAYS is ScheduleStallDetector's decision, not this method's, and
+                    // deliberately so. Until 2026-08-14 the advisory here promised the pattern would
+                    // start "as soon as {aircraft} is back at {where the week starts}" - which is
+                    // simply untrue whenever the airframe is standing at some other airport the week
+                    // already visits: that airport's own leg flies, and the closed loop lines up from
+                    // there without the aircraft ever returning to the start. The detector has always
+                    // reasoned about this correctly for the Pilots page, and a player can see both
+                    // messages within a minute of each other, so this one now comes from the same
+                    // place rather than being a second copy free to drift.
+                    var advisory = ScheduleStallDetector.DescribeSavedPattern(
+                        aircraft,
+                        ordered
+                            .Select(x => new ScheduledLegPosition(
+                                x.Entry.FleetAircraftId,
+                                x.Entry.DayOfWeek,
+                                x.Entry.DepartureTimeUtc,
+                                routesById[x.Entry.RouteId].DepartureIcao))
+                            .ToList());
+
+                    if (advisory is not null)
+                    {
+                        advisories.Add(advisory);
+                    }
                 }
                 else
                 {
