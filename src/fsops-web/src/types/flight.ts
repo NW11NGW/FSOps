@@ -126,6 +126,100 @@ export interface FlightDetail {
   aircraftFuelOnBoardKg: number | null
 }
 
+/**
+ * One row of GET /flights/logbook - a sector that was actually attempted.
+ *
+ * Only sectors that happened are here: Completed, Interrupted and Abandoned. A Planned row has not
+ * flown yet, and the Skipped/Cancelled/Suspended virtual-pilot statuses never left the gate.
+ *
+ * `revenue`/`cost`/`net` are summed from the flight's own posted ledger rows - the same
+ * append-only source the cash balance sums, never a cached column. `net` is deliberately the
+ * identical figure the flight's own report card shows as "Net", so clicking a row never reveals a
+ * different number.
+ */
+export interface LogbookSector {
+  flightId: string
+  status: FlightStatus
+  routeId: string
+  departureIcao: string
+  arrivalIcao: string
+  flightNumber: string | null
+  registration: string | null
+  aircraftTypeName: string | null
+  aircraftIcaoType: string | null
+  pilotName: string | null
+  isPlayerFlight: boolean
+  /** What the logbook sorts and groups by: when the sector finished if it did, else when it left,
+   *  else when it was planned for. Never a fabricated stand-in. */
+  dateUtc: string
+  outUtc: string | null
+  inUtc: string | null
+  plannedBlockMinutes: number
+  /** Measured Out-to-In minutes. Null when either stamp is missing, and also null when the sim ran
+   *  faster than real time - elapsed wall time means nothing then, so "not measured" is the only
+   *  honest answer. */
+  actualBlockMinutes: number | null
+  /** True when block time is unmeasurable because of time acceleration, so the UI can say why
+   *  rather than just showing a dash. */
+  blockTimeNotMeasured: boolean
+  paxFlown: number
+  paxBooked: number
+  /** Seats on the aircraft this sector was flown by. Null when the type can no longer be resolved. */
+  seats: number | null
+  loadFactorPercent: number | null
+  landingFpmFirst: number | null
+  fuelUsedKg: number
+  revenue: number
+  cost: number
+  net: number
+  simRateElevated: boolean
+  slewDetected: boolean
+  positionJumpDetected: boolean
+  vatsimOnline: boolean | null
+  /** Whether this sector has a recorded flown track to draw. False for every flight that predates
+   *  position snapshots and for every virtual-pilot sector - those never had a simulator attached
+   *  and write no events at all. */
+  hasTrack: boolean
+  /** How many position samples were recorded. 0 whenever `hasTrack` is false. */
+  trackPointCount: number
+}
+
+/** GET /flights/logbook response. `totalSectors` is the real total; `returnedSectors` is how many
+ *  of them this response carries (the newest ones), so the UI can say it is showing a slice. */
+export interface LogbookResponse {
+  totalSectors: number
+  returnedSectors: number
+  sectors: LogbookSector[]
+}
+
+/** One recorded position sample of a flown track - see GET /flights/{id}/track. */
+export interface FlightTrackPoint {
+  utc: string
+  lat: number
+  /** Degrees east exactly as recorded, never normalised - a path crossing the antimeridian is the
+   *  renderer's problem to split (see lib/geo splitAntimeridian), not the record's to rewrite. */
+  lon: number
+  altMslFt: number | null
+  gsKt: number | null
+  phase: FlightPhase | null
+}
+
+/**
+ * GET /flights/{id}/track - the path a flight actually flew, from its ~15-second position
+ * snapshots. An empty `points` array is a legitimate answer, not an error: older flights predate
+ * position snapshots, and every virtual-pilot flight had no simulator attached and recorded none.
+ */
+export interface FlightTrack {
+  flightId: string
+  /** Samples actually recorded, before any thinning - always the honest total. */
+  recordedPointCount: number
+  /** True when `points` is an evenly-spaced subsample taken purely to keep the payload and the
+   *  render cheap. The first and last points are always kept, so the track still begins and ends
+   *  where it really did, and the stored rows are untouched. */
+  thinned: boolean
+  points: FlightTrackPoint[]
+}
+
 /** Mismatch FlightEvent payload (see FlightEndpoints.StartAsync). */
 export interface MismatchPayload {
   titleFlown: string

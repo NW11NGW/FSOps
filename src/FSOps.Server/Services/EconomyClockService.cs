@@ -184,12 +184,20 @@ public sealed class EconomyClockService : BackgroundService
                 db.EconomyStates.Add(state);
                 await db.SaveChangesAsync(ct);
 
+                // Also on the very first pass in the app's life: a brand-new airline's first day
+                // must appear in its own reputation history, and this branch returns before the
+                // recording below would otherwise run.
+                await RecordDailyReputationAsync(db, now, ct);
+
                 _logger.LogInformation("Economy world state initialised; the monthly cycle starts counting from {Now:o}.", now);
                 return new EconomyCyclePassResult(PeriodsPosted: 0, ClockMovedBackwards: false, MoreCatchUpRemaining: false, LastProcessedUtc: now);
             }
 
             // Strictly monotonic: a clock reading before the watermark is a backwards jump, not a
-            // no-op tick. Recorded rather than silently absorbed; the watermark never moves.
+            // no-op tick. Recorded rather than silently absorbed; the watermark never moves. No
+            // reputation snapshot is taken either: the date this clock reports is in the past, and
+            // filing today's score under a past day would be recording an observation that was
+            // never made on it.
             if (now < state.LastProcessedUtc)
             {
                 _logger.LogWarning(
@@ -217,6 +225,12 @@ public sealed class EconomyClockService : BackgroundService
                 periodsPosted++;
             }
 
+            // Independent of the 30-day billing period above: reputation is recorded once per
+            // calendar day, on whatever day the app happens to be open. Runs after the period loop
+            // so a pass that also posted charges records the reputation those charges' flights
+            // already moved.
+            await RecordDailyReputationAsync(db, now, ct);
+
             var moreCatchUpRemaining = state.LastProcessedUtc + PeriodLength <= now;
             if (periodsPosted > 0)
             {
@@ -232,6 +246,81 @@ public sealed class EconomyClockService : BackgroundService
             _gate.Release();
         }
     }
+
+    /// <summary>
+    /// Records one <see cref="ReputationSnapshot"/> per active airline for today's UTC date, if one
+    /// does not already exist.
+    /// <para>
+    /// <b>Why this is written rather than computed on demand.</b> <see cref="Airline.ReputationScore"/>
+    /// is a single mutable number with no history, and it cannot be honestly reconstructed after the
+    /// fact - see <see cref="ReputationSnapshot"/>'s own doc for the two specific reasons a replay
+    /// would silently lie. The only way the app will ever have a truthful reputation series is to
+    /// start recording it, so this runs on every pass of the clock the player already has.
+    /// </para>
+    /// <para>
+    /// <b>Idempotent and insert-only.</b> A day already recorded is left exactly as it was - never
+    /// updated to a later reading, because the first observation of a day is as legitimate as any
+    /// other and rewriting history is the one thing an append-only series must not do. The
+    /// existence check below is the ordinary path; the unique index on (AirlineId, DateUtc) is the
+    /// guarantee, so two overlapping passes cannot produce two rows for one day even if both pass
+    /// the check.
+    /// </para>
+    /// <para>
+    /// <b>Missing days are deliberate.</b> A day the app never ran gets no row, and consumers must
+    /// render that as a gap rather than carrying the previous value forward - a score FSOps never
+    /// observed is not a score it may claim.
+    /// </para>
+    /// </summary>
+    private async Task RecordDailyReputationAsync(FsOpsDbContext db, DateTimeOffset now, CancellationToken ct)
+    {
+        var today = ReputationSnapshotDate(now);
+
+        var airlines = await db.Airlines.Where(a => a.DeletedUtc == null).ToListAsync(ct);
+        if (airlines.Count == 0)
+        {
+            return;
+        }
+
+        // One query for every airline's today-row rather than one per airline: this runs on a 60s
+        // timer for the whole life of the process, so it must not scale with the airline count.
+        var airlineIds = airlines.Select(a => a.Id).ToList();
+        var alreadyRecorded = (await db.ReputationSnapshots
+                .Where(s => airlineIds.Contains(s.AirlineId) && s.DateUtc == today)
+                .Select(s => s.AirlineId)
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var added = 0;
+        foreach (var airline in airlines)
+        {
+            if (alreadyRecorded.Contains(airline.Id))
+            {
+                continue;
+            }
+
+            db.ReputationSnapshots.Add(new ReputationSnapshot
+            {
+                Id = Guid.NewGuid(),
+                AirlineId = airline.Id,
+                DateUtc = today,
+                Score = airline.ReputationScore,
+                RecordedUtc = now,
+            });
+            added++;
+        }
+
+        if (added > 0)
+        {
+            await db.SaveChangesAsync(ct);
+            _logger.LogInformation("Recorded {Count} reputation snapshot(s) for {DateUtc}.", added, today);
+        }
+    }
+
+    /// <summary>The <c>yyyy-MM-dd</c> UTC bucket a moment belongs to - the single place that format
+    /// is produced, so a snapshot written here and a snapshot looked up by the stats endpoints can
+    /// never disagree about what "today" is called.</summary>
+    public static string ReputationSnapshotDate(DateTimeOffset moment) =>
+        moment.UtcDateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Posts every fixed monthly line due for the period ending at <paramref name="periodEnd"/>:

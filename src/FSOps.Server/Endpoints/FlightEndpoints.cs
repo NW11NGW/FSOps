@@ -33,6 +33,11 @@ public static class FlightEndpoints
         group.MapPost("/flights/{id:guid}/abandon", AbandonAsync);
         group.MapPost("/flights/{id:guid}/complete-manual", CompleteManualAsync);
         group.MapGet("/flights/active", GetActiveAsync);
+        // Registered before the "/flights/{id:guid}" template so the literal segment is matched as
+        // a literal - ASP.NET Core routing would prefer the literal anyway, but keeping the more
+        // specific route first makes the intent obvious rather than implicit.
+        group.MapGet("/flights/logbook", LogbookAsync);
+        group.MapGet("/flights/{id:guid}/track", TrackAsync);
         group.MapGet("/flights/{id:guid}", GetByIdAsync);
         group.MapGet("/flights", ListAsync);
         group.MapGet("/flights/options", OptionsAsync);
@@ -617,6 +622,235 @@ public static class FlightEndpoints
     }
 
     /// <summary>
+    /// Flight statuses the logbook covers: sectors that were actually attempted. A
+    /// <see cref="FlightStatus.Planned"/> row has not happened yet, and the
+    /// <see cref="FlightStatus.Skipped"/>/<see cref="FlightStatus.Cancelled"/>/
+    /// <see cref="FlightStatus.Suspended"/> statuses are virtual-pilot occurrences that never
+    /// flew at all - none of them belongs in a record of flying done.
+    /// <see cref="FlightStatus.Abandoned"/> and <see cref="FlightStatus.Interrupted"/> do: the
+    /// aircraft left the gate, and a logbook that quietly omitted the sectors that went wrong would
+    /// be flattering rather than accurate.
+    /// </summary>
+    private static readonly FlightStatus[] LogbookStatuses =
+    [
+        FlightStatus.Completed, FlightStatus.Interrupted, FlightStatus.Abandoned,
+    ];
+
+    /// <summary>
+    /// Most recent sectors the logbook will return in one call. A logbook is for browsing, and the
+    /// whole list is sorted and filtered in the browser, so it is all sent at once rather than
+    /// paged - but an airline with years of history must not be able to turn one page load into a
+    /// multi-megabyte response, so the newest 500 sectors are sent and <c>totalSectors</c> reports
+    /// the real total so the UI can say plainly that it is showing a slice.
+    /// </summary>
+    private const int LogbookMaxRows = 500;
+
+    /// <summary>
+    /// The flight logbook: one row per sector actually flown, with everything a pilot looks up
+    /// afterwards - route, aircraft, when, block time against plan, how the landing went, and what
+    /// the sector earned.
+    /// <para>
+    /// <b>Money comes from the ledger, never from a cache column.</b> <c>revenue</c>/<c>cost</c>/
+    /// <c>net</c> are summed from the flight's own posted <see cref="LedgerTransaction"/> rows, the
+    /// same append-only source the airline's cash balance sums - so a logbook row can never claim a
+    /// figure that did not actually move the bank balance. <c>net</c> is the sum of <b>every</b>
+    /// line posted against the flight, which is deliberately the identical figure the flight's own
+    /// report card shows as "Net": a player clicking a row must not find a different number on the
+    /// other side of the click. Note this can exceed <c>FinanceEndpoints.RoutesAsync</c>'s per-route
+    /// <c>profit</c> by any <see cref="LedgerCategory.VatsimOnlineBonus"/> line, because that
+    /// endpoint's revenue is ticket revenue alone; both are correct for what they each claim to be.
+    /// </para>
+    /// <para>
+    /// <b>Fixed query count, whatever the row count.</b> Routes, aircraft, types, pilots, ledger
+    /// lines and snapshot counts are each fetched once for the whole page and joined in memory -
+    /// six queries for 500 sectors exactly as for one. <c>hasTrack</c> is a snapshot COUNT rather
+    /// than a fetch of the points themselves; the track is only ever loaded when a flight is opened.
+    /// </para>
+    /// <para>
+    /// <b>Block time is measured, never assumed.</b> <c>actualBlockMinutes</c> is the flight's own
+    /// Out-to-In gap and is null when either stamp is missing. It is additionally null when
+    /// <see cref="Flight.SimRateElevated"/> is set: elapsed wall time means nothing once the sim
+    /// clock has run faster than real time, so the honest answer is "not measured", not a number
+    /// that would read as an impossibly fast sector.
+    /// </para>
+    /// </summary>
+    internal static async Task<IResult> LogbookAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.Ok(new { totalSectors = 0, returnedSectors = 0, sectors = Array.Empty<object>() });
+        }
+
+        // Materialise before ordering - the SQLite provider can't translate ORDER BY over
+        // DateTimeOffset (see the project's EF/SQLite notes).
+        var allFlights = await db.Flights
+            .Where(f => f.AirlineId == airline.Id && f.DeletedUtc == null && LogbookStatuses.Contains(f.Status))
+            .ToListAsync(ct);
+
+        var totalSectors = allFlights.Count;
+        if (totalSectors == 0)
+        {
+            return Results.Ok(new { totalSectors = 0, returnedSectors = 0, sectors = Array.Empty<object>() });
+        }
+
+        var flights = allFlights
+            .OrderByDescending(f => f.InUtc ?? f.OutUtc ?? f.PlannedDepartureUtc)
+            .Take(LogbookMaxRows)
+            .ToList();
+
+        var flightIds = flights.Select(f => f.Id).ToList();
+
+        var routesById = (await db.Routes
+                .Where(r => r.AirlineId == airline.Id)
+                .ToListAsync(ct))
+            .ToDictionary(r => r.Id);
+
+        var fleetById = (await db.FleetAircraft
+                .Where(f => f.AirlineId == airline.Id)
+                .ToListAsync(ct))
+            .ToDictionary(f => f.Id);
+
+        var typeIds = fleetById.Values.Select(f => f.AircraftTypeId).Distinct().ToList();
+        var typesById = await db.AircraftTypes.Where(t => typeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, ct);
+
+        var pilotsById = (await db.Pilots
+                .Where(p => p.AirlineId == airline.Id)
+                .ToListAsync(ct))
+            .ToDictionary(p => p.Id);
+
+        var ledgerByFlight = (await db.LedgerTransactions
+                .Where(t => t.FlightId != null && flightIds.Contains(t.FlightId.Value))
+                .ToListAsync(ct))
+            .GroupBy(t => t.FlightId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // One grouped COUNT for the whole page: whether a flight has a drawable track, without
+        // loading a single point of it.
+        var snapshotCountByFlight = (await db.FlightEvents
+                .Where(e => e.Type == FlightEventType.PositionSnapshot && flightIds.Contains(e.FlightId))
+                .GroupBy(e => e.FlightId)
+                .Select(g => new { FlightId = g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.FlightId, x => x.Count);
+
+        var sectors = flights.Select(f =>
+        {
+            var route = routesById.GetValueOrDefault(f.RouteId);
+            var aircraft = fleetById.GetValueOrDefault(f.FleetAircraftId);
+            var type = aircraft is not null ? typesById.GetValueOrDefault(aircraft.AircraftTypeId) : null;
+            var pilot = pilotsById.GetValueOrDefault(f.PilotId);
+            var lines = ledgerByFlight.GetValueOrDefault(f.Id) ?? new List<LedgerTransaction>();
+
+            var revenue = lines.Where(l => l.Amount > 0).Sum(l => l.Amount);
+            var cost = -lines.Where(l => l.Amount < 0).Sum(l => l.Amount);
+
+            var blockHours = BlockTimeCalculator.BlockHours(f.OutUtc, f.InUtc);
+            double? actualBlockMinutes = f.OutUtc is not null && f.InUtc is not null && !f.SimRateElevated
+                ? Math.Round(blockHours * 60.0, 1)
+                : null;
+
+            var seats = type?.PaxCapacity ?? 0;
+            double? loadFactorPercent = seats > 0 ? Math.Round(100.0 * f.PaxFlown / seats, 1) : null;
+
+            var snapshotCount = snapshotCountByFlight.GetValueOrDefault(f.Id);
+
+            return new
+            {
+                flightId = f.Id,
+                status = f.Status.ToString(),
+                routeId = f.RouteId,
+                departureIcao = route?.DepartureIcao ?? string.Empty,
+                arrivalIcao = route?.ArrivalIcao ?? string.Empty,
+                flightNumber = route?.FlightNumber,
+                registration = aircraft?.Registration,
+                aircraftTypeName = type?.Name,
+                aircraftIcaoType = type?.IcaoType,
+                pilotName = pilot?.Name,
+                isPlayerFlight = pilot?.IsPlayer ?? false,
+                // The sector's own timeline. `dateUtc` is what the logbook sorts and groups by: the
+                // moment it finished if it did, otherwise when it left, otherwise when it was
+                // planned for - never a fabricated stand-in.
+                dateUtc = f.InUtc ?? f.OutUtc ?? f.PlannedDepartureUtc,
+                outUtc = f.OutUtc,
+                inUtc = f.InUtc,
+                plannedBlockMinutes = f.PlannedBlockMinutes,
+                actualBlockMinutes,
+                blockTimeNotMeasured = f.SimRateElevated,
+                paxFlown = f.PaxFlown,
+                paxBooked = f.PaxBooked,
+                seats = seats > 0 ? seats : (int?)null,
+                loadFactorPercent,
+                landingFpmFirst = f.LandingFpmFirst,
+                fuelUsedKg = f.FuelUsedKg,
+                revenue,
+                cost,
+                net = revenue - cost,
+                simRateElevated = f.SimRateElevated,
+                slewDetected = f.SlewDetected,
+                positionJumpDetected = f.PositionJumpDetected,
+                vatsimOnline = f.VatsimOnline,
+                // Whether this sector has a flown track to draw at all. False for every flight that
+                // predates position snapshots and for every virtual-pilot sector - those never had a
+                // simulator attached and write no events - so the UI can offer the track only where
+                // one genuinely exists instead of opening an empty map.
+                hasTrack = snapshotCount > 0,
+                trackPointCount = snapshotCount,
+            };
+        }).ToList();
+
+        return Results.Ok(new { totalSectors, returnedSectors = sectors.Count, sectors });
+    }
+
+    /// <summary>
+    /// The path a flight actually flew - the roughly-15-second
+    /// <see cref="FlightEventType.PositionSnapshot"/> stream FSOps has always recorded and never
+    /// shown, read straight off the append-only event rows (see
+    /// <see cref="FlownTrackBuilder"/> for the parsing rules and how each awkward case degrades).
+    /// <para>
+    /// A separate endpoint rather than another field on <c>GET /flights/{id}</c> on purpose: a
+    /// long-haul sector's track is a few hundred kilobytes, and the report card is opened far more
+    /// often than the track is looked at. This is fetched only when a flight's map is actually
+    /// shown.
+    /// </para>
+    /// <para>
+    /// An empty <c>points</c> array is a legitimate, expected answer - see FlownTrackBuilder's doc.
+    /// It is never a 404: the flight exists, it simply has no recorded track, and the two must not
+    /// be conflated.
+    /// </para>
+    /// </summary>
+    internal static async Task<IResult> TrackAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    {
+        var flight = await LoadOwnedFlightAsync(db, currentUser, id, ct);
+        if (flight is null)
+        {
+            return Results.NotFound();
+        }
+
+        var events = await db.FlightEvents
+            .Where(e => e.FlightId == flight.Id && e.Type == FlightEventType.PositionSnapshot)
+            .ToListAsync(ct);
+
+        var track = FlownTrackBuilder.Build(events);
+
+        return Results.Ok(new
+        {
+            flightId = flight.Id,
+            recordedPointCount = track.RecordedPointCount,
+            thinned = track.Thinned,
+            points = track.Points.Select(p => new
+            {
+                utc = p.Utc,
+                lat = p.Latitude,
+                lon = p.Longitude,
+                altMslFt = p.AltitudeMslFt,
+                gsKt = p.GroundSpeedKt,
+                phase = p.Phase,
+            }).ToList(),
+        });
+    }
+
+    /// <summary>
     /// Backs the Fly screen: for every active route, reports its flight number/distance/block
     /// time plus which fleet aircraft (if any) is sitting at the route's departure airport ready
     /// to fly it "right now" - e.g. an aircraft that just landed at EGPH makes the EGPH-&gt;EGGD
@@ -1005,6 +1239,20 @@ public static class FlightEndpoints
         f.Revenue,
         f.TotalCost,
         f.UnflyableReason,
+        // G8 VATSIM corroboration. These four were declared on the frontend's own Flight type and
+        // read by ReportCard ("Flown online" badge and card) from the day that feature shipped, but
+        // were never actually serialised here - so `flight.vatsimOnline` was always `undefined` in
+        // the browser while TypeScript promised `boolean | null`, and the online card could never
+        // appear for a real flight no matter how well corroborated it was. Adding them is the fix
+        // rather than deleting the fields from the type: the data is recorded on every flight, the
+        // UI that consumes it already exists and is already tested, and "was this flown online" is
+        // exactly the kind of fact a flight's own record is for. VatsimOnline stays three-valued on
+        // the wire (true/false/null) - see Flight.VatsimOnline's own doc for why null must never be
+        // collapsed into false.
+        f.VatsimOnline,
+        f.VatsimCallsign,
+        f.VatsimOnlineFraction,
+        f.VatsimControllersWorked,
         f.CreatedUtc,
     };
 }

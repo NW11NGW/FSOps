@@ -1,4 +1,5 @@
-import { History } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { History, NotebookPen } from 'lucide-react'
 
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Badge } from '@/components/ui/badge'
@@ -35,13 +36,26 @@ const STATUS_BADGE: Record<FlightStatus, 'success' | 'muted' | 'warning' | 'dang
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })
 
+/** How many recent flights this contextual list shows. The Logbook page is the place to browse
+ *  everything - sortable, filterable, with the flown track - so this stays a short "what have I
+ *  been doing lately" glance rather than a second, worse copy of it. */
+const RECENT_LIMIT = 10
+
 export function FlightHistoryList({ flights, status, routesById, airlineIcaoCode, onView }: FlightHistoryListProps) {
   const { fmt } = useSettings()
+  const recent = flights.slice(0, RECENT_LIMIT)
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Flight history</CardTitle>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">Recent flights</CardTitle>
+        <Link
+          to="/logbook"
+          className="inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-accent transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <NotebookPen className="size-4" />
+          Open logbook
+        </Link>
       </CardHeader>
       <CardContent>
         {status === 'loading' && (
@@ -71,7 +85,7 @@ export function FlightHistoryList({ flights, status, routesById, airlineIcaoCode
               </TableRow>
             </TableHeader>
             <TableBody>
-              {flights.map((flight) => {
+              {recent.map((flight) => {
                 const route = routesById[flight.routeId]
                 const callsign = route ? formatCallsign(airlineIcaoCode, route.flightNumber) : null
                 const landing = flight.landingFpmFirst !== null ? assessLanding(flight.landingFpmFirst) : null

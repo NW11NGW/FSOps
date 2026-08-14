@@ -8,6 +8,7 @@ import {
   Users,
   Wallet,
   BarChart3,
+  NotebookPen,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/fleet', label: 'Fleet', icon: Plane },
   { to: '/pilots', label: 'Pilots', icon: Users },
   { to: '/finances', label: 'Finances', icon: Wallet },
+  { to: '/logbook', label: 'Logbook', icon: NotebookPen },
   { to: '/stats', label: 'Stats', icon: BarChart3 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]

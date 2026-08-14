@@ -42,6 +42,11 @@ public class FsOpsDbContext : DbContext
 
     public DbSet<EconomyState> EconomyStates => Set<EconomyState>();
 
+    /// <summary>Insert-only daily record of each airline's reputation score - see
+    /// <see cref="ReputationSnapshot"/> for why reputation history has to be recorded rather than
+    /// reconstructed.</summary>
+    public DbSet<ReputationSnapshot> ReputationSnapshots => Set<ReputationSnapshot>();
+
     public DbSet<UserSettings> UserSettings => Set<UserSettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
