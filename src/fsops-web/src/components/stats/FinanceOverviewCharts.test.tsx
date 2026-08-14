@@ -19,7 +19,6 @@ function costs(overrides: Partial<{ revenue: number; fixed: number; variable: nu
       maintenance: 0,
       crew: 0,
       cancellationFees: 0,
-      other: 0,
       total: variable,
     },
     revenue: { ticketRevenue: revenue, aircraftSaleProceeds: 0, total: revenue },

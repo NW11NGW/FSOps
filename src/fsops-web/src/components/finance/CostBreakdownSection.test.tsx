@@ -35,7 +35,6 @@ function costs(overrides: Partial<FinanceCosts> = {}): FinanceCosts {
       maintenance: -8000,
       crew: -5500,
       cancellationFees: 0,
-      other: 0,
       total: -58800,
     },
     revenue: { ticketRevenue: 190000, aircraftSaleProceeds: 0, total: 190000 },

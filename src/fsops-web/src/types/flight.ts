@@ -92,7 +92,6 @@ export type LedgerCategory =
   | 'LoanPayment'
   | 'AircraftPurchase'
   | 'Insurance'
-  | 'GsxServices'
   | 'StartingCapital'
   | 'LoanProceeds'
   | 'CancellationFee'

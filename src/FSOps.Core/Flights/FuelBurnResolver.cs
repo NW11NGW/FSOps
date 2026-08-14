@@ -37,7 +37,7 @@ public static class FuelBurnResolver
     /// alive (see the tracker's own accumulation logic in
     /// <c>FlightLifecycleService.ProcessSample</c>). Gating on engine state cuts both ways, and
     /// deliberately so: between "Start flight" and engine start, the tank can rise for reasons that
-    /// are not burn (MSFS's own spawn load, a menu fuel set, a GSX uplift before startup); equally,
+    /// are not burn (MSFS's own spawn load, a menu fuel set, a ground-crew uplift before startup); equally,
     /// once tracking has started, the tank can also FALL for reasons that are not burn while the
     /// engines are off (a defuel, a menu change, ground-crew activity during a turnaround stop) -
     /// neither direction may ever be read as burn. Accumulating only qualifying decreases, rather

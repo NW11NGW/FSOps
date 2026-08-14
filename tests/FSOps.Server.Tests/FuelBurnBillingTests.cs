@@ -21,7 +21,7 @@ namespace FSOps.Server.Tests;
 /// when it was bought; see git history for FuelPersistenceTests, which this file supersedes).
 /// Burn is measured from the first sample where the ENGINES are genuinely running, not from flight
 /// start - see FuelBurnResolver.Measure and FlightLifecycleService.ProcessSample's own accumulation
-/// logic - so the "spawn fuel" problem (MSFS's own default load, a menu fuel set, a GSX uplift
+/// logic - so the "spawn fuel" problem (MSFS's own default load, a menu fuel set, a ground-crew uplift
 /// before startup) can never be read as burn. Proved end to end through the real paths a player
 /// uses (<c>FlightEndpoints.StartAsync</c>/<c>AbandonAsync</c> and
 /// <c>FlightLifecycleService.FinalizeFlightAsync</c>), never a calculator called in isolation.
@@ -111,7 +111,7 @@ public class FuelBurnBillingTests
     {
         // The exact "spawn fuel" problem this redesign exists to fix: the tank moves for reasons
         // that are not burn between "Start flight" and engine start (MSFS's own default load, a
-        // menu fuel set, a GSX uplift before startup). Driven through the real ProcessSample path,
+        // menu fuel set, a ground-crew uplift before startup). Driven through the real ProcessSample path,
         // not hand-set tracker fields, so this proves the engine-gating itself, not just its result.
         using var ctx = await RouteTestContext.CreateAsync();
         var (outboundRoute, _) = await SeedRoundTripRoutesAsync(ctx);

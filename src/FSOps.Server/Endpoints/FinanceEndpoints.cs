@@ -461,7 +461,7 @@ public static class FinanceEndpoints
         var fixedTotal = leasePayments + Sum(LedgerCategory.Salary) + Sum(LedgerCategory.Insurance) + loanPayments + leaseEarlyTermination + loanEarlySettlement;
         var variableTotal = Sum(LedgerCategory.Fuel) + Sum(LedgerCategory.LandingFees) + Sum(LedgerCategory.Handling) + Sum(LedgerCategory.ParkingFees)
             + Sum(LedgerCategory.PassengerCharges) + Sum(LedgerCategory.TurnaroundFees) + Sum(LedgerCategory.Maintenance) + Sum(LedgerCategory.CrewCost)
-            + Sum(LedgerCategory.CancellationFee) + Sum(LedgerCategory.GsxServices) + Sum(LedgerCategory.AircraftRepositioning);
+            + Sum(LedgerCategory.CancellationFee) + Sum(LedgerCategory.AircraftRepositioning);
 
         var aircraftSaleProceeds = SumFiltered(LedgerCategory.AircraftPurchase, t => t.Amount > 0);
 
@@ -498,7 +498,6 @@ public static class FinanceEndpoints
                 // afterwards. It is incurred only when the player chooses to move an aircraft, which
                 // is exactly the "only owed if you do something" side of the split.
                 repositioning = Sum(LedgerCategory.AircraftRepositioning),
-                other = Sum(LedgerCategory.GsxServices),
                 total = variableTotal,
             },
             revenue = new

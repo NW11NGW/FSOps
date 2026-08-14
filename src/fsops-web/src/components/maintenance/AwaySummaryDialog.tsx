@@ -45,7 +45,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   LoanPayment: 'Loan payment',
   AircraftPurchase: 'Aircraft purchase/sale',
   Insurance: 'Insurance',
-  GsxServices: 'GSX services',
   StartingCapital: 'Starting capital',
   LoanProceeds: 'Loan proceeds',
   CancellationFee: 'Cancellation fees',

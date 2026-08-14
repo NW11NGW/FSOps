@@ -141,7 +141,6 @@ public enum LedgerCategory
     LoanPayment,
     AircraftPurchase,
     Insurance,
-    GsxServices,
     StartingCapital,
     LoanProceeds,
 

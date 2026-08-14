@@ -124,7 +124,6 @@ export interface FinanceVariableCosts {
   maintenance: number
   crew: number
   cancellationFees: number
-  other: number
   total: number
 }
 

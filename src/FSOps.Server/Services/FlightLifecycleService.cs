@@ -331,7 +331,7 @@ public sealed class FlightLifecycleService : IHostedService
         {
             // Nothing is baselined until the engines are genuinely running - between "Start
             // flight" and engine start, the tank can move for reasons that are not burn at all
-            // (MSFS's own spawn load, a menu fuel set, a GSX uplift before startup), and none of
+            // (MSFS's own spawn load, a menu fuel set, a ground-crew uplift before startup), and none of
             // that may ever be read as burn. Locks in exactly once, at whatever this very sample
             // reads - not tracker.LastFuelKg, which could differ if the tank changed between the
             // last pre-start sample and this one.
@@ -1034,7 +1034,7 @@ public sealed class FlightLifecycleService : IHostedService
         /// continuous regardless of momentary engine state. Null until the engines are first seen
         /// running - deliberately NOT the same as <see cref="FirstSampleFuelKg"/>, since between
         /// "Start flight" and engine start the tank can move for reasons that are not burn (a
-        /// spawn load, a menu fuel set, a GSX uplift before startup).</summary>
+        /// spawn load, a menu fuel set, a ground-crew uplift before startup).</summary>
         public double? EngineStartFuelKg { get; set; }
 
         /// <summary>Running sum of every fuel DECREASE observed WHILE THE ENGINES WERE RUNNING,
