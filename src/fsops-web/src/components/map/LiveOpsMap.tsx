@@ -677,20 +677,30 @@ export function LiveOpsMap({
     const resync = () => sync(false)
     ;(map as unknown as { __fsopsResync?: () => void }).__fsopsResync = resync
 
+    // The marker collections are captured here, in the effect body, rather than read as
+    // `someRef.current` inside the cleanup below. Reading a ref in cleanup is unsafe in general -
+    // React runs cleanup after the ref may already point somewhere else - and these particular refs
+    // hold one Map each, created once at mount and never reassigned, so capturing them is exactly
+    // equivalent while being provably safe rather than safe by inspection.
+    const markers = markersRef.current
+    const airportMarkers = airportMarkersRef.current
+    const controllerMarkers = controllerMarkersRef.current
+    const trafficMarkers = trafficMarkersRef.current
+
     return () => {
       observer.disconnect()
       clearTimeout(viewportTimer)
-      for (const entry of markersRef.current.values()) {
+      for (const entry of markers.values()) {
         if (entry.animationFrame !== null) cancelAnimationFrame(entry.animationFrame)
         entry.marker.remove()
       }
-      markersRef.current.clear()
-      for (const marker of airportMarkersRef.current.values()) marker.remove()
-      airportMarkersRef.current.clear()
-      for (const marker of controllerMarkersRef.current.values()) marker.remove()
-      controllerMarkersRef.current.clear()
-      for (const marker of trafficMarkersRef.current.values()) marker.remove()
-      trafficMarkersRef.current.clear()
+      markers.clear()
+      for (const marker of airportMarkers.values()) marker.remove()
+      airportMarkers.clear()
+      for (const marker of controllerMarkers.values()) marker.remove()
+      controllerMarkers.clear()
+      for (const marker of trafficMarkers.values()) marker.remove()
+      trafficMarkers.clear()
       map.remove()
       mapRef.current = null
       firedInitialFitRef.current = false

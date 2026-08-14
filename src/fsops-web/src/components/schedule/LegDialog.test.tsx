@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DraftWeek } from './draftEntry'
 import { LegDialog } from './LegDialog'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { flush, mount, text } from '@/test/domHarness'
 import { settingsResponseFor } from '@/test/settingsStub'
 import type { LegOptionsResponse } from '@/types/schedule'

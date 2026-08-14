@@ -704,10 +704,16 @@ export function RouteMap({
     })
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] })
 
+    // Captured in the effect body rather than read as `markersRef.current` in the cleanup below:
+    // React runs cleanup after a ref may already point somewhere else, and although this one holds
+    // a single Map created at mount and never reassigned, capturing it makes that provable rather
+    // than something the next reader has to verify by inspection.
+    const markers = markersRef.current
+
     return () => {
       observer.disconnect()
-      for (const entry of markersRef.current.values()) entry.marker.remove()
-      markersRef.current.clear()
+      for (const entry of markers.values()) entry.marker.remove()
+      markers.clear()
       map.remove()
       mapRef.current = null
     }

@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, CalendarClock, LayoutGrid, Loader2, Plane, Plus, TrendingDown, Trash2, Users } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Info, LayoutGrid, Loader2, Plane, Plus, TrendingDown, Trash2, Users } from 'lucide-react'
 
 import { PilotScheduleDialog } from '@/components/schedule/PilotScheduleDialog'
 import { ScheduleOverview } from '@/components/schedule/ScheduleOverview'
+import { StalledScheduleNotice } from '@/components/schedule/StalledScheduleNotice'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Badge } from '@/components/ui/badge'
@@ -108,7 +109,9 @@ export function Pilots() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="roster">
+        <TabsContent value="roster" className="space-y-4">
+      {pilotsQuery.status === 'ready' && <StalledScheduleNotice pilots={pilotsQuery.pilots} />}
+
       <Card>
         <CardContent className="p-0">
           {pilotsQuery.status === 'loading' && (
@@ -158,6 +161,7 @@ export function Pilots() {
                 {pilotsQuery.pilots.map((pilot) => {
                   const status = STATUS_BADGE[pilot.status]
                   const skillStatus = pilotSkillStatus(pilot)
+                  const stalls = pilot.scheduleStalls ?? []
                   return (
                     <TableRow key={pilot.id}>
                       <TableCell>
@@ -200,6 +204,18 @@ export function Pilots() {
                         ) : (
                           <span>Not scheduled</span>
                         )}
+                        {/* Marks WHICH row the notice above is about. Says which aircraft and where
+                         *  it is, because with several pilots listed "one of these has stopped" is
+                         *  not enough to act on; the full explanation and the way out stay in the
+                         *  notice rather than being repeated per row. */}
+                        {stalls.map((stall) => (
+                          <p key={stall.fleetAircraftId} className="mt-1 flex items-start gap-1.5 text-xs text-warning">
+                            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                            <span className="min-w-0 break-words">
+                              Stopped — {stall.registration} is at {stall.locationIcao}, not {stall.patternStartIcao}
+                            </span>
+                          </p>
+                        ))}
                       </TableCell>
                       <TableCell>
                         {pilot.isPlayer ? (

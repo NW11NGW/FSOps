@@ -25,12 +25,22 @@ interface FlightHistoryListProps {
   onView: (flight: Flight) => void
 }
 
+/* Record<FlightStatus, ...> on purpose rather than a partial map: a status with no entry here
+ * renders an undefined variant, which is how the three virtual-pilot outcomes below went unstyled
+ * in flight history until 2026-08-14 - GET /flights returns them like any other row. Keeping this
+ * total means the next status added to the backend enum fails the build here instead of quietly
+ * appearing as an unstyled badge. */
 const STATUS_BADGE: Record<FlightStatus, 'success' | 'muted' | 'warning' | 'danger' | 'secondary'> = {
   Completed: 'success',
   InProgress: 'secondary',
   Interrupted: 'warning',
   Abandoned: 'danger',
-  Planned: 'muted',
+  // A sector that could not fly. Skipped costs nothing (Casual), Cancelled costs a fee
+  // (True-life), and Suspended is the schedule pausing itself around a maintenance check - which is
+  // the app working correctly, so it stays neutral rather than reading as a problem.
+  Skipped: 'warning',
+  Cancelled: 'danger',
+  Suspended: 'muted',
 }
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' })

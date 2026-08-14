@@ -68,6 +68,14 @@ jobs:
         working-directory: src/fsops-web
         run: npx tsc --noEmit
 
+      # --deny-warnings for the same reason the .NET build uses -warnaserror, and it is not
+      # optional: oxlint exits 0 with warnings on stdout, so a plain `npm run lint` step here would
+      # go green with every warning it found and the linter would be running without ever being
+      # able to fail. The web lint is currently clean; this is what keeps it that way.
+      - name: Lint web
+        working-directory: src/fsops-web
+        run: npm run lint -- --deny-warnings
+
       - name: Test web
         working-directory: src/fsops-web
         run: npm run test:run

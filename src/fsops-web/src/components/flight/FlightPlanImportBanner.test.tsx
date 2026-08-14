@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
 import { FlightPlanImportBanner } from './FlightPlanImportBanner'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import type { FlightPlanImportStatus } from '@/hooks/useFlightPlanImport'
 import { click, flush, getByRole, isDisabled, mount, queryAllByRole, text } from '@/test/domHarness'
 import { TEST_CURRENCIES, TEST_SETTINGS } from '@/test/settingsStub'

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RouteSelector } from './RouteSelector'
 import type { AircraftOptionRow, RoutePairRow, RouteRow } from './routeRow'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { click, flush, mount, queryAllByRole, text, typeInto } from '@/test/domHarness'
 import { settingsResponseFor } from '@/test/settingsStub'
 

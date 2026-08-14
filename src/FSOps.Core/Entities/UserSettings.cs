@@ -25,15 +25,6 @@ public class UserSettings
 
     public string Theme { get; set; } = "dark";
 
-    /// <summary>
-    /// Vestigial. This held the MSFS Community folder path for the in-game toolbar panel, which has
-    /// been removed from the product; nothing reads or writes it any more. It is kept only so the
-    /// column can be dropped in its own migration later, with the non-destructive proof a table
-    /// rebuild deserves - deleting the property here would desync the model snapshot and hand the
-    /// next unrelated migration a silent DropColumn. Do not wire anything new to it.
-    /// </summary>
-    public string? CommunityFolderPath { get; set; }
-
     public string? SimBriefPilotId { get; set; }
 
     /// <summary>

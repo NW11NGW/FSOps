@@ -60,6 +60,17 @@ public static class PilotEndpoints
             .ThenBy(p => p.CreatedUtc)
             .ToList();
 
+        // Every pilot currently airborne, in ONE query for the whole roster rather than one per
+        // row - see BuildSummary for why status is derived at all. "Has this pilot got a standing
+        // schedule" is the other half of the derivation and costs nothing extra: the weekly summary
+        // below already counts their legs.
+        var flyingPilotIds = await LoadFlyingPilotIdsAsync(db, airline.Id, ct);
+
+        // Which of this airline's saved patterns have quietly stopped producing flights, and which
+        // pilots that hits. Airline-wide in one pass, because an aircraft's chain spans every pilot
+        // that touches it - see LoadStalledAircraftByPilotAsync.
+        var stalledByPilot = await LoadStalledAircraftByPilotAsync(db, airline.Id, ct);
+
         var now = DateTimeOffset.UtcNow;
         var summaries = new List<object>();
         foreach (var pilot in pilots)
@@ -68,54 +79,176 @@ public static class PilotEndpoints
                 ? WeeklySummary.None
                 : await ComputeWeeklySummaryAsync(db, airline, economyConfig, pilot.Id, ct);
 
-            // SkillRating is only refreshed on disk each time VirtualFlightResolverService's
-            // periodic pass runs (see its ApplyIdlePilotSkillDecay) - a pilot left idle between
-            // passes could otherwise show a figure that's already stale by the time the player
-            // looks at it. PilotSkillCalculator.Compute is pure and safe to call for display at any
-            // time (see its own doc), so this always shows the true-right-now number rather than
-            // whatever the last resolver tick happened to write. EarnedSkillRating is the same
-            // pilot's hours-only figure with no idle decay applied, so the UI can show "earned X,
-            // currently Y" rather than a smaller number with no explanation. Decay has to be
-            // visible and understandable before it bites, or it just reads as the app taking
-            // something away.
-            var liveSkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, pilot.LastFlewUtc, now, economyConfig.PilotSkill);
-            var earnedSkillRating = PilotSkillCalculator.ComputeEarnedSkill(pilot.HoursFlown, economyConfig.PilotSkill);
-
-            double? idleDays = null;
-            bool isDecaying = false;
-            double? decayGraceDaysRemaining = null;
-            if (!pilot.IsPlayer && pilot.LastFlewUtc is { } lastFlew)
-            {
-                var idleHours = Math.Max(0, (now - lastFlew).TotalHours);
-                idleDays = Math.Round(idleHours / 24.0, 1);
-                isDecaying = idleHours > economyConfig.PilotSkill.IdleGracePeriodHours;
-                decayGraceDaysRemaining = isDecaying
-                    ? 0
-                    : Math.Round((economyConfig.PilotSkill.IdleGracePeriodHours - idleHours) / 24.0, 1);
-            }
-
-            summaries.Add(new
-            {
-                pilot.Id,
-                pilot.Name,
-                pilot.IsPlayer,
-                pilot.MonthlySalary,
-                pilot.HoursFlown,
-                SkillRating = Math.Round(liveSkillRating, 1),
-                EarnedSkillRating = Math.Round(earnedSkillRating, 1),
-                pilot.LastFlewUtc,
-                IdleDays = idleDays,
-                IsDecaying = isDecaying,
-                DecayGraceDaysRemaining = decayGraceDaysRemaining,
-                Status = pilot.Status.ToString(),
-                pilot.CreatedUtc,
-                sectorsPerWeek = weekly.SectorsPerWeek,
-                weeklyEstimatedRevenue = weekly.EstimatedRevenue,
-                weeklyEstimatedCost = weekly.EstimatedCost,
-            });
+            IReadOnlyList<StalledAircraft> stalled = stalledByPilot.TryGetValue(pilot.Id, out var s)
+                ? s
+                : Array.Empty<StalledAircraft>();
+            summaries.Add(BuildSummary(pilot, weekly, flyingPilotIds.Contains(pilot.Id), stalled, now, economyConfig));
         }
 
         return Results.Ok(summaries);
+    }
+
+    /// <summary>
+    /// Works out, for the whole airline in one pass, which pilots have a standing schedule that can
+    /// no longer produce a flight because its aircraft is parked somewhere the pattern never departs
+    /// from - see <see cref="ScheduleStallDetector"/> for exactly when that is and is not true.
+    /// <para>
+    /// The detection is airline-wide rather than per pilot because an aircraft's weekly chain is:
+    /// two pilots can share an airframe, and whether it can be moved at all depends on every leg
+    /// scheduled on it, not just this pilot's. Attribution then goes the other way - a stalled
+    /// aircraft is reported to every pilot who has legs on it, since it has stopped all of their
+    /// sectors equally and any of them is a reasonable place for the player to notice.
+    /// </para>
+    /// </summary>
+    private static async Task<Dictionary<Guid, List<StalledAircraft>>> LoadStalledAircraftByPilotAsync(
+        FsOpsDbContext db, Guid airlineId, CancellationToken ct)
+    {
+        var schedules = await db.PilotSchedules.Where(s => s.AirlineId == airlineId).ToListAsync(ct);
+        if (schedules.Count == 0)
+        {
+            return new Dictionary<Guid, List<StalledAircraft>>();
+        }
+
+        var scheduleIds = schedules.Select(s => s.Id).ToList();
+        var pilotIdByScheduleId = schedules.ToDictionary(s => s.Id, s => s.PilotId);
+
+        var entries = await db.PilotScheduleEntries.Where(e => scheduleIds.Contains(e.PilotScheduleId)).ToListAsync(ct);
+        if (entries.Count == 0)
+        {
+            return new Dictionary<Guid, List<StalledAircraft>>();
+        }
+
+        var routeIds = entries.Select(e => e.RouteId).Distinct().ToList();
+        var routesById = await db.Routes.Where(r => routeIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
+        var fleet = await db.FleetAircraft.Where(f => f.AirlineId == airlineId).ToListAsync(ct);
+
+        var legs = entries
+            .Where(e => routesById.ContainsKey(e.RouteId))
+            .Select(e => new ScheduledLegPosition(e.FleetAircraftId, e.DayOfWeek, e.DepartureTimeUtc, routesById[e.RouteId].DepartureIcao))
+            .ToList();
+
+        var stalled = ScheduleStallDetector.Detect(fleet, legs);
+        if (stalled.Count == 0)
+        {
+            return new Dictionary<Guid, List<StalledAircraft>>();
+        }
+
+        var stalledById = stalled.ToDictionary(s => s.FleetAircraftId);
+        var byPilot = new Dictionary<Guid, List<StalledAircraft>>();
+        foreach (var entry in entries)
+        {
+            if (!stalledById.TryGetValue(entry.FleetAircraftId, out var aircraft) ||
+                !pilotIdByScheduleId.TryGetValue(entry.PilotScheduleId, out var pilotId))
+            {
+                continue;
+            }
+
+            if (!byPilot.TryGetValue(pilotId, out var list))
+            {
+                list = new List<StalledAircraft>();
+                byPilot[pilotId] = list;
+            }
+
+            if (!list.Contains(aircraft))
+            {
+                list.Add(aircraft);
+            }
+        }
+
+        return byPilot;
+    }
+
+    /// <summary>
+    /// The one shape GET /pilots and POST /pilots both answer in. Shared on purpose: the hire
+    /// response is pushed straight into the roster the player is looking at (see usePilots.hire),
+    /// so a hire that answered in the raw entity's shape would put a row on screen missing every
+    /// derived field the list computes - and, before this, a <c>status</c> read off the column
+    /// rather than derived like every other row's.
+    /// </summary>
+    private static object BuildSummary(
+        Pilot pilot,
+        WeeklySummary weekly,
+        bool isFlying,
+        IReadOnlyList<StalledAircraft> stalledAircraft,
+        DateTimeOffset now,
+        EconomyConfig economyConfig)
+    {
+        // SkillRating is only refreshed on disk each time VirtualFlightResolverService's
+        // periodic pass runs (see its ApplyIdlePilotSkillDecay) - a pilot left idle between
+        // passes could otherwise show a figure that's already stale by the time the player
+        // looks at it. PilotSkillCalculator.Compute is pure and safe to call for display at any
+        // time (see its own doc), so this always shows the true-right-now number rather than
+        // whatever the last resolver tick happened to write. EarnedSkillRating is the same
+        // pilot's hours-only figure with no idle decay applied, so the UI can show "earned X,
+        // currently Y" rather than a smaller number with no explanation. Decay has to be
+        // visible and understandable before it bites, or it just reads as the app taking
+        // something away.
+        var liveSkillRating = PilotSkillCalculator.Compute(pilot.HoursFlown, pilot.LastFlewUtc, now, economyConfig.PilotSkill);
+        var earnedSkillRating = PilotSkillCalculator.ComputeEarnedSkill(pilot.HoursFlown, economyConfig.PilotSkill);
+
+        double? idleDays = null;
+        bool isDecaying = false;
+        double? decayGraceDaysRemaining = null;
+        if (!pilot.IsPlayer && pilot.LastFlewUtc is { } lastFlew)
+        {
+            var idleHours = Math.Max(0, (now - lastFlew).TotalHours);
+            idleDays = Math.Round(idleHours / 24.0, 1);
+            isDecaying = idleHours > economyConfig.PilotSkill.IdleGracePeriodHours;
+            decayGraceDaysRemaining = isDecaying
+                ? 0
+                : Math.Round((economyConfig.PilotSkill.IdleGracePeriodHours - idleHours) / 24.0, 1);
+        }
+
+        // Derived here and now, never read from a column - see PilotStatusCalculator's own doc for
+        // why a stored status is wrong by construction. weekly.SectorsPerWeek is the count of legs
+        // on this pilot's saved schedule, which is exactly the "have they got a standing pattern"
+        // input the calculator wants, so deriving this costs no extra query.
+        var status = PilotStatusCalculator.Resolve(
+            pilot.IsPlayer, isFlying, weekly.SectorsPerWeek > 0, pilot.LastFlewUtc, pilot.CreatedUtc, now, economyConfig.PilotSkill);
+
+        return new
+        {
+            pilot.Id,
+            pilot.Name,
+            pilot.IsPlayer,
+            pilot.MonthlySalary,
+            pilot.HoursFlown,
+            SkillRating = Math.Round(liveSkillRating, 1),
+            EarnedSkillRating = Math.Round(earnedSkillRating, 1),
+            pilot.LastFlewUtc,
+            IdleDays = idleDays,
+            IsDecaying = isDecaying,
+            DecayGraceDaysRemaining = decayGraceDaysRemaining,
+            Status = status.ToString(),
+            pilot.CreatedUtc,
+            sectorsPerWeek = weekly.SectorsPerWeek,
+            weeklyEstimatedRevenue = weekly.EstimatedRevenue,
+            weeklyEstimatedCost = weekly.EstimatedCost,
+            // Information, never an error: the schedule is valid and still rolling, and this is only
+            // ever "here is why nothing is happening, and here are the two ways out". Empty for the
+            // overwhelmingly common case, so the UI shows nothing at all rather than an all-clear.
+            scheduleStalls = stalledAircraft.Select(s => new
+            {
+                fleetAircraftId = s.FleetAircraftId,
+                registration = s.Registration,
+                locationIcao = s.LocationIcao,
+                patternStartIcao = s.PatternStartIcao,
+                message = s.Message,
+            }).ToList(),
+        };
+    }
+
+    /// <summary>Every pilot of this airline with a sector in the air right now, as one query for
+    /// the whole roster. The flight row is the only source consulted - see
+    /// <see cref="PilotStatusCalculator"/>.</summary>
+    private static async Task<HashSet<Guid>> LoadFlyingPilotIdsAsync(FsOpsDbContext db, Guid airlineId, CancellationToken ct)
+    {
+        var ids = await db.Flights
+            .Where(f => f.AirlineId == airlineId && f.Status == FlightStatus.InProgress)
+            .Select(f => f.PilotId)
+            .Distinct()
+            .ToListAsync(ct);
+        return ids.ToHashSet();
     }
 
     /// <summary>
@@ -161,7 +294,6 @@ public static class PilotEndpoints
             // plan for varying this at hire time, and a fixed, known starting skill keeps "hire a
             // pilot, give them a schedule" tests exact-value rather than probabilistic.
             SkillRating = 50,
-            Status = PilotStatus.Available,
             CreatedUtc = now,
         };
 
@@ -169,7 +301,12 @@ public static class PilotEndpoints
         await db.SaveChangesAsync(ct);
 
         var cashBalance = await CashBalanceAsync(db, airline.Id, ct);
-        return Results.Created($"/api/v1/pilots/{pilot.Id}", new { pilot, cashBalance });
+
+        // Answered in the same shape GET /pilots uses, because the client pushes this straight into
+        // the roster it is already showing rather than refetching. A brand-new pilot has no schedule
+        // and cannot be airborne, so both derived inputs are known without asking the database.
+        var summary = BuildSummary(pilot, WeeklySummary.None, isFlying: false, Array.Empty<StalledAircraft>(), now, economyConfig);
+        return Results.Created($"/api/v1/pilots/{pilot.Id}", new { pilot = summary, cashBalance });
     }
 
     internal static async Task<IResult> ReleaseAsync(Guid id, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -193,9 +330,11 @@ public static class PilotEndpoints
 
         // Releasing soft-deletes the pilot and cascades to their schedule below, so doing it to
         // someone with a sector in the air would leave that flight owned by a deleted pilot -
-        // recoverable, but only by hand. Refuse instead. Note this cannot lean on Pilot.Status:
-        // that column only ever reads Available (nothing in the app writes Flying), so the flight
-        // itself is the sole reliable answer to "are they up right now".
+        // recoverable, but only by hand. Refuse instead. This asks the flight row directly and must
+        // keep doing so. The derived status (see PilotStatusCalculator) is now trustworthy and would
+        // give the same answer, but it would give it by asking this same row one level further away:
+        // routing a refusal through a display-shaped value buys nothing and loses the guarantee that
+        // what is checked here is exactly what is true. The stronger source stays the source.
         var flightInProgress = await db.Flights
             .AnyAsync(f => f.PilotId == pilot.Id && f.Status == FlightStatus.InProgress, ct);
         if (flightInProgress)

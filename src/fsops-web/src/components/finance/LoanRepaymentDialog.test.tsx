@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LoanRepaymentDialog } from './LoanRepaymentDialog'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { ApiError } from '@/lib/api'
 import { click, findButton, flush, mount, typeInto } from '@/test/domHarness'
 import type { FinanceLoan, LoanSettlementQuote } from '@/types/finance'

@@ -228,7 +228,6 @@ public class WorldDataRefreshNonDestructiveTests : IDisposable
             Id = PilotId,
             AirlineId = AirlineId,
             Name = "R. Whitfield",
-            Status = PilotStatus.Available,
             HoursFlown = 640.5,
             SkillRating = 58.5,
             MonthlySalary = 4200m,

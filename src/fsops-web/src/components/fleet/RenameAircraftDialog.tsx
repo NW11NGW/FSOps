@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Shuffle } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -38,8 +38,17 @@ export function RenameAircraftDialog({ aircraft, onOpenChange, onSuccess }: Rena
   // elsewhere in the tree), so a reference-identity dependency here would reset the registration
   // field on every unrelated re-render - wiping out whatever the player had just typed. Same fix
   // as EndLeaseDialog's `target?.id` / SellAircraftDialog's `aircraft?.id` dependency.
+  // Read through a ref rather than as a dependency, and that distinction is the whole point: this
+  // effect SEEDS the field when the dialog opens on a different aircraft; it is not there to keep
+  // the field in sync with the prop. Depending on the registration would re-run it whenever the
+  // value changed underneath - including the instant a rename succeeds and the parent's list
+  // refreshes - overwriting whatever the player had typed. A ref carries the current value in
+  // without making it something the effect reacts to.
+  const registrationRef = useRef(aircraft?.registration)
+  registrationRef.current = aircraft?.registration
+
   useEffect(() => {
-    setRegistration(aircraft?.registration ?? '')
+    setRegistration(registrationRef.current ?? '')
     setError(null)
   }, [aircraft?.id])
 

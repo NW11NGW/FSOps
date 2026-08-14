@@ -31,4 +31,9 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   return <div className={cn(badgeVariants({ variant }), className)} {...props} />
 }
 
-export { Badge, badgeVariants }
+// Only the component is exported. `badgeVariants` is module-private on purpose: nothing outside
+// this file uses it, and a module that exports both a component and a plain value defeats Vite's
+// Fast Refresh, which then full-reloads the page on every edit instead of preserving state. If a
+// caller ever genuinely needs the class generator (to style a link as a badge, say), move the cva
+// call into its own module rather than re-exporting it from here.
+export { Badge }

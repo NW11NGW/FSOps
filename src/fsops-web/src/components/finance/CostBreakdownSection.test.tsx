@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CostBreakdownSection } from './CostBreakdownSection'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { flush, mount, text } from '@/test/domHarness'
 import { settingsResponseFor } from '@/test/settingsStub'
 import type { FinanceCosts } from '@/types/finance'

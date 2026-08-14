@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SellAircraftDialog } from './SellAircraftDialog'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { click, findButton, flush, mount, typeInto } from '@/test/domHarness'
 import type { FleetAircraftSummary, SaleQuote } from '@/types/fleet'
 

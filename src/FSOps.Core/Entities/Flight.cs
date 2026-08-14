@@ -21,7 +21,16 @@ public class Flight
 
     public Guid PilotId { get; set; }
 
-    public FlightStatus Status { get; set; } = FlightStatus.Planned;
+    /// <summary>
+    /// Defaulted EXPLICITLY to <see cref="FlightStatus.InProgress"/> - which is also what every
+    /// real creation path sets - rather than being left to fall on whichever member happens to be
+    /// declared first. That is not the same thing even though they currently coincide: leaving it
+    /// implicit means reordering the enum silently changes what an unset flight is, and this status
+    /// is persisted as text, so the wrong value here would be written into permanent history rather
+    /// than caught by a compiler. The previous default was <c>Planned</c>, a member nothing ever
+    /// wrote; see <see cref="FlightStatus"/> for why it no longer exists.
+    /// </summary>
+    public FlightStatus Status { get; set; } = FlightStatus.InProgress;
 
     public DateTimeOffset PlannedDepartureUtc { get; set; }
 

@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import { FlightBrief } from './FlightBrief'
 import type { AircraftOptionRow, RouteRow } from './routeRow'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import type { FlightPreviewStatus } from '@/hooks/useFlightPreview'
 import { click, flush, getByRole, isDisabled, mount, queryAllByRole, text } from '@/test/domHarness'
 import { settingsResponseFor } from '@/test/settingsStub'

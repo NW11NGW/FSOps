@@ -28,7 +28,10 @@ public class Pilot
     /// </summary>
     public DateTimeOffset? LastFlewUtc { get; set; }
 
-    public PilotStatus Status { get; set; } = PilotStatus.Available;
+    // No Status column. A pilot's status is DERIVED on every read by PilotStatusCalculator, never
+    // stored - see that type for why a stored one is wrong by construction (it was written once at
+    // hire and never again, so it could only ever say "Available"). The column it replaced was
+    // dropped in the DropPilotStatus migration.
 
     public DateTimeOffset CreatedUtc { get; set; }
 

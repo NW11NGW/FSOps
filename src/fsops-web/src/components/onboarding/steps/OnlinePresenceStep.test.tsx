@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { flush, mount, queryByRole, typeInto } from '@/test/domHarness'
 import { TEST_CURRENCIES, TEST_SETTINGS } from '@/test/settingsStub'
 
