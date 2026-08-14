@@ -656,9 +656,12 @@ public static class FlightEndpoints
     /// figure that did not actually move the bank balance. <c>net</c> is the sum of <b>every</b>
     /// line posted against the flight, which is deliberately the identical figure the flight's own
     /// report card shows as "Net": a player clicking a row must not find a different number on the
-    /// other side of the click. Note this can exceed <c>FinanceEndpoints.RoutesAsync</c>'s per-route
-    /// <c>profit</c> by any <see cref="LedgerCategory.VatsimOnlineBonus"/> line, because that
-    /// endpoint's revenue is ticket revenue alone; both are correct for what they each claim to be.
+    /// other side of the click. It is also the same figure the sector contributes to
+    /// <c>FinanceEndpoints.RoutesAsync</c>'s per-route <c>profit</c>: that endpoint counted ticket
+    /// revenue alone until 2026-08-14, so a sector flown online reported a bigger Net here than the
+    /// route it was flown on reported earning - one flight, two screens, two numbers. Its revenue now
+    /// includes the <see cref="LedgerCategory.VatsimOnlineBonus"/> line, which is posted against this
+    /// very flight, and <c>FinanceEndpointsTests</c> asserts the two agree.
     /// </para>
     /// <para>
     /// <b>Fixed query count, whatever the row count.</b> Routes, aircraft, types, pilots, ledger

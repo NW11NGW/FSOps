@@ -116,6 +116,25 @@ public enum FlightEventType
     Note,
 }
 
+/// <summary>
+/// Stored as text (see LedgerTransactionConfiguration), so member ORDER carries no meaning and
+/// adding one needs no migration.
+/// <para>
+/// There is deliberately no <c>Other</c> member. One was declared until 2026-08-14 and never written
+/// by anything: across every commit ever made it appeared only in this declaration, the TypeScript
+/// union that mirrors it, and two display-label maps - no code path ever assigned it, so no database
+/// can be holding one (the same evidence that settled removing <c>GsxServices</c>, and the same
+/// reason the check matters: a value left behind in a real database would fail to parse on read).
+/// It was worse than merely unused. <c>FinanceEndpoints.CostsAsync</c> summed it into neither the
+/// fixed nor the variable total, so a single row posted under it would have made the Finances page
+/// disagree with the ledger - on the one screen whose whole job is being accurate. It could not
+/// honestly be fixed by adding it to a total either: a catch-all has no answer to "fixed or
+/// variable", which is the only question that page asks. A category that cannot be classified does
+/// not belong on a page that classifies, so it is gone rather than papered over. Anything genuinely
+/// new gets its own member and its own decision, exactly as
+/// <see cref="AircraftRepositioning"/> did.
+/// </para>
+/// </summary>
 public enum LedgerCategory
 {
     TicketRevenue,
@@ -179,15 +198,13 @@ public enum LedgerCategory
     /// The flat charge for moving an idle aircraft to another airport the airline serves without
     /// flying it there - see <see cref="FSOps.Core.Economy.AircraftRepositioningConfig"/> and
     /// FleetRepositionEndpoints. Its own category rather than
-    /// <see cref="Other"/> or <see cref="Handling"/>: the Finances page groups by category, and
+    /// <see cref="Handling"/>: the Finances page groups by category, and
     /// filing a positioning fee under handling would misattribute it to a flight that never
     /// happened - "what did I spend moving aircraft around" is a question the ledger should be able
     /// to answer on its own. Stored as text (see LedgerTransactionConfiguration), so adding this
     /// value needs no migration.
     /// </summary>
     AircraftRepositioning,
-
-    Other,
 }
 
 public enum MaintenanceEventType

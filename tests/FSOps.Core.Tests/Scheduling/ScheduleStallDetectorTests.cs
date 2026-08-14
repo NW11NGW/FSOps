@@ -148,6 +148,61 @@ public class ScheduleStallDetectorTests
         Assert.Contains("still repeating", message);
     }
 
+    /// <summary>
+    /// A player can see the Pilots page notice and the save-time advisory within a minute of each
+    /// other, so they must never disagree. They are worded differently on purpose - nothing has been
+    /// missed yet at the moment a schedule is saved - but the aircraft, where it is, where to get it
+    /// back to, and both ways out are the same facts and come from this one record.
+    /// </summary>
+    [Fact]
+    public void TheSaveTimeMessage_StatesTheSameFactsAndTheSameWaysOut_AsTheRunningScheduleMessage()
+    {
+        var id = Guid.NewGuid();
+        var fleet = new[] { Aircraft(id, "G-STUK", "EGPF") };
+        var legs = new[] { Leg(id, DayOfWeek.Monday, 8, "EGGD"), Leg(id, DayOfWeek.Monday, 12, "EGPH") };
+
+        var stalled = Assert.Single(ScheduleStallDetector.Detect(fleet, legs));
+
+        foreach (var message in new[] { stalled.Message, stalled.SaveTimeMessage })
+        {
+            Assert.Contains("G-STUK", message);
+            Assert.Contains("EGPF", message);
+            Assert.Contains("EGGD", message);
+            Assert.Contains("no leg in this weekly pattern departs from there", message);
+            Assert.Contains("Fly it there yourself, or reposition it from the Fleet page for the standard fee.", message);
+        }
+
+        // Different wording, same situation - the save-time one must not claim occurrences have
+        // already been missed, because at that moment none have.
+        Assert.NotEqual(stalled.Message, stalled.SaveTimeMessage);
+        Assert.Contains("is being recorded as missed", stalled.Message);
+        Assert.DoesNotContain("is being recorded as missed", stalled.SaveTimeMessage);
+    }
+
+    /// <summary>
+    /// <see cref="ScheduleStallDetector.DescribeSavedPattern"/> is the save-time entry point, and it
+    /// draws exactly the same line <see cref="ScheduleStallDetector.Detect"/> does: silent at the
+    /// start, "it picks up there" at any other airport the pattern departs from, and the full
+    /// stalled message only where nothing in the pattern can ever move the aircraft.
+    /// </summary>
+    [Fact]
+    public void DescribeSavedPattern_DrawsTheSameLineAsDetect()
+    {
+        var id = Guid.NewGuid();
+        var legs = new[] { Leg(id, DayOfWeek.Monday, 8, "EGGD"), Leg(id, DayOfWeek.Monday, 12, "EGPH") };
+
+        Assert.Null(ScheduleStallDetector.DescribeSavedPattern(Aircraft(id, "G-HOME", "EGGD"), legs));
+
+        var selfHealing = ScheduleStallDetector.DescribeSavedPattern(Aircraft(id, "G-FINE", "EGPH"), legs);
+        Assert.NotNull(selfHealing);
+        Assert.Contains("EGPH", selfHealing);
+        Assert.Contains("nothing is stuck", selfHealing);
+        Assert.DoesNotContain("Fleet page", selfHealing);
+
+        var stranded = ScheduleStallDetector.DescribeSavedPattern(Aircraft(id, "G-STUK", "EGPF"), legs);
+        Assert.Equal(Assert.Single(ScheduleStallDetector.Detect(new[] { Aircraft(id, "G-STUK", "EGPF") }, legs)).SaveTimeMessage, stranded);
+    }
+
     [Fact]
     public void EachStalledAircraftIsReportedOnce_HoweverManyLegsItHas()
     {

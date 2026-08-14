@@ -118,7 +118,6 @@ export type LedgerCategory =
   // are meant to be the same list, and a union that quietly diverges is how a genuinely-missing
   // category ends up rendering as a raw string one day.
   | 'AircraftRepositioning'
-  | 'Other'
 
 /** One posted LedgerTransaction for a flight - the itemised financial outcome the report card
  *  shows, straight from the append-only ledger rather than a recomputation. */

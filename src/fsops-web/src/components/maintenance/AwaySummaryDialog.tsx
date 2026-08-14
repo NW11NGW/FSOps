@@ -48,7 +48,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   StartingCapital: 'Starting capital',
   LoanProceeds: 'Loan proceeds',
   CancellationFee: 'Cancellation fees',
-  Other: 'Other',
 }
 
 function unresolvedStatusLabel(status: UnflyableOccurrenceSummary['status']): { label: string; variant: 'muted' | 'warning' | 'danger' } {

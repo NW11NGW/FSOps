@@ -674,6 +674,98 @@ public class PilotScheduleValidatorTests
         Assert.Contains(result.Advisories, a => a.Contains("G-ONEX") && a.Contains("EGPF") && a.Contains("EGGD"));
     }
 
+    /// <summary>
+    /// Regression for the 2026-08-14 wording defect. The save-time advisory promised, for EVERY
+    /// out-of-position airframe, that the pattern would start flying "as soon as {aircraft} is back
+    /// at {where the week starts}". That is wrong precisely in the case that repairs itself: G-ONEX
+    /// is at EGPH, and the Monday 10:00 EGPH -&gt; EGGD leg departs from exactly there - so the pattern
+    /// picks up at that leg and never returns to EGGD to begin with. Sending the player off to fetch
+    /// an aircraft that does not need fetching is worse than saying nothing.
+    /// <see cref="ScheduleStallDetector"/> has always drawn this line correctly for the Pilots page;
+    /// the advisory now asks it rather than keeping a second, cruder copy of the rule.
+    /// </summary>
+    [Fact]
+    public void Validate_SavedRollingWeek_AircraftWhereALaterLegDepartsFrom_SaysItPicksUpThere_NotThatItMustReturnToTheStart()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX), // EGGD -> EGPH
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX), // EGPH -> EGGD
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(locationIcao: "EGPH"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Conflicts);
+
+        var advisory = Assert.Single(result.Advisories);
+        Assert.Contains("G-ONEX", advisory);
+        Assert.Contains("EGPH", advisory);
+        Assert.Contains("nothing is stuck", advisory);
+        // The two things the old message got wrong: it must not claim the aircraft has to get back
+        // to the start, and it must not offer the repositioning fee as a way out of a situation that
+        // costs nothing to resolve.
+        Assert.DoesNotContain("is back at EGGD", advisory);
+        Assert.DoesNotContain("Fleet page", advisory);
+    }
+
+    /// <summary>
+    /// The other half of the same defect: when the aircraft really is somewhere no leg departs from,
+    /// the save-time advisory has to say so and offer the two ways out - and say the same thing the
+    /// Pilots page will say about the identical aircraft, since a player can see both within a
+    /// minute of each other. Asserted by driving <see cref="ScheduleStallDetector.Detect"/> over the
+    /// same facts and comparing, rather than by restating either string here, so the two cannot pass
+    /// this test while disagreeing.
+    /// </summary>
+    [Fact]
+    public void Validate_SavedRollingWeek_AircraftWhereNoLegDeparts_SaysTheSameThingAsThePilotsPage()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var fleet = Fleet(locationIcao: "EGPF");
+        var result = PilotScheduleValidator.Validate(entries, Routes(), fleet, AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        var advisory = Assert.Single(result.Advisories);
+        Assert.Contains("EGPF", advisory);
+        Assert.Contains("EGGD", advisory); // where to get it back to
+        Assert.Contains("Fleet page", advisory); // the paid way out
+        Assert.DoesNotContain("nothing is stuck", advisory);
+
+        var legs = new[]
+        {
+            new ScheduledLegPosition(AircraftX, DayOfWeek.Monday, TimeSpan.FromHours(8), "EGGD"),
+            new ScheduledLegPosition(AircraftX, DayOfWeek.Monday, TimeSpan.FromHours(10), "EGPH"),
+        };
+        var stalled = Assert.Single(ScheduleStallDetector.Detect(new[] { fleet[AircraftX] }, legs));
+
+        // Same aircraft, same airport it is at, same airport to get it back to - the two screens
+        // cannot be describing different situations.
+        Assert.Equal(stalled.SaveTimeMessage, advisory);
+        Assert.Contains(stalled.LocationIcao, stalled.Message);
+        Assert.Contains(stalled.PatternStartIcao, stalled.Message);
+        Assert.Contains(stalled.LocationIcao, advisory);
+        Assert.Contains(stalled.PatternStartIcao, advisory);
+    }
+
+    [Fact]
+    public void Validate_SavedRollingWeek_AircraftExactlyWhereTheWeekStarts_SaysNothing()
+    {
+        var entries = new[]
+        {
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(8), RouteOut, AircraftX),
+            new PilotScheduleEntryInput(PilotA, DayOfWeek.Monday, TimeSpan.FromHours(10), RouteBack, AircraftX),
+        };
+
+        var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(locationIcao: "EGGD"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Advisories);
+    }
+
     [Fact]
     public void Validate_SavedRollingWeek_AircraftInFlight_SaysNothingAtAll()
     {
