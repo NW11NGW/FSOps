@@ -26,10 +26,19 @@ public class UpdateCheckerTests : IDisposable
 
     public void Dispose() => _storage.Dispose();
 
-    private UpdateChecker CreateChecker(FakeReleaseHttpHandler handler, FakeClock clock, string currentVersion = "0.1.0")
+    private UpdateChecker CreateChecker(
+        FakeReleaseHttpHandler handler,
+        FakeClock clock,
+        string currentVersion = "0.1.0",
+        IUpdateChannelStore? channels = null)
     {
         var client = new GitHubReleaseClient(new FakeHttpClientFactory(handler), NullLogger<GitHubReleaseClient>.Instance);
-        return new UpdateChecker(client, _storage, clock, NullLogger<UpdateChecker>.Instance)
+        return new UpdateChecker(
+            client,
+            _storage,
+            channels ?? new FakeUpdateChannelStore(),
+            clock,
+            NullLogger<UpdateChecker>.Instance)
         {
             CurrentVersion = currentVersion,
         };
@@ -104,7 +113,7 @@ public class UpdateCheckerTests : IDisposable
         var handler = new FakeReleaseHttpHandler().WhenJson(ReleaseApiUrl, ReleaseJson());
         var checker = CreateChecker(handler, new FakeClock(Base));
 
-        checker.SetEnabled(false);
+        await checker.SetEnabledAsync(false, CancellationToken.None);
         var status = await checker.CheckAsync(force: true, CancellationToken.None);
 
         Assert.Empty(handler.RequestedUrls);
@@ -114,12 +123,12 @@ public class UpdateCheckerTests : IDisposable
     }
 
     [Fact]
-    public void Disabled_BackgroundCheckDoesNothing_AndOpensNoConnection()
+    public async Task Disabled_BackgroundCheckDoesNothing_AndOpensNoConnection()
     {
         var handler = new FakeReleaseHttpHandler().WhenJson(ReleaseApiUrl, ReleaseJson());
         var checker = CreateChecker(handler, new FakeClock(Base));
 
-        checker.SetEnabled(false);
+        await checker.SetEnabledAsync(false, CancellationToken.None);
         checker.BeginBackgroundCheck();
 
         Assert.Empty(handler.RequestedUrls);
@@ -138,7 +147,7 @@ public class UpdateCheckerTests : IDisposable
         await checker.CheckAsync(force: true, CancellationToken.None);
         var requestsAfterCheck = handler.CallCount;
 
-        checker.SetEnabled(false);
+        await checker.SetEnabledAsync(false, CancellationToken.None);
         var status = await checker.DownloadAsync(CancellationToken.None);
 
         Assert.Equal(requestsAfterCheck, handler.CallCount);
@@ -162,10 +171,10 @@ public class UpdateCheckerTests : IDisposable
         var filePath = Path.Combine(_storage.UpdatesDirectory, "FSOps-Setup-0.2.0.exe");
         Assert.True(File.Exists(filePath));
 
-        checker.SetEnabled(false);
+        await checker.SetEnabledAsync(false, CancellationToken.None);
         Assert.False(File.Exists(filePath));
 
-        var status = checker.SetEnabled(true);
+        var status = await checker.SetEnabledAsync(true, CancellationToken.None);
         Assert.NotEqual(UpdateDownloadStates.Ready, status.DownloadState);
         Assert.Null(status.DownloadFileName);
     }
@@ -422,6 +431,36 @@ public class UpdateCheckerTests : IDisposable
 
         Assert.Equal("FSOps-Setup-0.2.0.exe", UpdateChecker.SafeAssetFileName("FSOps-Setup-0.2.0.exe"));
         Assert.Equal("FSOps_Setup.exe", UpdateChecker.SafeAssetFileName("FSOps_Setup.exe"));
+
+        // The name a beta build produces. Checked rather than assumed: the development channel is
+        // pointless if the installer it offers is one this filter throws away, and it would fail
+        // silently - the release would be announced and the download simply never offered.
+        Assert.Equal(
+            "FSOps-Setup-1.1.0-beta.1.exe",
+            UpdateChecker.SafeAssetFileName("FSOps-Setup-1.1.0-beta.1.exe"));
+        Assert.Equal(
+            "FSOps-Setup-1.1.0-beta.1.exe.sha256",
+            UpdateChecker.SafeAssetFileName("FSOps-Setup-1.1.0-beta.1.exe.sha256"));
+    }
+
+    /// <summary>
+    /// And the assets of a beta release are actually selected, not merely survivable as filenames.
+    /// The installer/checksum pairing is what <c>CanDownload</c> rests on.
+    /// </summary>
+    [Fact]
+    public void ABetaReleasesInstallerAndChecksum_AreBothSelected()
+    {
+        const string name = "FSOps-Setup-1.1.0-beta.1.exe";
+        var assets = new List<ReleaseAsset>
+        {
+            new(name, new Uri($"https://github.com/NW11NGW/FSOps/releases/download/v1.1.0-beta.1/{name}"), 1024),
+            new($"{name}.sha256", new Uri($"https://github.com/NW11NGW/FSOps/releases/download/v1.1.0-beta.1/{name}.sha256"), 80),
+        };
+
+        var installer = UpdateChecker.SelectInstallerAsset(assets);
+        Assert.NotNull(installer);
+        Assert.Equal(name, installer.Name);
+        Assert.NotNull(UpdateChecker.SelectChecksumAsset(assets, installer));
     }
 
     [Fact]
@@ -523,7 +562,7 @@ public class UpdateCheckerTests : IDisposable
         var status = await checker.CheckAsync(force: true, CancellationToken.None);
 
         Assert.False(status.Checking);
-        Assert.False(checker.GetStatus().Checking);
+        Assert.False((await checker.GetStatusAsync(CancellationToken.None)).Checking);
     }
 
     [Fact]
@@ -539,14 +578,14 @@ public class UpdateCheckerTests : IDisposable
     }
 
     [Fact]
-    public void StatusEndpointsView_NeverWaitsOnTheNetwork()
+    public async Task StatusEndpointsView_NeverWaitsOnTheNetwork()
     {
-        // GetStatus does no network I/O at all - proven here by there being no route registered for
-        // the API at all: an implementation that fetched would 404 and mark the check failed.
+        // GetStatusAsync does no network I/O at all - proven here by there being no route registered
+        // for the API at all: an implementation that fetched would 404 and mark the check failed.
         var handler = new FakeReleaseHttpHandler();
         var checker = CreateChecker(handler, new FakeClock(Base));
 
-        var status = checker.GetStatus();
+        var status = await checker.GetStatusAsync(CancellationToken.None);
 
         Assert.Empty(handler.RequestedUrls);
         Assert.False(status.UpdateAvailable);
@@ -565,7 +604,7 @@ public class UpdateCheckerTests : IDisposable
         var checker = CreateChecker(handler, clock);
 
         await checker.CheckAsync(force: true, CancellationToken.None);
-        var dismissed = checker.Dismiss();
+        var dismissed = await checker.DismissAsync(CancellationToken.None);
 
         Assert.True(dismissed.UpdateAvailable);
         Assert.True(dismissed.Dismissed);
@@ -587,7 +626,7 @@ public class UpdateCheckerTests : IDisposable
         var checker = CreateChecker(handler, clock);
 
         await checker.CheckAsync(force: true, CancellationToken.None);
-        checker.Dismiss();
+        await checker.DismissAsync(CancellationToken.None);
 
         clock.UtcNow = Base.AddDays(2);
         var status = await checker.CheckAsync(force: false, CancellationToken.None);

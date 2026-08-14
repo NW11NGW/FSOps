@@ -11,6 +11,19 @@ import { get, post, put } from '@/lib/api'
 
 export type UpdateDownloadState = 'none' | 'downloading' | 'ready' | 'failed'
 
+/**
+ * Which releases the updater may offer.
+ *
+ * - `stable` - released builds only. The default, including on a brand-new install where nothing
+ *   has been stored: the server resolves an absent setting, an absent settings row and an
+ *   unreadable database all to this.
+ * - `development` - released builds and pre-releases, whichever is newest.
+ *
+ * The channel decides which build is offered and nothing else. A pre-release's installer is
+ * verified against its published SHA-256 exactly as strictly as a stable one.
+ */
+export type UpdateChannel = 'stable' | 'development'
+
 export interface UpdateStatus {
   /** The kill switch. When false the server makes no outbound request of any kind. */
   enabled: boolean
@@ -40,6 +53,17 @@ export interface UpdateStatus {
   downloadSha256: string | null
   downloadedBytes: number
   downloadMessage: string | null
+  /** Which releases may be offered. See {@link UpdateChannel}. */
+  channel: UpdateChannel
+  /**
+   * This build is NEWER than anything the selected channel has - what happens the moment somebody
+   * on a development build switches back to stable. Not an error and not an update: there is
+   * nothing to offer, and offering the older release would be a downgrade dressed as an upgrade.
+   * Shown as its own message rather than as "you are on the latest version", which would be false.
+   */
+  aheadOfChannel: boolean
+  /** The newest version the channel holds, whether or not it is an update. */
+  channelNewestVersion: string | null
 }
 
 /** Reads the cached status. Never waits on the network; may start a background check. */
@@ -54,6 +78,15 @@ export function checkForUpdateNow(): Promise<UpdateStatus> {
 
 export function setUpdateChecksEnabled(enabled: boolean): Promise<UpdateStatus> {
   return put<UpdateStatus>('/update/preferences', { enabled })
+}
+
+/**
+ * Chooses which releases may be offered. The server re-checks against the new channel before it
+ * answers, so the status this resolves to is already about the channel just chosen rather than the
+ * one just left - there is no intermediate render showing the old channel's release.
+ */
+export function setUpdateChannel(channel: UpdateChannel): Promise<UpdateStatus> {
+  return put<UpdateStatus>('/update/channel', { channel })
 }
 
 export function dismissUpdate(): Promise<UpdateStatus> {

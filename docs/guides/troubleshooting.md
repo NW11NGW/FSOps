@@ -372,10 +372,26 @@ Other traffic is drawn deliberately small, faint, and without the accent colour 
 2. **The check simply hasn't run yet.** It runs at most once a day, lazily, and never during startup. If you've only just opened FSOps for the first time, the first check may not have completed. Select **Check now**.
 3. **GitHub couldn't be reached.** No internet, a captive-portal wifi, a corporate proxy, DNS trouble, or GitHub's API rate-limiting your address (which it does per-IP for unauthenticated requests, and shared/office addresses hit it more easily). When this happens the line beside **Check now** reads "could not reach the releases page, so nothing has changed", and the check retries on its own after a few hours rather than hammering away at it.
 4. **You dismissed that version.** Dismissing the notice silences that exact version permanently; a later release starts talking again. Settings → Updates always shows the update even after you've dismissed it — only the app-wide notice is hidden.
-5. **The release is a pre-release or a draft.** Neither is ever offered as an update, whether it's flagged as such on GitHub or simply carries a tag like `v0.3.0-rc.1`. This is intentional.
+5. **The release is a draft, or a pre-release and you're on the Stable channel.** A draft is never offered on any channel. A pre-release is never offered on Stable — whether it's flagged as one on GitHub or simply carries a tag like `v0.3.0-rc.1` — and that's the point of the channel rather than a fault. Settings → Updates → **Which builds to offer** decides this.
 6. **The release's tag isn't a version FSOps can compare.** A tag like `nightly` or `release-2026-08` isn't something a semantic comparison can rank against your build, so it's ignored rather than guessed at.
+7. **You're ahead of the channel.** If you've been running development builds and switched back to Stable, you're running something *newer* than the newest stable release. FSOps says so explicitly — "You are ahead of the stable channel" — rather than claiming you're up to date, and it won't offer you anything until stable overtakes your build. See the next section.
 
 **Solution:** Turn checks on if they're off, select **Check now**, and read the line beside it. If it says the releases page couldn't be reached, that's a network condition, not a broken install — try again later. Either way you can always download a new version yourself from the project's releases page; the in-app check is a convenience, never the only route.
+
+## FSOps says I'm "ahead of the stable channel"
+
+**Symptom:** Settings → Updates says you are ahead of the channel and names a version older than the one you're running. Nothing is offered, and **Check now** doesn't change that.
+
+**Cause:** You're running a development build — a pre-release — and the channel you're on doesn't have anything newer. Most often this is because you tried a development build and then switched back to **Stable**. It is not a fault, and nothing is stuck.
+
+FSOps will only ever offer a build that is **strictly newer** than the one you're running, on either channel. The alternative would be offering you the older stable release as though it were an upgrade, which would quietly overwrite a newer build with an older one — so instead it tells you plainly where you stand.
+
+**Solution:** Usually, nothing. When a stable release passes the build you're on, it will be offered normally and the message clears itself.
+
+If you'd rather not wait:
+
+- **Go back to Development** if you want to keep receiving test builds — Settings → Updates → **Which builds to offer**.
+- **Install a stable build yourself** from the releases page if you want off development builds now. Read the warning about saved data in [the user guide](user-guide.md#which-builds-to-offer) first: a development build may have changed your database in ways an earlier version doesn't understand, so copy `%LOCALAPPDATA%\FSOps` before installing an older version.
 
 ## A downloaded update was rejected, or disappeared
 
@@ -384,6 +400,8 @@ Other traffic is drawn deliberately small, faint, and without the accent colour 
 **Cause:** This is the safety check doing its job, and it's the most important thing this feature does. FSOps ships **unsigned** — there's no code-signing certificate — so the SHA-256 checksum published alongside each release is the only thing that distinguishes the installer the author actually built from whatever happened to arrive over your network. FSOps downloads that checksum first, downloads the installer to a temporary name, hashes the bytes that actually landed on disk, and only gives the file its real name if the two match exactly. Anything else — a corrupted or truncated download, a proxy that rewrote the file, a mirror serving something else — is deleted rather than handed to you.
 
 The same check runs *again* when you select **Show the installer**, because "verified twenty minutes ago" isn't the same statement as "these bytes are correct now". If the file changed on disk in between, it's deleted then instead.
+
+This is identical on both release channels. A development build is verified exactly as strictly as a stable one — being a pre-release is a reason to be more careful about what you run, not less.
 
 You'll also see the download refused outright, before anything is fetched, if a release publishes an installer with **no** `.sha256` file alongside it. There'd be nothing to verify it against, and an unverifiable unsigned installer is exactly what this is meant to prevent — so FSOps tells you the new version exists, links you to the release page, and declines to fetch it for you.
 

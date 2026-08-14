@@ -176,3 +176,62 @@ perform, so "all checks green" is not the same as "ready".
 
 The workflow creates no tags of its own either: `gh release create` will invent a missing tag, so
 it is called with `--verify-tag`.
+
+## Releasing a beta
+
+`.github/workflows/beta.yml` handles the development channel. It runs on tags matching
+`v*.*.*-beta*`, requires the tagged commit to be on `develop`, and — unlike `release.yml` — it
+**publishes** rather than drafting.
+
+That difference is not a relaxation of the draft rule; it is that the rule's reason does not apply.
+A draft is required for a stable release because publishing puts an unsigned installer in front of
+everybody. A **pre-release** cannot reach anybody who has not opted in: GitHub's `/releases/latest`
+is the only endpoint the stable channel reads and it excludes pre-releases by definition, and
+`UpdateChecker.ApplyRelease` refuses them a second time. The audience is exactly the people who went
+to Settings → Updates and chose the development channel after being told what it costs. Pushing a
+`-beta` tag is already a deliberate act; requiring a second one to publish something only opted-in
+testers can see would be ceremony, not a decision.
+
+Nothing that makes a download trustworthy is skipped. The `.sha256` is generated on the same runner
+from the same bytes, both files are attached or neither is, the full install/run/uninstall smoke test
+runs first, and the in-app updater verifies a pre-release with the same code that verifies a stable
+release.
+
+### The procedure
+
+1. **Set `<Version>` in `Directory.Build.props` to the full pre-release version** — `1.1.0-beta.1`,
+   suffix included — and commit it on `develop`.
+2. **Tag and push** on `develop`:
+
+   ```
+   git tag v1.1.0-beta.1
+   git push origin v1.1.0-beta.1
+   ```
+
+3. The workflow checks the tag against `<Version>`, checks the commit is on `develop`, runs the full
+   test suite, builds and smoke-tests the installer, asserts the installed app reports the
+   pre-release version as its own, and publishes the pre-release.
+
+### Why `<Version>` must carry the `-beta.N` suffix
+
+This is the one that would fail silently, so it is worth stating plainly.
+
+Semantic versioning puts `1.1.0-beta.1` **below** `1.1.0`. Building a beta from a plain
+`<Version>1.1.0</Version>` produces an app that reports itself as `1.1.0` under a release tagged
+`1.1.0-beta.1`. FSOps compares those as semantic versions, so the app would outrank the very build it
+came from: every beta tester would be told they were **ahead of the development channel**, and would
+never be offered `-beta.2` or anything after it. Nobody would report it, because from the outside it
+looks exactly like no further betas having been published.
+
+The workflow's version gate exists to catch this, and the smoke test asserts the installed app's
+reported version as a second line of defence.
+
+### `VersionInfoVersion` and the suffix
+
+Inno Setup's `VersionInfoVersion` writes the Windows file-version resource, which is four numbers and
+nothing else — it will not compile a pre-release string. `build-installer.ps1` therefore splits the
+version: `AppVersion` (displayed, and in the installer's filename) keeps the full
+`1.1.0-beta.1`, while `VersionInfo` gets `1.1.0`. The installer is named
+`FSOps-Setup-1.1.0-beta.1.exe`, which `UpdateChecker.SafeAssetFileName` accepts — asserted in
+`UpdateCheckerTests` rather than assumed, because an asset name the updater rejects fails the same
+silent way: the release is announced and the download is simply never offered.

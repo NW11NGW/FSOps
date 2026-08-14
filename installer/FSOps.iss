@@ -29,8 +29,20 @@
 
 ; Keep in step with <Version> in Directory.Build.props. build-installer.ps1 reads it from there and
 ; passes it in, so the default below only applies to a hand-run ISCC.
+;
+; This is the DISPLAYED version and the one in the installer's filename, so it may carry a
+; pre-release suffix ("1.1.0-beta.1") for a development build. VersionInfoVersion below cannot: the
+; Windows file-version resource is four numbers and nothing else, and Inno will not compile a
+; non-numeric one. The two are therefore separate inputs rather than one value used twice.
 #ifndef AppVersion
   #define AppVersion "0.1.0"
+#endif
+
+; The numeric x.y.z for the Windows file-version resource - AppVersion with any pre-release suffix
+; stripped. build-installer.ps1 derives and passes it; the default here covers a hand-run ISCC on a
+; plain version, and a hand-run on a pre-release version must pass it explicitly.
+#ifndef VersionInfo
+  #define VersionInfo AppVersion
 #endif
 
 ; The output of scripts\publish.ps1. Installed verbatim - that script is the authority on what the
@@ -89,7 +101,7 @@ AppId={{913A792D-F1BF-4FEE-B4CB-3E7D54BFBAFE}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#VersionInfo}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues

@@ -5,8 +5,10 @@ import {
   dismissUpdate,
   fetchUpdateStatus,
   revealUpdateDownload,
+  setUpdateChannel,
   setUpdateChecksEnabled,
   startUpdateDownload,
+  type UpdateChannel,
   type UpdateStatus,
 } from '@/lib/updateApi'
 
@@ -79,6 +81,7 @@ export function useUpdate() {
     refresh: load,
     checkNow: useCallback(() => run(checkForUpdateNow), [run]),
     setEnabled: useCallback((enabled: boolean) => run(() => setUpdateChecksEnabled(enabled)), [run]),
+    setChannel: useCallback((channel: UpdateChannel) => run(() => setUpdateChannel(channel)), [run]),
     dismiss: useCallback(() => run(dismissUpdate), [run]),
     download: useCallback(() => run(startUpdateDownload), [run]),
     reveal: useCallback(async () => {

@@ -31,8 +31,34 @@ public sealed class UpdateState
     /// than a successful check, without ever turning into a retry storm.</summary>
     public bool LastCheckFailed { get; set; }
 
-    /// <summary>The newest stable release found, or null when the running build is already current.</summary>
+    /// <summary>
+    /// Which channel produced everything below. Cache metadata, not a setting - the setting itself
+    /// lives on UserSettings (see IUpdateChannelStore). It is recorded because a cached answer is
+    /// only an answer to the question that was asked: a result found on the development channel says
+    /// nothing about what the stable channel would offer, so a channel change has to invalidate this
+    /// rather than let a pre-release keep being displayed to somebody who just switched away from it.
+    /// Null means "cached before channels existed, or deliberately invalidated" - both force a check.
+    /// </summary>
+    public string? CheckedChannel { get; set; }
+
+    /// <summary>The release being offered, or null when there is nothing to offer.</summary>
     public string? LatestVersion { get; set; }
+
+    /// <summary>
+    /// The newest release the channel has, whether or not it is an update. Distinct from
+    /// <see cref="LatestVersion"/> so the app can say "the newest stable release is 1.0.0" while
+    /// offering nothing, which is the only honest thing to tell somebody running a development build
+    /// who has just switched back to stable.
+    /// </summary>
+    public string? ChannelNewestVersion { get; set; }
+
+    /// <summary>
+    /// True when the running build is strictly newer than anything the channel has. Not an error and
+    /// not an update: it is what happens the moment somebody on a pre-release switches to stable, and
+    /// it stays true until stable overtakes them. It exists so that case can be stated plainly
+    /// instead of being reported as "you are on the latest version", which would be false.
+    /// </summary>
+    public bool AheadOfChannel { get; set; }
 
     public string? ReleaseUrl { get; set; }
 

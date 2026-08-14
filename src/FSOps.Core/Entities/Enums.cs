@@ -221,6 +221,35 @@ public enum TimeDisplay
     Local,
 }
 
+/// <summary>
+/// Which releases the in-app updater is allowed to offer. Stored as text on UserSettings (see
+/// UserSettingsConfiguration), so member order carries no meaning for the database - but
+/// <see cref="Stable"/> is first deliberately, so <c>default(UpdateChannel)</c> is the safe answer
+/// rather than the adventurous one. Anything that fails to resolve a channel - no settings row, an
+/// unreadable database, a value the app does not recognise - lands on Stable for that same reason.
+/// <para>
+/// This decides <b>which</b> build is offered and nothing else. It has no bearing on whether a
+/// download is verified: a pre-release's installer is checked against its published SHA-256 exactly
+/// as strictly as a stable one, by the same code, with no branch on this value anywhere near it.
+/// </para>
+/// </summary>
+public enum UpdateChannel
+{
+    /// <summary>
+    /// Released builds only. The updater reads GitHub's <c>/releases/latest</c>, which excludes
+    /// drafts and pre-releases, so nothing that has not been published as a full release can reach
+    /// someone on this channel.
+    /// </summary>
+    Stable,
+
+    /// <summary>
+    /// Released builds <i>and</i> pre-releases, whichever is newest. This is how a build from the
+    /// development branch reaches somebody who asked for it, and the pre-release flag is what stops
+    /// it reaching anybody who did not.
+    /// </summary>
+    Development,
+}
+
 /// <summary>Starter aircraft choice offered during airline creation - not persisted directly,
 /// each family maps to one specific AircraftType variant (see AirlineEndpoints).</summary>
 public enum StarterAircraftFamily

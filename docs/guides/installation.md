@@ -140,7 +140,15 @@ To update, **run the new installer over the top of your existing install.** It r
 
 You can also just download any newer release manually from the [Releases page](https://github.com/NW11NGW/FSOps/releases) and run it. The result is identical.
 
-See [FSOps never tells me about updates](troubleshooting.md#fsops-never-tells-me-about-updates) and [where a downloaded update goes](troubleshooting.md#where-a-downloaded-update-goes-and-why-fsops-wont-run-it) if the update flow misbehaves.
+### Which builds you're offered
+
+Settings → Updates → **Which builds to offer** chooses between two channels. **Stable** is the default and offers finished, released versions only — if you've never touched this setting, that's what you have.
+
+**Development** also offers test builds as they're made. They arrive earlier and they are not tested to release standard: expect bugs, expect some to affect your saved airline, and expect a development build to be able to change your database in ways an older version won't understand. Take a copy of `%LOCALAPPDATA%\FSOps` before you switch if that matters to you. Verification is unchanged either way — a development build is checked against its published checksum exactly as strictly as a stable one.
+
+Switching back to Stable is always allowed, but you'll then be running something newer than the newest stable release, so FSOps will say you're **ahead of the stable channel** and offer nothing until stable catches up. It won't downgrade you. See [which builds to offer](user-guide.md#which-builds-to-offer).
+
+See [FSOps never tells me about updates](troubleshooting.md#fsops-never-tells-me-about-updates), [FSOps says I'm ahead of the stable channel](troubleshooting.md#fsops-says-im-ahead-of-the-stable-channel), and [where a downloaded update goes](troubleshooting.md#where-a-downloaded-update-goes-and-why-fsops-wont-run-it) if the update flow misbehaves.
 
 ## Uninstalling FSOps
 

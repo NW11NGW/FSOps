@@ -21,17 +21,18 @@ public static class UpdateEndpoints
 {
     public static void MapUpdateEndpoints(this IEndpointRouteBuilder group)
     {
-        group.MapGet("/update/status", GetStatus);
+        group.MapGet("/update/status", GetStatusAsync);
         group.MapPost("/update/check", CheckAsync);
-        group.MapPut("/update/preferences", SetPreferences);
-        group.MapPost("/update/dismiss", Dismiss);
-        group.MapPost("/update/download", Download);
+        group.MapPut("/update/preferences", SetPreferencesAsync);
+        group.MapPut("/update/channel", SetChannelAsync);
+        group.MapPost("/update/dismiss", DismissAsync);
+        group.MapPost("/update/download", DownloadAsync);
         group.MapPost("/update/reveal", RevealAsync);
     }
 
-    private static IResult GetStatus(UpdateChecker checker)
+    private static async Task<IResult> GetStatusAsync(UpdateChecker checker, CancellationToken ct)
     {
-        var status = checker.GetStatus();
+        var status = await checker.GetStatusAsync(ct);
         checker.BeginBackgroundCheck();
 
         // Deliberately the status from BEFORE the background check is started: this response must
@@ -47,10 +48,32 @@ public static class UpdateEndpoints
         return Results.Ok(status);
     }
 
-    private static IResult SetPreferences(UpdatePreferencesRequest request, UpdateChecker checker) =>
-        Results.Ok(checker.SetEnabled(request.Enabled));
+    private static async Task<IResult> SetPreferencesAsync(UpdatePreferencesRequest request, UpdateChecker checker, CancellationToken ct) =>
+        Results.Ok(await checker.SetEnabledAsync(request.Enabled, ct));
 
-    private static IResult Dismiss(UpdateChecker checker) => Results.Ok(checker.Dismiss());
+    /// <summary>
+    /// Chooses which releases may be offered, and re-checks against the new choice before answering -
+    /// so the status the user sees on the next render is about the channel they just picked, not the
+    /// one they left.
+    /// <para>
+    /// The one route on this surface that can return a 400, and only for a channel name that does not
+    /// exist. That is a caller bug rather than a user-facing failure, and the alternative - silently
+    /// choosing a channel on the user's behalf because their request did not parse - is precisely the
+    /// kind of quiet substitution this setting must never make.
+    /// </para>
+    /// </summary>
+    private static async Task<IResult> SetChannelAsync(UpdateChannelRequest request, UpdateChecker checker, CancellationToken ct)
+    {
+        if (!UpdateChecker.TryParseChannel(request.Channel, out var channel))
+        {
+            return Results.BadRequest(new { error = "channel must be 'stable' or 'development'." });
+        }
+
+        return Results.Ok(await checker.SetChannelAsync(channel, ct));
+    }
+
+    private static async Task<IResult> DismissAsync(UpdateChecker checker, CancellationToken ct) =>
+        Results.Ok(await checker.DismissAsync(ct));
 
     /// <summary>
     /// Starts the download the user asked for. Returns immediately with
@@ -58,7 +81,8 @@ public static class UpdateEndpoints
     /// because an installer can be large enough that holding a request open for it would simply time
     /// out.
     /// </summary>
-    private static IResult Download(UpdateChecker checker) => Results.Ok(checker.BeginDownload());
+    private static async Task<IResult> DownloadAsync(UpdateChecker checker, CancellationToken ct) =>
+        Results.Ok(await checker.BeginDownloadAsync(ct));
 
     /// <summary>
     /// Shows the verified installer's folder. Re-verifies the file's SHA-256 first - see
@@ -74,3 +98,11 @@ public static class UpdateEndpoints
 }
 
 public sealed record UpdatePreferencesRequest(bool Enabled);
+
+/// <summary>
+/// The channel, by name: "stable" or "development". A separate request type from
+/// <see cref="UpdatePreferencesRequest"/> rather than a field added to it, because a client that
+/// posted preferences without a channel would otherwise reset the channel as a side effect of
+/// changing something unrelated.
+/// </summary>
+public sealed record UpdateChannelRequest(string? Channel);

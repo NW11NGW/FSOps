@@ -28,6 +28,16 @@ public class UserSettings
     public string? SimBriefPilotId { get; set; }
 
     /// <summary>
+    /// Which releases the in-app updater may offer - see <see cref="Entities.UpdateChannel"/>. Kept
+    /// here rather than in the updater's own state file because it is a user setting like every
+    /// other one on this row, and because a setting that lives with the settings is a setting people
+    /// can find. The updater reads it through IUpdateChannelStore, which answers
+    /// <see cref="UpdateChannel.Stable"/> whenever the database cannot supply an answer - so this
+    /// column being absent, empty or unreadable can only ever make FSOps more cautious, never less.
+    /// </summary>
+    public UpdateChannel UpdateChannel { get; set; } = UpdateChannel.Stable;
+
+    /// <summary>
     /// The player's VATSIM certificate ID, used only to recognise their own flights on VATSIM's
     /// public feed. Stored locally like every other setting and <b>never sent anywhere</b> - FSOps
     /// reads the public feed and looks for this value in it, rather than telling VATSIM anything.

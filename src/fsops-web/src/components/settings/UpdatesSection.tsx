@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, FolderOpen, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FolderOpen, RefreshCw, ShieldCheck, Signpost } from 'lucide-react'
 
 import { ToggleGroup } from '@/components/shared/ToggleGroup'
 import { Button } from '@/components/ui/button'
@@ -22,10 +22,14 @@ import { formatDownloadedBytes, shortenHash } from '@/lib/updateApi'
  *   unsigned installer belongs to the person, in Explorer, where they can see what they are
  *   launching - an app that quietly executed a downloaded binary would be building the exact
  *   problem the checksum exists to prevent.</li>
+ *   <li><b>The channel says what it costs, next to the control.</b> Anyone can find this app, so
+ *   the trade has to be legible to a stranger before they take it - not explained afterwards in a
+ *   guide they had no reason to open. The warning appears when development is selected, because a
+ *   warning shown permanently is a warning nobody reads.</li>
  * </ul>
  */
 export function UpdatesSection() {
-  const { status, loading, busy, checkNow, setEnabled, download, reveal } = useUpdate()
+  const { status, loading, busy, checkNow, setEnabled, setChannel, download, reveal } = useUpdate()
 
   if (loading) {
     return (
@@ -92,6 +96,50 @@ export function UpdatesSection() {
 
         {status.enabled && (
           <>
+            <div className="space-y-3 border-t border-border pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <Signpost className="size-4 text-accent" aria-hidden />
+                    Which builds to offer
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {status.channel === 'development'
+                      ? 'Test builds as well as finished ones — you get new work early.'
+                      : 'Finished, released versions only. The right choice for almost everyone.'}
+                  </p>
+                </div>
+                <ToggleGroup
+                  ariaLabel="Which builds to offer"
+                  value={status.channel}
+                  onChange={(value) => void setChannel(value)}
+                  options={[
+                    { value: 'stable', label: 'Stable' },
+                    { value: 'development', label: 'Development' },
+                  ]}
+                />
+              </div>
+
+              {status.channel === 'development' && (
+                <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+                  <div className="space-y-1 text-muted-foreground">
+                    <p className="font-medium text-foreground">Development builds are not finished software.</p>
+                    <p>
+                      They have not been through release testing. Expect bugs, expect some of them to reach your
+                      airline's saved data, and expect to be the one who finds them. A development build can also
+                      change your saved data in ways an older version will not understand, so going back is not
+                      always simple.
+                    </p>
+                    <p>
+                      FSOps still checks every download against the checksum published with the release, exactly as it
+                      does on Stable. Choosing this changes which build you are offered, never whether it is verified.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="outline" size="sm" disabled={busy || status.checking} onClick={() => void checkNow()}>
                 <RefreshCw className={status.checking ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />
@@ -103,7 +151,33 @@ export function UpdatesSection() {
               </span>
             </div>
 
-            {!status.updateAvailable && !status.checking && (
+            {/*
+              Three distinct answers, and they must not be collapsed into two. "Ahead" is not "up to
+              date": somebody running a development build who has switched back to Stable is past the
+              newest stable release, and telling them they are on the latest version would be false
+              while telling them nothing would leave them wondering why the updater had gone quiet.
+            */}
+            {status.aheadOfChannel && !status.checking && (
+              <div className="space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+                <p className="flex items-center gap-2 font-medium">
+                  <CheckCircle2 className="size-4 text-success" aria-hidden />
+                  You are ahead of the {status.channel === 'development' ? 'development' : 'stable'} channel.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  You are running <span className="font-mono text-foreground">{status.currentVersion}</span>
+                  {status.channelNewestVersion && (
+                    <>
+                      , which is newer than the newest release on this channel (
+                      <span className="font-mono text-foreground">{status.channelNewestVersion}</span>)
+                    </>
+                  )}
+                  . There is nothing to install, and FSOps will not offer you anything until the channel catches up —
+                  it never replaces a newer build with an older one.
+                </p>
+              </div>
+            )}
+
+            {!status.updateAvailable && !status.aheadOfChannel && !status.checking && (
               <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
                 <CheckCircle2 className="size-4 text-success" aria-hidden />
                 <span>You are on the latest version.</span>

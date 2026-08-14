@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using FSOps.Core.Entities;
 using FSOps.Core.Time;
 
 namespace FSOps.Server.Services;
@@ -35,7 +36,19 @@ public sealed record UpdateStatusResponse(
     string? DownloadFileName,
     string? DownloadSha256,
     long DownloadedBytes,
-    string? DownloadMessage);
+    string? DownloadMessage,
+
+    /// <summary>"stable" or "development" - see <see cref="UpdateChannel"/>.</summary>
+    string Channel,
+
+    /// <summary>The running build is newer than anything this channel has. See
+    /// <see cref="UpdateState.AheadOfChannel"/>; the UI has to say so rather than claim the user is
+    /// up to date, because they are not - they are past it.</summary>
+    bool AheadOfChannel,
+
+    /// <summary>The newest version the channel holds, offered or not. Null when the last check never
+    /// produced a comparable release.</summary>
+    string? ChannelNewestVersion);
 
 /// <summary>Outcome of asking the app to show a verified installer in Explorer.</summary>
 public sealed record RevealResult(bool Success, string? Message);
@@ -61,13 +74,33 @@ public sealed record RevealResult(bool Success, string? Message);
 /// for the status endpoint kicks off a background refresh at most once a day and returns whatever
 /// was already cached, so even a hanging network call cannot delay a page or the app starting.</para>
 ///
-/// <para><b>What it refuses.</b> Drafts and pre-releases are never offered. A tag that is not a
-/// parseable version is never offered. A release that is not strictly newer than the running build,
-/// by real semantic comparison, is never offered. A downloaded file whose SHA-256 does not match the
-/// release's published checksum is deleted, never moved into place, and never named to the user. And
-/// if a release ships an installer but no checksum, the user is told a new version exists and given
-/// the release page - but the in-app download is not offered at all, because there would be nothing
-/// to verify it against.</para>
+/// <para><b>What it refuses.</b> Drafts are never offered, on either channel. Pre-releases are never
+/// offered on the stable channel. A tag that is not a parseable version is never offered. A release
+/// that is not strictly newer than the running build, by real semantic comparison, is never offered.
+/// A downloaded file whose SHA-256 does not match the release's published checksum is deleted, never
+/// moved into place, and never named to the user. And if a release ships an installer but no
+/// checksum, the user is told a new version exists and given the release page - but the in-app
+/// download is not offered at all, because there would be nothing to verify it against.</para>
+///
+/// <para><b>Channels.</b> <see cref="UpdateChannel.Stable"/> reads <c>/releases/latest</c>, which
+/// GitHub documents as excluding drafts and pre-releases, so nothing unreleased can reach it.
+/// <see cref="UpdateChannel.Development"/> lists recent releases and takes the highest version among
+/// them, pre-releases included - which is how a development build reaches somebody who opted in, and
+/// the pre-release flag is what stops it reaching anybody who did not.</para>
+///
+/// <para><b>What the channel does NOT change.</b> Verification. A pre-release's installer is fetched
+/// and checked against its published <c>.sha256</c> by exactly the same code, in exactly the same
+/// order, as a stable one - <see cref="DownloadAsync"/> never learns which channel produced the URLs
+/// it was handed, and there is deliberately no parameter by which it could. The channel decides
+/// <i>which</i> build is offered; it has no say in <i>whether</i> it is checked.</para>
+///
+/// <para><b>Being ahead of the channel.</b> Someone running a development build who switches back to
+/// stable is running something newer than the newest stable release. There is no update for them and
+/// there is no downgrade either - <see cref="ApplyRelease"/> offers strictly-newer releases only, so
+/// an older build can never be presented as an upgrade. That state is reported as its own fact
+/// (<see cref="UpdateState.AheadOfChannel"/>) rather than dressed up as "you are up to date", because
+/// they are not up to date, they are past it, and they need to know nothing will be offered until
+/// stable catches up.</para>
 /// </summary>
 public sealed class UpdateChecker
 {
@@ -89,8 +122,17 @@ public sealed class UpdateChecker
     private const string InstallerExtension = ".exe";
     private const string ChecksumExtension = ".sha256";
 
+    /// <summary>
+    /// How many releases the development channel looks at. Generous enough that a run of betas
+    /// followed by the stable release they led to are all still in view, small enough to stay one
+    /// cheap request. The newest is picked by version, not by position, so this only ever bounds how
+    /// far back the check can see - never which release wins.
+    /// </summary>
+    private const int DevelopmentChannelReleaseCount = 20;
+
     private readonly IGitHubReleaseClient _client;
     private readonly IUpdateStorage _store;
+    private readonly IUpdateChannelStore _channels;
     private readonly IClock _clock;
     private readonly ILogger<UpdateChecker> _logger;
 
@@ -105,11 +147,13 @@ public sealed class UpdateChecker
     public UpdateChecker(
         IGitHubReleaseClient client,
         IUpdateStorage store,
+        IUpdateChannelStore channels,
         IClock clock,
         ILogger<UpdateChecker> logger)
     {
         _client = client;
         _store = store;
+        _channels = channels;
         _clock = clock;
         _logger = logger;
     }
@@ -131,7 +175,8 @@ public sealed class UpdateChecker
     /// serves, which is why it does no I/O beyond a small local file read: the SPA asking about
     /// updates must never be able to sit behind a network call.
     /// </summary>
-    public UpdateStatusResponse GetStatus() => BuildStatus(_store.Load());
+    public async Task<UpdateStatusResponse> GetStatusAsync(CancellationToken ct) =>
+        BuildStatus(_store.Load(), await _channels.GetAsync(ct));
 
     /// <summary>
     /// Starts a check in the background if one is due, and returns immediately. Does nothing at all -
@@ -140,8 +185,10 @@ public sealed class UpdateChecker
     /// </summary>
     public void BeginBackgroundCheck()
     {
-        var state = _store.Load();
-        if (!state.Enabled || _checking || !IsCheckDue(state))
+        // The kill switch is read synchronously here so that "off" costs nothing at all, not even a
+        // queued task. Whether the check is actually due depends on the channel, which needs a read,
+        // so that decision happens inside the task - CheckAsync makes it again anyway.
+        if (!_store.Load().Enabled || _checking)
         {
             return;
         }
@@ -168,23 +215,24 @@ public sealed class UpdateChecker
     public async Task<UpdateStatusResponse> CheckAsync(bool force, CancellationToken ct)
     {
         var state = _store.Load();
+        var channel = await _channels.GetAsync(ct);
 
         // The kill switch, checked before the HTTP client is touched. "Off" means no request.
         if (!state.Enabled)
         {
-            return BuildStatus(state);
+            return BuildStatus(state, channel);
         }
 
-        if (!force && !IsCheckDue(state))
+        if (!force && !IsCheckDue(state, channel))
         {
-            return BuildStatus(state);
+            return BuildStatus(state, channel);
         }
 
         await _checkGate.WaitAsync(ct);
         _checking = true;
         try
         {
-            state = await RunCheckAsync(force, ct);
+            state = await RunCheckAsync(force, channel, ct);
         }
         finally
         {
@@ -196,41 +244,117 @@ public sealed class UpdateChecker
         // method's own completed result claim a check was still running, which sends the client into
         // a poll loop waiting for something that has already finished. Found by watching the live
         // response, not by a unit test - hence the regression test that now pins it.
-        return BuildStatus(state);
+        return BuildStatus(state, channel);
     }
 
-    private async Task<UpdateState> RunCheckAsync(bool force, CancellationToken ct)
+    private async Task<UpdateState> RunCheckAsync(bool force, UpdateChannel channel, CancellationToken ct)
     {
         // Re-read after taking the gate: another caller may have just finished a check while this
         // one was queued, and repeating it would be pure waste.
         var state = _store.Load();
-        if (!state.Enabled || (!force && !IsCheckDue(state)))
+        if (!state.Enabled || (!force && !IsCheckDue(state, channel)))
         {
             return state;
         }
 
-        var lookup = await _client.GetLatestReleaseAsync(ct);
+        var (success, release, failureReason) = await FetchForChannelAsync(channel, ct);
         state.LastCheckedUtc = _clock.UtcNow;
 
-        if (!lookup.Success || lookup.Release is null)
+        // Recorded whether or not the lookup succeeded, and that ordering is load-bearing rather than
+        // tidy. CheckedChannel means "the channel this attempt was made against", not "the channel
+        // that answered". Leaving it unset on failure would make IsCheckDue see a channel mismatch on
+        // every subsequent call, which defeats the failed-check backoff completely and turns a machine
+        // that is simply offline into a retry storm against GitHub.
+        state.CheckedChannel = channel.ToString();
+
+        if (!success)
         {
             // There is nothing the user could do about this and nothing they need to know. Log it,
             // and leave whatever we already knew in place.
             state.LastCheckFailed = true;
-            _logger.LogInformation("Update check did not complete ({Reason}) - treating as no update available", lookup.FailureReason);
+            _logger.LogInformation("Update check did not complete ({Reason}) - treating as no update available", failureReason);
             _store.Save(state);
             return state;
         }
 
         state.LastCheckFailed = false;
-        ApplyRelease(state, lookup.Release);
+        ApplyRelease(state, release, channel);
         _store.Save(state);
         return state;
     }
 
+    /// <summary>
+    /// Asks the channel's feed for the release it should be judged against.
+    /// <para>
+    /// Stable reads <c>/releases/latest</c>, which cannot return a pre-release however it is tagged -
+    /// so the stable channel's central guarantee is enforced by GitHub before this code sees
+    /// anything, and the refusal rules in <see cref="ApplyRelease"/> are a second, independent line
+    /// rather than the only one.
+    /// </para>
+    /// <para>
+    /// Development lists releases and picks the highest version among them, which is deliberately
+    /// <b>not</b> "the newest pre-release": if a stable release outranks every beta, a development
+    /// user gets the stable release. Opting in to development means seeing more, never being pinned
+    /// to something older.
+    /// </para>
+    /// <para>
+    /// A successful lookup that yields no usable release is a success with a null release - the
+    /// difference matters, because a failure keeps whatever was already known while a success with
+    /// nothing in it correctly clears a stale offer.
+    /// </para>
+    /// </summary>
+    private async Task<(bool Success, GitHubRelease? Release, string? FailureReason)> FetchForChannelAsync(
+        UpdateChannel channel,
+        CancellationToken ct)
+    {
+        if (channel == UpdateChannel.Development)
+        {
+            var list = await _client.GetRecentReleasesAsync(DevelopmentChannelReleaseCount, ct);
+            return list.Success
+                ? (true, SelectDevelopmentRelease(list.Releases), null)
+                : (false, null, list.FailureReason);
+        }
+
+        var lookup = await _client.GetLatestReleaseAsync(ct);
+        return lookup.Success
+            ? (true, lookup.Release, null)
+            : (false, null, lookup.FailureReason);
+    }
+
+    /// <summary>
+    /// The highest version among a list of releases, pre-releases included, drafts excluded.
+    /// Compared as semantic versions rather than taken in the order GitHub returned them: releases
+    /// come back newest-published first, and publication order is not version order - a patch to an
+    /// older line published after a beta would otherwise win.
+    /// </summary>
+    internal static GitHubRelease? SelectDevelopmentRelease(IReadOnlyList<GitHubRelease> releases)
+    {
+        GitHubRelease? best = null;
+        SemanticVersion? bestVersion = null;
+
+        foreach (var release in releases)
+        {
+            // A draft is refused on every channel. It is unpublished work, and on top of that GitHub
+            // does not disclose drafts to an unauthenticated caller at all, so this is belt and
+            // braces rather than the only guard.
+            if (release.IsDraft || !SemanticVersion.TryParse(release.TagName, out var version))
+            {
+                continue;
+            }
+
+            if (bestVersion is null || version > bestVersion)
+            {
+                best = release;
+                bestVersion = version;
+            }
+        }
+
+        return best;
+    }
+
     /// <summary>Turns the whole feature on or off. Switching it off also forgets any verified
     /// download, so nothing is left lying in the data directory that the user did not ask for.</summary>
-    public UpdateStatusResponse SetEnabled(bool enabled)
+    public async Task<UpdateStatusResponse> SetEnabledAsync(bool enabled, CancellationToken ct)
     {
         var state = _store.Load();
         state.Enabled = enabled;
@@ -244,26 +368,67 @@ public sealed class UpdateChecker
         }
 
         _store.Save(state);
-        return BuildStatus(state);
+        return BuildStatus(state, await _channels.GetAsync(ct));
+    }
+
+    /// <summary>
+    /// Switches which releases the updater may offer, and immediately re-checks against the new one.
+    ///
+    /// <para>The cached result is thrown away first, and that is the point of this method rather than
+    /// a detail of it. Everything in the state file was an answer to "what does the other channel
+    /// have"; keeping any of it would leave somebody who just switched to stable still being offered
+    /// the pre-release they switched away from. Any installer already downloaded for that offer goes
+    /// with it - a verified file for a release this channel does not have is not a download the user
+    /// still wants, and leaving it on disk would let the "ready" state outlive the reason for it.</para>
+    ///
+    /// <para>Nothing about verification changes here. The channel selects which release's URLs are
+    /// written into the state; the download path reads those URLs and checks the bytes against the
+    /// published checksum with no knowledge of where they came from.</para>
+    /// </summary>
+    public async Task<UpdateStatusResponse> SetChannelAsync(UpdateChannel channel, CancellationToken ct)
+    {
+        await _channels.SetAsync(channel, ct);
+
+        var state = _store.Load();
+        ClearAvailableUpdate(state);
+        state.CheckedChannel = null;
+
+        // Not merely "due" - forgotten. A switch is an explicit question, and the honest answer to it
+        // is not a cached one from the channel the user just left.
+        state.LastCheckedUtc = null;
+        state.LastCheckFailed = false;
+        _store.Save(state);
+
+        _downloadState = UpdateDownloadStates.None;
+        _downloadMessage = null;
+        Interlocked.Exchange(ref _downloadedBytes, 0);
+
+        _logger.LogInformation("Update channel set to {Channel}", channel);
+
+        // Re-checks straight away so the answer the user sees is about the channel they just chose.
+        // Returns the cached (now empty) status untouched when checks are switched off, which is
+        // correct: choosing a channel is not consent to start making requests.
+        return await CheckAsync(force: true, ct);
     }
 
     /// <summary>Records that the user does not want to be told about this particular version again.
     /// A later release clears it automatically.</summary>
-    public UpdateStatusResponse Dismiss()
+    public async Task<UpdateStatusResponse> DismissAsync(CancellationToken ct)
     {
         var state = _store.Load();
         state.DismissedVersion = state.LatestVersion;
         _store.Save(state);
-        return BuildStatus(state);
+        return BuildStatus(state, await _channels.GetAsync(ct));
     }
 
     /// <summary>
     /// Starts a download in the background and returns the current status. The download is only ever
     /// reached from an explicit user action - nothing here runs on its own.
     /// </summary>
-    public UpdateStatusResponse BeginDownload()
+    public async Task<UpdateStatusResponse> BeginDownloadAsync(CancellationToken ct)
     {
         var state = _store.Load();
+        var channel = await _channels.GetAsync(ct);
 
         // The user asked for something. Answering with silence would leave the UI on a spinner
         // forever, so a request that cannot be honoured says so - it just never says so by
@@ -271,12 +436,12 @@ public sealed class UpdateChecker
         // installer with no checksum: nothing to verify against means nothing gets fetched.
         if (!CanDownload(state))
         {
-            return FailDownload(state, "There is nothing available to download.");
+            return FailDownload(state, channel, "There is nothing available to download.");
         }
 
         if (_downloadState == UpdateDownloadStates.Downloading)
         {
-            return BuildStatus(state);
+            return BuildStatus(state, channel);
         }
 
         _downloadState = UpdateDownloadStates.Downloading;
@@ -297,7 +462,7 @@ public sealed class UpdateChecker
             }
         });
 
-        return BuildStatus(state);
+        return BuildStatus(state, channel);
     }
 
     /// <summary>
@@ -315,15 +480,24 @@ public sealed class UpdateChecker
     /// </list>
     /// On any mismatch the file is deleted and nothing is recorded. There is no branch that leaves
     /// an unverified file in the updates directory or names one to the user.
+    /// <para>
+    /// <b>The channel gets no say in any of this.</b> It is read once, at the top, and used for one
+    /// thing only: filling in a field of the response so the UI can render which channel is selected.
+    /// Nothing below reads it, and nothing below should ever be made to - a stable installer and a
+    /// pre-release installer are the same problem here, and the answer to both is the same checksum.
+    /// If you find yourself wanting to pass it further down, the thing you are about to weaken is the
+    /// only control standing between an unsigned executable and the user's machine.
+    /// </para>
     /// </summary>
     public async Task<UpdateStatusResponse> DownloadAsync(CancellationToken ct)
     {
+        var channel = await _channels.GetAsync(ct);
         var state = _store.Load();
         if (!CanDownload(state))
         {
             _downloadState = UpdateDownloadStates.Failed;
             _downloadMessage = "There is nothing available to download.";
-            return BuildStatus(state);
+            return BuildStatus(state, channel);
         }
 
         await _downloadGate.WaitAsync(ct);
@@ -334,7 +508,7 @@ public sealed class UpdateChecker
             {
                 _downloadState = UpdateDownloadStates.Failed;
                 _downloadMessage = "There is nothing available to download.";
-                return BuildStatus(state);
+                return BuildStatus(state, channel);
             }
 
             _downloadState = UpdateDownloadStates.Downloading;
@@ -346,7 +520,7 @@ public sealed class UpdateChecker
                 !Uri.TryCreate(state.InstallerDownloadUrl, UriKind.Absolute, out var installerUrl) ||
                 !Uri.TryCreate(state.ChecksumDownloadUrl, UriKind.Absolute, out var checksumUrl))
             {
-                return FailDownload(state, "The release does not describe an installer this app can verify.");
+                return FailDownload(state, channel, "The release does not describe an installer this app can verify.");
             }
 
             // 1. The checksum first. No checksum, no download - there would be nothing to check the
@@ -356,7 +530,7 @@ public sealed class UpdateChecker
             if (!checksumText.Success || expectedHash is null)
             {
                 _logger.LogWarning("Update download stopped: checksum unavailable or unreadable ({Reason})", checksumText.FailureReason);
-                return FailDownload(state, "The release's checksum could not be read, so the download was not attempted.");
+                return FailDownload(state, channel, "The release's checksum could not be read, so the download was not attempted.");
             }
 
             Directory.CreateDirectory(UpdatesDirectory);
@@ -370,7 +544,7 @@ public sealed class UpdateChecker
             {
                 TryDelete(partialPath);
                 _logger.LogWarning("Update download failed ({Reason})", download.FailureReason);
-                return FailDownload(state, "The installer could not be downloaded.");
+                return FailDownload(state, channel, "The installer could not be downloaded.");
             }
 
             Interlocked.Exchange(ref _downloadedBytes, download.BytesWritten);
@@ -384,7 +558,7 @@ public sealed class UpdateChecker
                     "Update download DISCARDED - SHA-256 mismatch. Expected {Expected}, got {Actual}",
                     expectedHash,
                     actualHash);
-                return FailDownload(state, "The downloaded file did not match the release's checksum, so it was deleted. Get the installer from the release page instead.");
+                return FailDownload(state, channel, "The downloaded file did not match the release's checksum, so it was deleted. Get the installer from the release page instead.");
             }
 
             // 4. Verified. Only now does it get its real name.
@@ -399,7 +573,7 @@ public sealed class UpdateChecker
             _downloadState = UpdateDownloadStates.Ready;
             _downloadMessage = null;
             _logger.LogInformation("Update {Version} downloaded and SHA-256 verified", state.LatestVersion);
-            return BuildStatus(state);
+            return BuildStatus(state, channel);
         }
         finally
         {
@@ -458,9 +632,18 @@ public sealed class UpdateChecker
     // Decision rules
     // ---------------------------------------------------------------------------------------
 
-    private bool IsCheckDue(UpdateState state)
+    private bool IsCheckDue(UpdateState state, UpdateChannel channel)
     {
         if (state.LastCheckedUtc is null)
+        {
+            return true;
+        }
+
+        // A result cached from a different channel is not a stale answer to this question, it is an
+        // answer to a different one. SetChannelAsync already clears the cache, so reaching this is
+        // either a state file written before channels existed or one edited underneath us; either
+        // way, re-asking is the only correct response.
+        if (!string.Equals(state.CheckedChannel, channel.ToString(), StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -478,8 +661,16 @@ public sealed class UpdateChecker
     /// internal so each rule - draft, pre-release, unparseable tag, older, equal - can be asserted
     /// individually rather than only through a full HTTP round trip.
     /// </summary>
-    internal void ApplyRelease(UpdateState state, GitHubRelease release)
+    internal void ApplyRelease(UpdateState state, GitHubRelease? release, UpdateChannel channel)
     {
+        // A successful lookup that found nothing usable. Nothing to offer and nothing known about the
+        // channel's newest version, which is different from knowing it is behind us.
+        if (release is null)
+        {
+            ClearAvailableUpdate(state);
+            return;
+        }
+
         if (release.IsDraft)
         {
             _logger.LogInformation("Latest release {Tag} is a draft - not offering it", release.TagName);
@@ -487,9 +678,11 @@ public sealed class UpdateChecker
             return;
         }
 
-        if (release.IsPrerelease)
+        // Refused on stable, wanted on development. This is the entire behavioural difference between
+        // the two channels, and it is one condition rather than a second code path on purpose.
+        if (release.IsPrerelease && channel != UpdateChannel.Development)
         {
-            _logger.LogInformation("Latest release {Tag} is a pre-release - not offering it", release.TagName);
+            _logger.LogInformation("Latest release {Tag} is a pre-release - not offering it on the stable channel", release.TagName);
             ClearAvailableUpdate(state);
             return;
         }
@@ -502,10 +695,11 @@ public sealed class UpdateChecker
         }
 
         // A tag can carry a pre-release suffix even when GitHub's own "prerelease" flag was not
-        // ticked. Both are refusals.
-        if (released.IsPrerelease)
+        // ticked - a very easy mistake to make when publishing. On stable that is still a refusal, so
+        // the flag being missed cannot leak a pre-release to somebody who never asked for one.
+        if (released.IsPrerelease && channel != UpdateChannel.Development)
         {
-            _logger.LogInformation("Latest release tag {Tag} is a pre-release version - not offering it", release.TagName);
+            _logger.LogInformation("Latest release tag {Tag} is a pre-release version - not offering it on the stable channel", release.TagName);
             ClearAvailableUpdate(state);
             return;
         }
@@ -518,10 +712,16 @@ public sealed class UpdateChecker
         }
 
         // Strictly newer. Equal is not an update, and older is not either - a rollback is never
-        // something this offers.
+        // something this offers, on any channel. The case worth naming is the second one: somebody
+        // running a development build who switched back to stable is genuinely AHEAD of the newest
+        // stable release, and telling them "you are on the latest version" would be a lie while
+        // offering them the older release would be a downgrade dressed as an update. So nothing is
+        // offered, and the fact is recorded so the UI can say it plainly.
         if (released <= current)
         {
             ClearAvailableUpdate(state);
+            state.ChannelNewestVersion = released.ToString();
+            state.AheadOfChannel = current > released;
             return;
         }
 
@@ -529,6 +729,8 @@ public sealed class UpdateChecker
         var checksum = installer is null ? null : SelectChecksumAsset(release.Assets, installer);
 
         state.LatestVersion = released.ToString();
+        state.ChannelNewestVersion = released.ToString();
+        state.AheadOfChannel = false;
         state.ReleaseUrl = release.HtmlUrl;
         state.ReleaseNotes = Truncate(release.Body, 4000);
         state.ReleasePublishedUtc = release.PublishedAtUtc;
@@ -656,16 +858,18 @@ public sealed class UpdateChecker
         !string.IsNullOrWhiteSpace(state.ChecksumDownloadUrl) &&
         SafeAssetFileName(state.InstallerAssetName) is not null;
 
-    private UpdateStatusResponse FailDownload(UpdateState state, string message)
+    private UpdateStatusResponse FailDownload(UpdateState state, UpdateChannel channel, string message)
     {
         _downloadState = UpdateDownloadStates.Failed;
         _downloadMessage = message;
-        return BuildStatus(state);
+        return BuildStatus(state, channel);
     }
 
     private static void ClearAvailableUpdate(UpdateState state)
     {
         state.LatestVersion = null;
+        state.ChannelNewestVersion = null;
+        state.AheadOfChannel = false;
         state.ReleaseUrl = null;
         state.ReleaseNotes = null;
         state.ReleasePublishedUtc = null;
@@ -688,7 +892,7 @@ public sealed class UpdateChecker
         state.VerifiedVersion = null;
     }
 
-    private UpdateStatusResponse BuildStatus(UpdateState state)
+    private UpdateStatusResponse BuildStatus(UpdateState state, UpdateChannel channel)
     {
         var updateAvailable = !string.IsNullOrWhiteSpace(state.LatestVersion);
         var dismissed = updateAvailable &&
@@ -727,7 +931,55 @@ public sealed class UpdateChecker
             DownloadFileName: verified ? Path.GetFileName(state.VerifiedFilePath) : null,
             DownloadSha256: verified ? state.VerifiedSha256 : null,
             DownloadedBytes: Interlocked.Read(ref _downloadedBytes),
-            DownloadMessage: _downloadMessage);
+            DownloadMessage: _downloadMessage,
+            Channel: ChannelName(channel),
+
+            // Only meaningful while the cached result actually belongs to the selected channel. A
+            // switch clears the cache, so this reads false for the moment between switching and the
+            // re-check landing - which is right: "you are ahead of stable" is a claim, and it should
+            // not be made on the strength of a measurement taken against the development channel.
+            AheadOfChannel: state.AheadOfChannel &&
+                string.Equals(state.CheckedChannel, channel.ToString(), StringComparison.OrdinalIgnoreCase),
+            ChannelNewestVersion: state.ChannelNewestVersion);
+    }
+
+    /// <summary>
+    /// The channel as the API names it. Lower-case and written out here rather than left to whatever
+    /// the enum's ToString happens to produce, because this crosses the wire into the SPA and a
+    /// rename of an enum member has no business changing an API's vocabulary.
+    /// </summary>
+    internal static string ChannelName(UpdateChannel channel) =>
+        channel == UpdateChannel.Development ? "development" : "stable";
+
+    /// <summary>
+    /// Parses the channel back off the wire. Anything unrecognised is refused outright rather than
+    /// resolved to a default: this is a request somebody made, and quietly giving them a channel they
+    /// did not name would be worse than telling the caller its value was wrong.
+    /// <para>
+    /// The two names are matched literally rather than through <c>Enum.TryParse</c>, which accepts
+    /// numeric strings: <c>"1"</c> parses cleanly to <see cref="UpdateChannel.Development"/> and
+    /// passes <c>Enum.IsDefined</c>, so a client sending an index - or a mistyped field, or a stray
+    /// value from a form - would silently be moved onto development builds. That is the precise
+    /// substitution this method exists to prevent, so it does not go near the enum parser.
+    /// </para>
+    /// </summary>
+    internal static bool TryParseChannel(string? value, out UpdateChannel channel)
+    {
+        channel = UpdateChannel.Stable;
+        var name = value?.Trim();
+
+        if (string.Equals(name, "stable", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(name, "development", StringComparison.OrdinalIgnoreCase))
+        {
+            channel = UpdateChannel.Development;
+            return true;
+        }
+
+        return false;
     }
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
