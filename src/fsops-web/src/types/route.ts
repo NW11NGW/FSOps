@@ -78,6 +78,10 @@ export interface RouteEconomicsPreview {
   expectedPassengers: number
   loadFactorPercent: number
   expectedRevenuePerSector: number
+  /** Every non-ticket line the ledger will post for this sector, fuel included at the departure
+   *  airport's price. A fare decision the player can only see one side of is not a decision. */
+  expectedCostPerSector: number
+  expectedProfitPerSector: number
 }
 
 export interface RoutePreviewResponse {

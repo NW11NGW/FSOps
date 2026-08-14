@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import { BuyLeaseDialog } from '@/components/fleet/BuyLeaseDialog'
 import { EndLeaseDialog } from '@/components/fleet/EndLeaseDialog'
+import { FleetAdviceCard } from '@/components/fleet/FleetAdviceCard'
 import { FleetTable } from '@/components/fleet/FleetTable'
 import { LoanDialog } from '@/components/fleet/LoanDialog'
 import { RenameAircraftDialog } from '@/components/fleet/RenameAircraftDialog'
@@ -17,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useFleet } from '@/hooks/useFleet'
+import { useFleetAdvice } from '@/hooks/usePlanning'
 import { ApiError, put } from '@/lib/api'
 import type { LiveContext } from '@/types/live-context'
 import type { FleetAircraftSummary } from '@/types/fleet'
@@ -24,6 +26,7 @@ import type { FleetAircraftSummary } from '@/types/fleet'
 export function Fleet() {
   const { airlineSummary } = useOutletContext<LiveContext>()
   const fleetQuery = useFleet()
+  const fleetAdvice = useFleetAdvice(Boolean(airlineSummary.data))
 
   const [buyLeaseOpen, setBuyLeaseOpen] = useState(false)
   const [loanOpen, setLoanOpen] = useState(false)
@@ -37,6 +40,9 @@ export function Fleet() {
   function handleFleetChanged() {
     fleetQuery.refetch()
     airlineSummary.refetch()
+    // Advice is entirely about what the fleet can and can't do, so it goes stale the moment the
+    // fleet does.
+    fleetAdvice.refetch()
   }
 
   const reservedCount = fleetQuery.fleet.filter((a) => a.reservedForPlayer).length
@@ -130,6 +136,13 @@ export function Fleet() {
             Add aircraft
           </Button>
         }
+      />
+
+      <FleetAdviceCard
+        data={fleetAdvice.data}
+        status={fleetAdvice.status}
+        isRefreshing={fleetAdvice.isRefreshing}
+        onAcquire={() => setBuyLeaseOpen(true)}
       />
 
       <BuyLeaseDialog open={buyLeaseOpen} onOpenChange={setBuyLeaseOpen} onSuccess={handleFleetChanged} />
