@@ -50,4 +50,5 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 )
 Button.displayName = 'Button'
 
-export { Button, buttonVariants }
+// Only the component is exported - see badge.tsx for why `buttonVariants` stays module-private.
+export { Button }

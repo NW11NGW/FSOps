@@ -1308,7 +1308,6 @@ public class PilotEndpointsTests
             IsPlayer = false,
             MonthlySalary = 9000m,
             SkillRating = 50,
-            Status = PilotStatus.Available,
             CreatedUtc = DateTimeOffset.UtcNow,
         };
         ctx.Db.Pilots.Add(pilot);

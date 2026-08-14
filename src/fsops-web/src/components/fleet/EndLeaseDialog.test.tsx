@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EndLeaseDialog } from './EndLeaseDialog'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { click, findButton, flush, mount, typeInto } from '@/test/domHarness'
 import type { LeaseTerminationQuote } from '@/types/fleet'
 

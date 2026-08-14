@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LedgerSection } from './LedgerSection'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { click, flush, getByRole, isDisabled, mount, queryAllByRole, queryByRole, selectOption, text } from '@/test/domHarness'
 import { settingsResponseFor } from '@/test/settingsStub'
 import type { LedgerTransactionEntry } from '@/types/finance'

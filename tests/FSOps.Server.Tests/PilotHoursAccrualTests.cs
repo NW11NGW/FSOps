@@ -234,7 +234,6 @@ public class PilotHoursAccrualTests
             IsPlayer = true,
             MonthlySalary = 0m,
             SkillRating = 50,
-            Status = PilotStatus.Available,
             CreatedUtc = DateTimeOffset.UtcNow,
         };
         ctx.Db.Pilots.Add(pilot);
@@ -252,7 +251,6 @@ public class PilotHoursAccrualTests
             IsPlayer = false,
             MonthlySalary = 9_000m,
             SkillRating = 50,
-            Status = PilotStatus.Available,
             CreatedUtc = Base,
         };
         ctx.Db.Pilots.Add(pilot);

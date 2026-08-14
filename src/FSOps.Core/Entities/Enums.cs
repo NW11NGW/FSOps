@@ -53,9 +53,21 @@ public enum PilotStatus
     Inactive,
 }
 
+/// <summary>
+/// Stored as text (see FlightConfiguration), so member ORDER carries no meaning and adding one
+/// needs no migration.
+/// <para>
+/// There is deliberately no <c>Planned</c> member. One was declared until 2026-08-14 and never
+/// written by anything: a player's flight is created the moment they start it
+/// (<c>FlightEndpoints</c>, straight to <see cref="InProgress"/>), and a virtual pilot's occurrence
+/// is resolved in a single pass that writes its final status immediately. A flight that exists but
+/// has not begun is not a state this app has - the schedule template IS the plan, and it lives in
+/// PilotScheduleEntry, not in a Flight row. Re-adding it would mean a real flight lifecycle change,
+/// not a one-line enum edit.
+/// </para>
+/// </summary>
 public enum FlightStatus
 {
-    Planned,
     InProgress,
     Completed,
     Interrupted,

@@ -293,7 +293,6 @@ public static class AirlineEndpoints
             MonthlySalary = economyConfig.AirlineStartup.StartingPilotMonthlySalary,
             HoursFlown = 0,
             SkillRating = 50,
-            Status = PilotStatus.Available,
             CreatedUtc = now,
         };
 

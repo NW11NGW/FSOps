@@ -314,7 +314,6 @@ public class VirtualFlightResolverServiceTests
             IsPlayer = false,
             MonthlySalary = 9_000m,
             SkillRating = 50,
-            Status = PilotStatus.Available,
             CreatedUtc = Base,
         };
         ctx.Db.Pilots.Add(pilot);

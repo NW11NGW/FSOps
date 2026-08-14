@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RepositionAircraftDialog } from './RepositionAircraftDialog'
-import { SettingsProvider } from '@/hooks/useSettings'
+import { SettingsProvider } from '@/hooks/SettingsProvider'
 import { click, findButton, flush, getByRole, isDisabled, mount, text } from '@/test/domHarness'
 import type { FleetAircraftSummary, RepositionOptions } from '@/types/fleet'
 

@@ -10,7 +10,24 @@ export type FlightPhase =
   | 'TaxiIn'
   | 'Shutdown'
 
-export type FlightStatus = 'Planned' | 'InProgress' | 'Completed' | 'Interrupted' | 'Abandoned'
+/**
+ * Every status a flight row can actually carry, matching FlightStatus in Enums.cs. The last three
+ * belong to virtual pilots' scheduled occurrences: Skipped and Cancelled are the Casual and
+ * True-life outcomes for a sector that could not fly, and Suspended is one paused by an aircraft's
+ * maintenance check. They are returned by GET /flights alongside everything else, so any component
+ * that maps over this union has to handle them.
+ *
+ * There is no 'Planned' - nothing has ever written it, and the member was removed from the backend
+ * enum on 2026-08-14.
+ */
+export type FlightStatus =
+  | 'InProgress'
+  | 'Completed'
+  | 'Interrupted'
+  | 'Abandoned'
+  | 'Skipped'
+  | 'Cancelled'
+  | 'Suspended'
 
 export type FlightEventType = 'PhaseChange' | 'Touchdown' | 'PositionSnapshot' | 'Mismatch' | 'Note'
 

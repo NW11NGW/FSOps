@@ -10,7 +10,6 @@ public class PilotConfiguration : IEntityTypeConfiguration<Pilot>
     {
         builder.HasKey(p => p.Id);
         builder.Property(p => p.MonthlySalary).HasPrecision(18, 2);
-        builder.Property(p => p.Status).HasConversion<string>();
         builder.HasIndex(p => p.AirlineId);
         builder.HasQueryFilter(p => p.DeletedUtc == null);
     }
