@@ -139,6 +139,22 @@ Two things share this card, and they are very different in consequence.
 
 Whether FSOps checks for new releases, what it found, and — if there is one — a **Download and verify** action. Off means genuinely off: no request leaves your machine at all. FSOps never runs an installer for you; the most it does is open the folder containing one it has downloaded and checked against the release's published SHA-256. See [Updating FSOps](installation.md#updating-fsops) for the whole flow, and [FSOps never tells me about updates](troubleshooting.md#fsops-never-tells-me-about-updates) if it seems too quiet.
 
+#### Which builds to offer
+
+A **Stable / Development** choice sitting with the other update controls.
+
+**Stable** is the default and what you get unless you change it. Finished, released versions only — the right choice for almost everyone, and the choice you have if you have never touched this setting.
+
+**Development** also offers test builds, published as the work is done. You see new features early. What that costs is worth being plain about, because it is not small:
+
+- These builds **have not been through release testing**. Bugs are expected, and you are the person who finds them.
+- Some of those bugs will reach **your airline's saved data** — your fleet, your routes, your flight history.
+- A development build can **change the shape of your saved data** in ways an older version does not understand. Going back afterwards is not always simple. If your airline matters to you, copy `%LOCALAPPDATA%\FSOps` somewhere safe before you switch.
+
+What *doesn't* change is the checking. A development build's installer is downloaded and verified against the checksum published with its release exactly as strictly as a stable one — the same code, in the same order. The channel decides which build you are offered, never whether it is verified.
+
+**Switching back to Stable.** You can, at any time, and nothing is taken away from you. But you will be running something *newer* than the newest stable release, so FSOps will say **"You are ahead of the stable channel"** and offer you nothing until a stable release passes the build you are on. That is deliberate: FSOps never replaces a newer build with an older one, and it will not dress a downgrade up as an update. If you want to go back to a stable build immediately, install it yourself from the releases page — and read the warning above about saved data first.
+
 ## Building routes
 
 Reachable from the main navigation once your airline exists. This is where your strategy and home base turn into an actual flying network.

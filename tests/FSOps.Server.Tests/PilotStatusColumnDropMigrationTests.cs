@@ -20,6 +20,16 @@ namespace FSOps.Server.Tests;
 /// <c>DeletedUtc</c> would either resurrect a released pilot onto the roster or make a live one
 /// disappear, and neither would be obvious from a row count.
 /// </para>
+/// <para>
+/// Read back with raw SQL rather than through <c>FsOpsDbContext</c>, and deliberately so - see
+/// <see cref="PinnedSchemaRead"/>. The database here is pinned to one migration on purpose, while EF
+/// only ever has the current model and builds its SELECT from it; reading through EF therefore asks
+/// for columns that do not exist yet and fails the first time anyone adds a field to Pilots. The
+/// sibling UserSettings test broke exactly that way when a settings column was added, and the error
+/// (<c>no such column</c>) points at the new migration rather than at the read, so it costs whoever
+/// hits it a search for a bug that is not there. Converting this back to <c>db.Pilots</c> because it
+/// would read more neatly re-arms that.
+/// </para>
 /// </summary>
 public class PilotStatusColumnDropMigrationTests
 {
@@ -82,9 +92,26 @@ public class PilotStatusColumnDropMigrationTests
             await migrator.MigrateAsync(MigrationUnderTest);
         }
 
-        await using var verifyDb = new FsOpsDbContext(options);
+        const string selectById = """
+            SELECT Name, IsPlayer, MonthlySalary, HoursFlown, SkillRating, LastFlewUtc, CreatedUtc, DeletedUtc
+            FROM Pilots WHERE Id = $id;
+            """;
 
-        var veteran = await verifyDb.Pilots.SingleAsync(p => p.Id == veteranId);
+        Task<PilotRow> ReadPilotAsync(Guid id) => PinnedSchemaRead.SingleAsync(
+            connection,
+            selectById,
+            c => c.Parameters.AddWithValue("$id", id.ToString().ToUpperInvariant()),
+            r => new PilotRow(
+                r.GetString(r.GetOrdinal("Name")),
+                r.GetBoolean(r.GetOrdinal("IsPlayer")),
+                r.GetDecimal(r.GetOrdinal("MonthlySalary")),
+                r.GetDouble(r.GetOrdinal("HoursFlown")),
+                r.GetDouble(r.GetOrdinal("SkillRating")),
+                r.TimestampOrNull("LastFlewUtc"),
+                r.GetFieldValue<DateTimeOffset>(r.GetOrdinal("CreatedUtc")),
+                r.TimestampOrNull("DeletedUtc")));
+
+        var veteran = await ReadPilotAsync(veteranId);
         Assert.Equal("R. Whittle", veteran.Name);
         Assert.True(veteran.IsPlayer);
         Assert.Equal(4250.55m, veteran.MonthlySalary);
@@ -94,7 +121,7 @@ public class PilotStatusColumnDropMigrationTests
         Assert.Equal(now.AddDays(-90), veteran.CreatedUtc);
         Assert.Null(veteran.DeletedUtc);
 
-        var fresh = await verifyDb.Pilots.SingleAsync(p => p.Id == freshId);
+        var fresh = await ReadPilotAsync(freshId);
         Assert.Equal("A. Newbold", fresh.Name);
         Assert.False(fresh.IsPlayer);
         Assert.Equal(0, fresh.HoursFlown);
@@ -102,56 +129,41 @@ public class PilotStatusColumnDropMigrationTests
         // stops idle decay reaching a brand-new pilot at all - see PilotSkillCalculator.
         Assert.Null(fresh.LastFlewUtc);
 
-        // The soft-deleted pilot must still be soft-deleted: present in the table, invisible to the
-        // query filter. Resurrecting a released pilot would put them back on the roster AND back on
-        // the monthly salary run.
-        Assert.DoesNotContain(await verifyDb.Pilots.ToListAsync(), p => p.Id == releasedId);
-        var released = await verifyDb.Pilots.IgnoreQueryFilters().SingleAsync(p => p.Id == releasedId);
+        // The soft-deleted pilot must still be soft-deleted: present in the table, with its tombstone
+        // intact. Clearing DeletedUtc would put a released pilot back on the roster AND back on the
+        // monthly salary run; dropping the row would lose their history outright. The tombstone is
+        // asserted directly rather than through EF's query filter, because what this migration is
+        // responsible for is the stored value - the filter is model behaviour and is tested elsewhere.
+        var released = await ReadPilotAsync(releasedId);
         Assert.Equal("D. Gorse", released.Name);
         Assert.Equal(releasedDeleted, released.DeletedUtc);
         Assert.Equal(releasedLastFlew, released.LastFlewUtc);
         Assert.Equal(412.5, released.HoursFlown);
         Assert.Equal(8750.25m, released.MonthlySalary);
 
-        Assert.Equal(3, await verifyDb.Pilots.IgnoreQueryFilters().CountAsync());
+        Assert.Equal(3, await PinnedSchemaRead.CountAsync(connection, "SELECT COUNT(*) FROM Pilots;"));
+        Assert.Equal(1, await PinnedSchemaRead.CountAsync(
+            connection, "SELECT COUNT(*) FROM Pilots WHERE DeletedUtc IS NOT NULL;"));
 
-        var columns = await ReadColumnNamesAsync(connection, "Pilots");
+        var columns = await PinnedSchemaRead.ColumnNamesAsync(connection, "Pilots");
         Assert.DoesNotContain("Status", columns);
         Assert.Contains("LastFlewUtc", columns);
         Assert.Contains("HoursFlown", columns);
         Assert.Contains("DeletedUtc", columns);
 
-        var indexes = await ReadIndexNamesAsync(connection, "Pilots");
+        var indexes = await PinnedSchemaRead.IndexNamesAsync(connection, "Pilots");
         Assert.Contains("IX_Pilots_AirlineId", indexes);
     }
 
-    private static async Task<List<string>> ReadColumnNamesAsync(SqliteConnection connection, string table)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"PRAGMA table_info({table});";
-        var names = new List<string>();
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            names.Add(reader.GetString(reader.GetOrdinal("name")));
-        }
-
-        return names;
-    }
-
-    private static async Task<List<string>> ReadIndexNamesAsync(SqliteConnection connection, string table)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = $table AND name NOT LIKE 'sqlite_%';";
-        command.Parameters.AddWithValue("$table", table);
-        var names = new List<string>();
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            names.Add(reader.GetString(0));
-        }
-
-        return names;
-    }
+    /// <summary>Exactly the columns this test names - see <see cref="PinnedSchemaRead"/> for why it
+    /// is not the entity.</summary>
+    private sealed record PilotRow(
+        string Name,
+        bool IsPlayer,
+        decimal MonthlySalary,
+        double HoursFlown,
+        double SkillRating,
+        DateTimeOffset? LastFlewUtc,
+        DateTimeOffset CreatedUtc,
+        DateTimeOffset? DeletedUtc);
 }

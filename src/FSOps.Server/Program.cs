@@ -158,6 +158,13 @@ builder.Services.AddSingleton<VatsimFlightCorroborationService>();
 builder.Services.AddHttpClient(GitHubReleaseClient.HttpClientName, client => client.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.AddSingleton<IUpdateStorage, FileUpdateStorage>();
 builder.Services.AddSingleton<IGitHubReleaseClient, GitHubReleaseClient>();
+
+// The release channel, the one piece of updater state that IS a database column - it is a user
+// setting and belongs with the user's settings. Registered as a singleton holding a scope factory
+// rather than a DbContext, and written so that an unreadable database resolves to the stable
+// channel; see DatabaseUpdateChannelStore for why that direction is the safe one. Nothing here runs
+// at startup: the first read happens when something asks for the update status.
+builder.Services.AddSingleton<IUpdateChannelStore, DatabaseUpdateChannelStore>();
 builder.Services.AddSingleton<UpdateChecker>();
 
 var app = builder.Build();

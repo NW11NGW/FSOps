@@ -36,6 +36,12 @@ function status(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
     downloadSha256: null,
     downloadedBytes: 0,
     downloadMessage: null,
+    // Stable, matching what the server returns for an install that has stored nothing. Worth being
+    // deliberate about: a stub that defaulted to development would let a regression in the real
+    // default pass every test in this file.
+    channel: 'stable',
+    aheadOfChannel: false,
+    channelNewestVersion: null,
     ...overrides,
   }
 }
@@ -152,6 +158,86 @@ describe('UpdatesSection', () => {
     expect(container.textContent).toContain('did not match')
     expect(container.textContent).not.toContain('SHA-256 verified')
     expect(queryButton(container, 'Show the installer')).toBeNull()
+    unmount()
+  })
+
+  it('defaults to the stable channel and says plainly what it means', async () => {
+    const { container, unmount } = await render(status())
+
+    const stable = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Stable')
+    const development = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Development')
+    expect(stable?.getAttribute('aria-checked')).toBe('true')
+    expect(development?.getAttribute('aria-checked')).toBe('false')
+
+    expect(container.textContent).toContain('Finished, released versions only')
+    unmount()
+  })
+
+  it('does not warn about development builds while stable is selected', async () => {
+    // A warning that is always on screen is a warning nobody reads.
+    const { container, unmount } = await render(status())
+
+    expect(container.textContent).not.toContain('not finished software')
+    unmount()
+  })
+
+  it('choosing development states the cost beside the control, before anything is downloaded', async () => {
+    vi.mocked(put).mockResolvedValue(status({ channel: 'development' }))
+    const { container, unmount } = await render(status())
+
+    const development = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Development')
+    expect(development).toBeDefined()
+    click(development!)
+    await flush()
+
+    expect(vi.mocked(put)).toHaveBeenCalledWith('/update/channel', { channel: 'development' })
+
+    // The trade, in plain words: what you gain, what it costs, and what does NOT change.
+    expect(container.textContent).toContain('not finished software')
+    expect(container.textContent).toContain('not been through release testing')
+    expect(container.textContent).toContain("airline's saved data")
+    expect(container.textContent).toContain('checks every download against the checksum')
+    unmount()
+  })
+
+  it('switching back to stable is offered, and posts the stable channel', async () => {
+    vi.mocked(put).mockResolvedValue(status({ channel: 'stable' }))
+    const { container, unmount } = await render(status({ channel: 'development' }))
+
+    const stable = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Stable')
+    click(stable!)
+    await flush()
+
+    expect(vi.mocked(put)).toHaveBeenCalledWith('/update/channel', { channel: 'stable' })
+    unmount()
+  })
+
+  it('a build newer than the channel is reported as ahead, never as an available downgrade', async () => {
+    const { container, unmount } = await render(
+      status({
+        currentVersion: '1.1.0-beta.3',
+        channelNewestVersion: '1.0.0',
+        aheadOfChannel: true,
+        updateAvailable: false,
+      }),
+    )
+
+    expect(container.textContent).toContain('ahead of the stable channel')
+    expect(container.textContent).toContain('1.1.0-beta.3')
+    expect(container.textContent).toContain('1.0.0')
+    expect(container.textContent).toContain('never replaces a newer build with an older one')
+
+    // And the two things that would be wrong to say or offer.
+    expect(container.textContent).not.toContain('You are on the latest version.')
+    expect(queryButton(container, 'Download and verify')).toBeNull()
+    unmount()
+  })
+
+  it('says "latest version" only when that is actually true', async () => {
+    const { container, unmount } = await render(status())
+
+    expect(container.textContent).toContain('You are on the latest version.')
+    expect(container.textContent).not.toContain('ahead of the')
     unmount()
   })
 

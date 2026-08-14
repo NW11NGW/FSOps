@@ -1,0 +1,485 @@
+name: Beta
+
+# Builds the installer for a -beta tag, proves it installs and runs, and publishes it as a GitHub
+# PRE-RELEASE.
+#
+# Why this one publishes when release.yml deliberately does not
+# -------------------------------------------------------------
+# release.yml leaves a draft for a human, because shipping to everybody means somebody has flown a
+# sector end to end in the simulator and no runner can do that. That reasoning does not transfer
+# here, for one reason: a pre-release cannot reach anybody who has not asked for it. GitHub's
+# /releases/latest - the only thing the stable channel reads - excludes pre-releases by definition,
+# and FSOps refuses them a second time in UpdateChecker.ApplyRelease. So the audience for this
+# artefact is exactly the set of people who went into Settings and chose the development channel
+# after being told, in plain words, that these builds are not tested to release standard.
+#
+# Pushing a -beta tag is itself a deliberate act by the one person who can push to this repository.
+# Requiring a second deliberate act to publish something that only opted-in testers can see would
+# add ceremony without adding a decision.
+#
+# What has NOT been relaxed
+# -------------------------
+# Everything that makes a download trustworthy. The .sha256 sidecar is generated on this runner from
+# the bytes this runner built, both files are attached or neither is, and the in-app updater verifies
+# a pre-release against its checksum by exactly the same code that verifies a stable release. The
+# channel decides which build is offered; it has no say in whether it is checked.
+#
+# The installer is also fully smoke-tested here - installed, run, uninstalled, and the data directory
+# checked for survival - before anything is published. A beta is untested in the simulator, not
+# untested full stop.
+on:
+  push:
+    tags:
+      - 'v*.*.*-beta*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Dry run only: a tag to check against Directory.Build.props. No pre-release is created unless this workflow is run on an actual tag.'
+        required: false
+        type: string
+
+# Least privilege. contents: write is needed for one thing only - creating the pre-release and
+# attaching its two files.
+permissions:
+  contents: write
+
+concurrency:
+  group: beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish-prerelease:
+    # Windows for the same reasons as ci.yml, installer.yml and release.yml: Inno Setup is
+    # Windows-only, and the solution does not restore on Linux because FSOps.Sim references
+    # SimConnect's native x64 libraries and the net461-targeted FsConnect wrapper.
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      # Full history: the branch check below needs to know which branches contain this commit, and
+      # the default shallow fetch cannot answer that.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------------------------------------------------------------
+      # The version gate, hoisted above every setup step for the same reason release.yml hoists
+      # its own: it needs nothing but the checked-out files, and a mismatch should cost ten
+      # seconds rather than forty minutes.
+      #
+      # It matters more here than it does for a stable release, not less. Semver puts
+      # 1.1.0-beta.1 BELOW 1.1.0, so a beta built from a plain <Version>1.1.0</Version> would ship
+      # an app reporting itself as 1.1.0 under a release tagged 1.1.0-beta.1. Every tester would
+      # then be told they were ahead of the development channel and would never be offered another
+      # beta - and nobody would report it, because it looks exactly like no betas being published.
+      # ---------------------------------------------------------------------------------------
+      - name: The tag must match <Version> in Directory.Build.props
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          # SelectSingleNode, not dotted property access: Directory.Build.props has more than one
+          # <PropertyGroup> and only one carries <Version>, which under StrictMode makes the dotted
+          # form a terminating error rather than a null.
+          [xml]$props = Get-Content 'Directory.Build.props' -Raw
+          $versionNode = $props.SelectSingleNode('/Project/PropertyGroup/Version')
+          if (-not $versionNode) { throw 'No <Version> element found in Directory.Build.props.' }
+          $propsVersion = $versionNode.InnerText.Trim()
+          if (-not $propsVersion) { throw 'The <Version> element in Directory.Build.props is empty.' }
+          "Directory.Build.props says : $propsVersion"
+
+          $tag = ''
+          if ($env:REF_TYPE -eq 'tag') { $tag = $env:REF_NAME }
+          elseif ($env:INPUT_TAG)      { $tag = $env:INPUT_TAG }
+
+          if (-not $tag) {
+            'No tag for this run (manual dispatch on a branch). Dry run: nothing will be published.'
+            "APP_VERSION=$propsVersion" >> $env:GITHUB_ENV
+            return
+          }
+
+          # The trigger filter 'v*.*.*-beta*' is a glob, not a pattern. Check the shape properly.
+          if ($tag -notmatch '^[vV]?\d+\.\d+\.\d+-beta(\.\d+)?$') {
+            throw "Tag '$tag' is not a beta version tag. Expected something like v1.1.0-beta.1."
+          }
+
+          $tagVersion = $tag -replace '^[vV]', ''
+          "tag says                   : $tagVersion"
+
+          if ($tagVersion -ne $propsVersion) {
+            throw @"
+          Tag/version mismatch. Refusing to build.
+
+            tag                    : $tag  (reads as $tagVersion)
+            Directory.Build.props  : $propsVersion
+
+          These have to agree, and for a beta the pre-release suffix is the part that matters most.
+          <Version> is what the assembly reports as its own version, and UpdateChecker compares that
+          against the release tag as SEMANTIC versions - where $tagVersion sorts BELOW a plain
+          release of the same numbers. Building this beta from <Version>$propsVersion</Version> would
+          ship an app that believes it is newer than the beta it came from, so its own development
+          channel would offer it nothing, for ever, and the next beta would appear to have vanished.
+
+          Fix it by setting <Version> in Directory.Build.props to $tagVersion, committing that, and
+          re-tagging.
+          "@
+          }
+
+          "tag and <Version> agree on $propsVersion"
+          "APP_VERSION=$propsVersion" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+
+      # A beta is a build of the development line. Tagging one on main would publish a pre-release
+      # whose contents are indistinguishable from the stable release, which is at best confusing and
+      # at worst a stable build that reaches testers under a beta version number and then reports
+      # itself as older than the stable release it actually is.
+      - name: The tag must be on develop
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          $branches = git branch -r --contains HEAD --format '%(refname:short)'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not determine which branches contain this commit.' }
+
+          "commit is on: $($branches -join ', ')"
+          if ($branches -notcontains 'origin/develop') {
+            throw @"
+          This beta tag is not on develop.
+
+          Beta builds come from the development branch. A pre-release cut from anywhere else is
+          either a duplicate of a stable build wearing a lower version number, or work that has not
+          been through the branch where development happens.
+          "@
+          }
+          'tag is on develop'
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '8.0.x'
+
+      # Node 24, in step with ci.yml and release.yml. Not arbitrary: jsdom's bundled undici calls
+      # webidl.util.markAsUncloneable, which does not exist on Node 20. publish.ps1 builds the SPA,
+      # so this job needs that same runtime.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/fsops-web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: src/fsops-web
+        run: npm ci
+
+      # A beta is not exempt from the checks every commit gets. It is going to real people's
+      # machines, and "it is only a beta" is a reason to be told what is broken, not a reason not to
+      # look.
+      - name: Test
+        run: dotnet test FSOps.sln --nologo
+
+      - name: Test the SPA
+        working-directory: src/fsops-web
+        run: |
+          npx tsc --noEmit
+          npx vitest run
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # Publishes self-contained, compiles the .iss, and writes the SHA-256 sidecar. The version it
+      # stamps comes from Directory.Build.props - the property the step above checked the tag
+      # against, which is what makes that check meaningful. The script strips the pre-release suffix
+      # for the Windows file-version resource only; the installer's name keeps it.
+      - name: Build the installer
+        shell: pwsh
+        run: .\installer\build-installer.ps1
+
+      - name: Record what was built
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem artifacts\installer\FSOps-Setup-*.exe | Where-Object { $_.Name -notlike '*.sha256' } | Select-Object -First 1
+          $checksum  = Get-ChildItem artifacts\installer\FSOps-Setup-*.exe.sha256 | Select-Object -First 1
+          if (-not $installer) { throw 'No installer was produced.' }
+          if (-not $checksum)  { throw 'No .sha256 sidecar was produced - every tester''s in-app updater would degrade to a link.' }
+          "installer : $($installer.Name) ($([math]::Round($installer.Length/1MB,1)) MB)"
+          "checksum  : $(Get-Content $checksum.FullName -Raw)"
+          "INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
+          "CHECKSUM_PATH=$($checksum.FullName)" >> $env:GITHUB_ENV
+
+      # The updater will silently refuse an asset whose filename is not plain
+      # (UpdateChecker.SafeAssetFileName: letters, digits, dot, dash, underscore). A beta filename
+      # carries a suffix, so it is checked here rather than discovered as "the release was announced
+      # but the download was never offered", which reads like a broken updater rather than a bad name.
+      - name: The installer's name must be one the updater will accept
+        shell: pwsh
+        run: |
+          $name = Split-Path $env:INSTALLER_PATH -Leaf
+          if ($name -notmatch '^[A-Za-z0-9._-]+$' -or $name.StartsWith('.') -or $name.EndsWith('.') -or $name.Length -gt 128) {
+            throw "Installer name '$name' is not one UpdateChecker.SafeAssetFileName accepts. The release would be announced with no download offered."
+          }
+          "installer name '$name' is acceptable to the updater"
+
+      # -------------------------------------------------------------------------------------------
+      # Smoke test. Lifted from release.yml, which lifted it from installer.yml. Duplicated rather
+      # than shared because sharing would mean editing files that are proven and working; if these
+      # drift, installer.yml is the reference.
+      # -------------------------------------------------------------------------------------------
+
+      # A sentinel standing in for the user's airline. Uninstalling must never remove this: the data
+      # directory holds the database, and someone's whole airline lives in it.
+      - name: Plant a sentinel in the data directory
+        shell: pwsh
+        run: |
+          $dataDir = Join-Path $env:LOCALAPPDATA 'FSOps'
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          'do not delete me' | Out-File (Join-Path $dataDir 'sentinel.txt') -Encoding ascii
+          "planted in $dataDir"
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath $env:INSTALLER_PATH `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with $($p.ExitCode)." }
+          'setup completed'
+
+      # Assert on real content, never on a file existing with the right name. The SPA fallback page
+      # returns a perfectly good HTTP 200 saying "UI not built yet", and a wwwroot containing that
+      # instead of the app is exactly the failure this has to catch.
+      - name: Check what actually landed
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          if (-not (Test-Path $installDir)) { throw "Nothing was installed at $installDir." }
+
+          $required = @(
+            'FSOps.Desktop.exe',
+            'FSOps.Server.exe',
+            'WebView2Loader.dll',
+            'economy-config.json',
+            'wwwroot\index.html'
+          )
+          foreach ($rel in $required) {
+            $full = Join-Path $installDir $rel
+            if (-not (Test-Path $full)) { throw "Missing from the install: $rel" }
+          }
+
+          # WebView2Loader.dll at the ROOT is load-bearing and separate from the copy under
+          # runtimes\. It ships as plain content, never appears in .deps.json, and a self-contained
+          # build has no NuGet cache to fall back on - omitting it fails before a window exists.
+          $loader = Get-Item (Join-Path $installDir 'WebView2Loader.dll')
+          if ($loader.Length -lt 1000) { throw 'WebView2Loader.dll at the root looks truncated.' }
+
+          $index = Get-Content (Join-Path $installDir 'wwwroot\index.html') -Raw
+          if ($index -notmatch 'id="root"') { throw 'wwwroot\index.html is not the real SPA.' }
+          if ($index -match 'UI not built yet') { throw 'wwwroot contains the placeholder page.' }
+
+          "installed files verified ($installDir)"
+
+      # Launch the SERVER from the installed location, not from a build output: the content root
+      # resolves differently, and a bug invisible under "dotnet run" once broke the direct-exe launch
+      # and would have shipped a blank app. The desktop shell is deliberately not launched - it opens
+      # a real window, and a GUI on a CI runner proves little while failing unpredictably.
+      - name: Run the installed server and check it serves the real UI
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          $env:FSOPS_DATA_DIR  = Join-Path $env:RUNNER_TEMP 'fsops-beta-data'
+          $env:FSOPS_NO_BROWSER = '1'
+          $env:FSOPS_PORT = '5988'
+
+          $server = Start-Process -FilePath (Join-Path $installDir 'FSOps.Server.exe') `
+                                  -WorkingDirectory $installDir -PassThru
+          try {
+            $ok = $false
+            foreach ($attempt in 1..40) {
+              Start-Sleep -Seconds 3
+              try {
+                $r = Invoke-WebRequest -Uri 'http://localhost:5988/' -UseBasicParsing -TimeoutSec 10
+                if ($r.Content -match 'id="root"' -and $r.Content -notmatch 'UI not built yet') {
+                  $ok = $true
+                  break
+                }
+              } catch { }
+            }
+            if (-not $ok) { throw 'The installed server never served the real SPA.' }
+
+            $health = (Invoke-WebRequest -Uri 'http://localhost:5988/api/v1/health' -UseBasicParsing -TimeoutSec 10).Content
+            "health: $health"
+            if ($health -notmatch '"status":"ok"') { throw 'Health endpoint did not report ok.' }
+
+            # The build must report the pre-release version as its own. If it reported the plain
+            # numeric version instead, the app would outrank the beta it came from and its own
+            # development channel would go permanently silent - the failure this whole workflow is
+            # shaped around avoiding.
+            if ($env:RELEASE_TAG) {
+              $expected = $env:APP_VERSION
+              if ($health -notmatch [regex]::Escape("`"version`":`"$expected`"")) {
+                throw "The installed app does not report version $expected. Health said: $health"
+              }
+              "the installed app reports itself as $expected"
+            }
+          }
+          finally {
+            # Only ever stop the process this step started, by the PID it captured.
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: Uninstall silently
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\FSOps'
+          $uninstaller = Get-ChildItem (Join-Path $installDir 'unins*.exe') | Select-Object -First 1
+          if (-not $uninstaller) { throw "No uninstaller found in $installDir." }
+
+          $p = Start-Process -FilePath $uninstaller.FullName `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall exited with $($p.ExitCode)." }
+
+          # Inno's uninstaller returns as soon as it has handed off, so the folder can linger briefly.
+          foreach ($attempt in 1..20) {
+            if (-not (Test-Path (Join-Path $installDir 'FSOps.Desktop.exe'))) { break }
+            Start-Sleep -Seconds 2
+          }
+          if (Test-Path (Join-Path $installDir 'FSOps.Desktop.exe')) {
+            throw 'FSOps.Desktop.exe is still present after uninstalling.'
+          }
+          'uninstall completed'
+
+      # The single most important assertion in the smoke test. An installer that removes the user's
+      # airline on uninstall is the one mistake here with no recovery - and beta testers are exactly
+      # the people who will install and uninstall repeatedly.
+      - name: The user's data must have survived
+        shell: pwsh
+        run: |
+          $sentinel = Join-Path $env:LOCALAPPDATA 'FSOps\sentinel.txt'
+          if (-not (Test-Path $sentinel)) {
+            throw 'UNINSTALL DELETED THE DATA DIRECTORY. On a real machine that is somebody''s airline.'
+          }
+          'data directory survived the uninstall'
+
+      # Uploaded whether or not the smoke test passed. If something above failed, the exact bytes
+      # that failed it are the first thing anyone will want.
+      - name: Upload the installer and its checksum as artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: FSOps-Setup-${{ env.APP_VERSION }}
+          path: |
+            artifacts/installer/FSOps-Setup-*.exe
+            artifacts/installer/FSOps-Setup-*.exe.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
+      # -------------------------------------------------------------------------------------------
+      # The pre-release. Only on a real tag, and only ever a pre-release.
+      #
+      # --prerelease is the whole safety property of this workflow. GitHub's /releases/latest, which
+      # is the only endpoint the stable channel reads, excludes pre-releases - so this artefact is
+      # invisible to everybody who has not opted in, by construction rather than by our filtering.
+      # --latest=false says the same thing a second time and explicitly: GitHub will not promote a
+      # pre-release to "Latest" on its own, and this makes that non-negotiable rather than relied upon.
+      #
+      # --verify-tag is not decoration: gh release create will happily invent a tag that does not
+      # exist, and this workflow must never create one.
+      # -------------------------------------------------------------------------------------------
+      - name: Publish the pre-release with both files attached
+        # success() is written out rather than left implicit. GitHub does insert it, but the
+        # consequence of being wrong is a build published from an installer that failed its smoke
+        # test, so it is spelled out.
+        if: success() && github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          $installer = $env:INSTALLER_PATH
+          $checksum  = $env:CHECKSUM_PATH
+
+          # Both files or neither. Without the .sha256, UpdateChecker.SelectChecksumAsset finds
+          # nothing, CanDownload returns false, and the in-app updater silently degrades to "there is
+          # a new version, here is a link" for every tester. That reads like the updater being broken
+          # rather than like a missing file, so nobody would report it as one.
+          if (-not (Test-Path $installer)) { throw "The installer is missing: $installer" }
+          if (-not (Test-Path $checksum))  { throw "The .sha256 sidecar is missing: $checksum. Refusing to publish the installer alone - the in-app updater would degrade to a link for every tester." }
+
+          $hashLine = (Get-Content $checksum -Raw).Trim()
+          $installerName = Split-Path $installer -Leaf
+
+          $notes = @"
+          FSOps $env:APP_VERSION - development build
+
+          **This is a pre-release. It has not been tested to release standard, and it has not been
+          flown end to end in the simulator.** It is offered only to people who chose the development
+          channel in Settings, and it will never be offered to anyone on stable.
+
+          Expect bugs, and expect some of them to affect saved data. A development build can also
+          change your database in ways an earlier stable version will not understand, so going back
+          is not always simple. Take a copy of ``%LOCALAPPDATA%\FSOps`` before installing if your
+          airline matters to you.
+
+          ### Downloads
+
+          - ``$installerName`` - the installer. Per-user, no administrator rights needed.
+          - ``$installerName.sha256`` - the checksum. Both files must stay attached: the in-app
+            updater fetches the sidecar before it downloads anything and will not offer an in-app
+            download without it.
+
+          ### Verifying the download
+
+          ``````
+          Get-FileHash .\$installerName -Algorithm SHA256
+          ``````
+
+          Expected:
+
+          ``````
+          $hashLine
+          ``````
+
+          FSOps is unsigned, so Windows SmartScreen will warn on first run. That hash is the only
+          thing distinguishing this build from a file off the internet - and it is checked just as
+          strictly for a pre-release as for a stable release.
+
+          ### Going back to stable
+
+          Switch the channel back in Settings. You will be running something newer than the newest
+          stable release, so FSOps will say you are ahead of the channel and offer you nothing until
+          stable catches up. It will not downgrade you.
+          "@
+
+          $notesPath = Join-Path $env:RUNNER_TEMP 'beta-notes.md'
+          $notes | Out-File -FilePath $notesPath -Encoding utf8
+
+          gh release create $env:RELEASE_TAG `
+            $installer `
+            $checksum `
+            --prerelease `
+            --latest=false `
+            --verify-tag `
+            --title "FSOps $env:APP_VERSION (beta)" `
+            --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
+
+          ''
+          "Pre-release published for $env:RELEASE_TAG."
+          'It is visible only to people on the development channel. Stable users are unaffected.'
+
+      - name: Say what happens next
+        if: success() && github.ref_type != 'tag'
+        shell: pwsh
+        run: |
+          'Dry run complete. The installer was built and smoke-tested; nothing was published.'
+          'Push a -beta version tag on develop to publish a pre-release.'

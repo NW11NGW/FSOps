@@ -43,6 +43,12 @@ public class UpdateEndpointsIntegrationTests : IAsyncLifetime
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly TempUpdateStorage _storage = new();
+
+    /// <summary>Survives the simulated restart in
+    /// <see cref="Preferences_SurviveARestartOfTheServer"/>, exactly as the real settings row does -
+    /// a fresh store per host would make a channel look like it had been forgotten when it had not.</summary>
+    private readonly FakeUpdateChannelStore _channels = new();
+
     private WebApplication? _app;
     private HttpClient? _client;
     private FakeReleaseHttpHandler _handler = new();
@@ -100,9 +106,11 @@ public class UpdateEndpointsIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton<IHttpClientFactory>(new FakeHttpClientFactory(handler));
         builder.Services.AddSingleton<IUpdateStorage>(_storage);
         builder.Services.AddSingleton<IGitHubReleaseClient, GitHubReleaseClient>();
+        builder.Services.AddSingleton<IUpdateChannelStore>(_channels);
         builder.Services.AddSingleton(sp => new UpdateChecker(
             sp.GetRequiredService<IGitHubReleaseClient>(),
             sp.GetRequiredService<IUpdateStorage>(),
+            sp.GetRequiredService<IUpdateChannelStore>(),
             sp.GetRequiredService<IClock>(),
             sp.GetRequiredService<ILogger<UpdateChecker>>())
         {
@@ -410,6 +418,109 @@ public class UpdateEndpointsIntegrationTests : IAsyncLifetime
 
         Assert.Equal("failed", status.GetProperty("downloadState").GetString());
         Assert.False(File.Exists(Path.Combine(_storage.UpdatesDirectory, InstallerName + ".part")));
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Channels, over the wire
+    // -----------------------------------------------------------------------------------
+
+    private static string PrereleaseListJson(string tag = "v0.3.0-beta.1")
+    {
+        var name = $"FSOps-Setup-{tag.TrimStart('v')}.exe";
+        return $$"""
+        [{
+          "tag_name": "{{tag}}",
+          "draft": false,
+          "prerelease": true,
+          "html_url": "https://github.com/NW11NGW/FSOps/releases/tag/{{tag}}",
+          "body": "Beta notes.",
+          "published_at": "2026-08-10T09:00:00Z",
+          "assets": [
+            { "name": "{{name}}", "browser_download_url": "https://github.com/NW11NGW/FSOps/releases/download/{{tag}}/{{name}}", "size": 64 },
+            { "name": "{{name}}.sha256", "browser_download_url": "https://github.com/NW11NGW/FSOps/releases/download/{{tag}}/{{name}}.sha256", "size": 80 }
+          ]
+        }]
+        """;
+    }
+
+    [Fact]
+    public async Task Status_OnAFreshInstall_ReportsTheStableChannel()
+    {
+        // The default, asserted through the API a client actually reads. Nothing has written a
+        // channel; "stable" has to be what comes back regardless.
+        var client = await StartAsync(new FakeReleaseHttpHandler().WhenStatus("api.github.com", HttpStatusCode.NotFound));
+
+        var status = await GetStatusAsync(client);
+
+        Assert.Equal("stable", status.GetProperty("channel").GetString());
+        Assert.False(status.GetProperty("aheadOfChannel").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Channel_SwitchedToDevelopment_OffersThePrereleaseImmediately()
+    {
+        var handler = new FakeReleaseHttpHandler()
+            .WhenJson("releases?per_page", PrereleaseListJson())
+            .WhenJson("api.github.com", ReleaseJson());
+        var client = await StartAsync(handler);
+
+        var response = await client.PutAsJsonAsync("/api/v1/update/channel", new { channel = "development" });
+        var status = await ReadJsonAsync(response);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("development", status.GetProperty("channel").GetString());
+        Assert.Equal("0.3.0-beta.1", status.GetProperty("latestVersion").GetString());
+        Assert.True(status.GetProperty("downloadAvailable").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Channel_SwitchedBackToStable_DropsThePrereleaseOffer()
+    {
+        var handler = new FakeReleaseHttpHandler()
+            .WhenJson("releases?per_page", PrereleaseListJson())
+            .WhenJson("api.github.com", ReleaseJson());
+        var client = await StartAsync(handler);
+
+        await client.PutAsJsonAsync("/api/v1/update/channel", new { channel = "development" });
+        var status = await ReadJsonAsync(
+            await client.PutAsJsonAsync("/api/v1/update/channel", new { channel = "stable" }));
+
+        Assert.Equal("stable", status.GetProperty("channel").GetString());
+        Assert.Equal("0.2.0", status.GetProperty("latestVersion").GetString());
+    }
+
+    /// <summary>
+    /// The ahead-of-stable case, end to end. Running a build newer than the newest stable release:
+    /// the response must say so, and must not offer the older release as an update.
+    /// </summary>
+    [Fact]
+    public async Task Channel_WhenTheRunningBuildIsNewerThanStable_SaysSoAndOffersNoDowngrade()
+    {
+        var client = await StartAsync(
+            new FakeReleaseHttpHandler().WhenJson("api.github.com", ReleaseJson()),
+            currentVersion: "0.3.0-beta.2");
+
+        var status = await ReadJsonAsync(await client.PostAsync("/api/v1/update/check", null));
+
+        Assert.True(status.GetProperty("aheadOfChannel").GetBoolean());
+        Assert.Equal("0.2.0", status.GetProperty("channelNewestVersion").GetString());
+        Assert.False(status.GetProperty("updateAvailable").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, status.GetProperty("latestVersion").ValueKind);
+        Assert.False(status.GetProperty("downloadAvailable").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("beta")]
+    [InlineData("")]
+    [InlineData("1")]
+    public async Task Channel_WithAnUnknownName_Is400_RatherThanQuietlyChoosingOne(string channel)
+    {
+        var client = await StartAsync(new FakeReleaseHttpHandler());
+
+        var response = await client.PutAsJsonAsync("/api/v1/update/channel", new { channel });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("stable", (await GetStatusAsync(client)).GetProperty("channel").GetString());
     }
 
     [Fact]

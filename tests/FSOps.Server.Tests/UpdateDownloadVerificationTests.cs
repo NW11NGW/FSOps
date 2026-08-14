@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using FSOps.Core.Entities;
 using FSOps.Server.Services;
 using FSOps.Server.Tests.Fakes;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -52,10 +53,17 @@ public class UpdateDownloadVerificationTests : IDisposable
     }
     """;
 
-    private UpdateChecker CreateChecker(FakeReleaseHttpHandler handler)
+    private UpdateChecker CreateChecker(
+        FakeReleaseHttpHandler handler,
+        UpdateChannel channel = UpdateChannel.Stable)
     {
         var client = new GitHubReleaseClient(new FakeHttpClientFactory(handler), NullLogger<GitHubReleaseClient>.Instance);
-        return new UpdateChecker(client, _storage, new FakeClock(Base), NullLogger<UpdateChecker>.Instance)
+        return new UpdateChecker(
+            client,
+            _storage,
+            new FakeUpdateChannelStore(channel),
+            new FakeClock(Base),
+            NullLogger<UpdateChecker>.Instance)
         {
             CurrentVersion = "0.1.0",
         };
@@ -69,6 +77,121 @@ public class UpdateDownloadVerificationTests : IDisposable
         Directory.Exists(_storage.UpdatesDirectory)
             ? Directory.GetFileSystemEntries(_storage.UpdatesDirectory).Select(Path.GetFileName).ToList()!
             : Array.Empty<string>();
+
+    // -----------------------------------------------------------------------------------
+    // The channel decides WHICH build is offered. It has no say in whether it is checked.
+    //
+    // These two run the whole download path twice, once per channel, against the same bytes and the
+    // same published hash. If a future change ever let the channel reach the verification code -
+    // "pre-releases are ours anyway", "the beta feed is trusted" - one of these fails. That is the
+    // entire reason they are theories over the channel rather than one test on the default.
+    // -----------------------------------------------------------------------------------
+
+    /// <summary>The pre-release equivalent of <see cref="ReleaseJson"/>, served from the list feed
+    /// the development channel reads. Same installer, same sidecar name - so the only thing that
+    /// differs between a stable run and a development one is which feed answered.</summary>
+    private static string PrereleaseListJson(bool withChecksum = true)
+    {
+        const string downloadBase = "https://github.com/NW11NGW/FSOps/releases/download/v0.2.0-beta.1";
+        var assets = new List<string>
+        {
+            $$"""{ "name": "{{InstallerName}}", "browser_download_url": "{{downloadBase}}/{{InstallerName}}", "size": 96 }""",
+        };
+
+        if (withChecksum)
+        {
+            assets.Add($$"""{ "name": "{{InstallerName}}.sha256", "browser_download_url": "{{downloadBase}}/{{InstallerName}}.sha256", "size": 80 }""");
+        }
+
+        return $$"""
+        [{
+          "tag_name": "v0.2.0-beta.1",
+          "draft": false,
+          "prerelease": true,
+          "html_url": "https://github.com/NW11NGW/FSOps/releases/tag/v0.2.0-beta.1",
+          "body": "Beta notes.",
+          "published_at": "2026-08-10T09:00:00Z",
+          "assets": [ {{string.Join(",", assets)}} ]
+        }]
+        """;
+    }
+
+    /// <summary>Stubs whichever feed the given channel reads, with a release that offers the same
+    /// installer either way - so the only difference between the two runs is the channel.</summary>
+    private static FakeReleaseHttpHandler HandlerForChannel(UpdateChannel channel) =>
+        channel == UpdateChannel.Development
+            ? new FakeReleaseHttpHandler().WhenJson("releases?per_page", PrereleaseListJson())
+            : new FakeReleaseHttpHandler().WhenJson(ReleaseApiUrl, ReleaseJson);
+
+    [Theory]
+    [InlineData(UpdateChannel.Stable)]
+    [InlineData(UpdateChannel.Development)]
+    public async Task AChecksumMismatch_IsRefusedIdentically_OnEveryChannel(UpdateChannel channel)
+    {
+        var handler = HandlerForChannel(channel)
+            .WhenText(".sha256", $"{Sha256Hex(RealInstallerBytes)}  {InstallerName}")
+            .WhenBytes(InstallerName, TamperedBytes);
+        var checker = CreateChecker(handler, channel);
+
+        var checkStatus = await checker.CheckAsync(force: true, CancellationToken.None);
+        Assert.True(checkStatus.UpdateAvailable, "the release should have been offered on this channel");
+
+        var status = await checker.DownloadAsync(CancellationToken.None);
+
+        Assert.Equal(UpdateDownloadStates.Failed, status.DownloadState);
+        Assert.Null(status.DownloadFileName);
+        Assert.Null(status.DownloadSha256);
+        Assert.False(File.Exists(InstallerPath));
+        Assert.False(File.Exists(PartialPath));
+        Assert.Empty(UpdatesFolderContents());
+        Assert.Null(_storage.Load().VerifiedFilePath);
+    }
+
+    [Theory]
+    [InlineData(UpdateChannel.Stable)]
+    [InlineData(UpdateChannel.Development)]
+    public async Task AMatchingChecksum_IsRequiredAndVerifiedIdentically_OnEveryChannel(UpdateChannel channel)
+    {
+        var handler = HandlerForChannel(channel)
+            .WhenText(".sha256", $"{Sha256Hex(RealInstallerBytes)}  {InstallerName}")
+            .WhenBytes(InstallerName, RealInstallerBytes);
+        var checker = CreateChecker(handler, channel);
+
+        await checker.CheckAsync(force: true, CancellationToken.None);
+        var status = await checker.DownloadAsync(CancellationToken.None);
+
+        Assert.Equal(UpdateDownloadStates.Ready, status.DownloadState);
+        Assert.Equal(Sha256Hex(RealInstallerBytes), status.DownloadSha256);
+        Assert.Equal(RealInstallerBytes, await File.ReadAllBytesAsync(InstallerPath));
+
+        // The sidecar is fetched on both channels. A pre-release is not exempt from having one.
+        Assert.Contains(handler.RequestedUrls, url => url.EndsWith(".sha256", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A pre-release that ships an installer with no checksum is refused exactly as a stable one is:
+    /// announced, linked, and never fetched. "It is only a beta" is not a reason to download an
+    /// unsigned executable there is nothing to verify against - if anything it is the opposite.
+    /// </summary>
+    [Fact]
+    public async Task APrereleaseWithNoChecksum_IsAnnouncedButNeverDownloaded()
+    {
+        var handler = new FakeReleaseHttpHandler()
+            .WhenJson("releases?per_page", PrereleaseListJson(withChecksum: false))
+            .WhenBytes(InstallerName, RealInstallerBytes);
+        var checker = CreateChecker(handler, UpdateChannel.Development);
+
+        var checkStatus = await checker.CheckAsync(force: true, CancellationToken.None);
+        Assert.True(checkStatus.UpdateAvailable);
+        Assert.False(checkStatus.DownloadAvailable);
+
+        var requestsBefore = handler.CallCount;
+        var status = await checker.DownloadAsync(CancellationToken.None);
+
+        Assert.Equal(UpdateDownloadStates.Failed, status.DownloadState);
+        Assert.Equal(requestsBefore, handler.CallCount);
+        Assert.Empty(UpdatesFolderContents());
+    }
 
     // -----------------------------------------------------------------------------------
 
@@ -294,7 +417,7 @@ public class UpdateDownloadVerificationTests : IDisposable
         Assert.False(reveal.Success);
         Assert.NotNull(reveal.Message);
         Assert.Null(_storage.Load().VerifiedFilePath);
-        Assert.NotEqual(UpdateDownloadStates.Ready, checker.GetStatus().DownloadState);
+        Assert.NotEqual(UpdateDownloadStates.Ready, (await checker.GetStatusAsync(CancellationToken.None)).DownloadState);
     }
 
     [Fact]

@@ -93,12 +93,30 @@ if (-not $versionNode) { throw "No <Version> element found in $propsPath." }
 $version = $versionNode.InnerText.Trim()
 if (-not $version) { throw "The <Version> element in $propsPath is empty." }
 
-# Inno's VersionInfoVersion wants a numeric x.y[.z[.b]]. A version with a pre-release suffix would
-# compile to something misleading rather than fail, so it is rejected here instead.
-if ($version -notmatch '^\d+\.\d+(\.\d+){0,2}$') {
-    throw "Version '$version' is not a plain numeric version. Update Directory.Build.props or extend this script."
+# A pre-release version ("1.1.0-beta.1") is allowed, because the development release channel depends
+# on it. The suffix has to survive into the assembly, the installer's name and the release tag: FSOps
+# compares them as semantic versions, and semver puts 1.1.0-beta.1 BELOW 1.1.0. Building a beta from
+# a plain <Version>1.1.0</Version> would therefore produce an app claiming to be 1.1.0 while the
+# release said 1.1.0-beta.1, and every beta tester would be told they were ahead of the channel and
+# never offered another beta - a development channel that silently stops updating, which nobody would
+# report because it looks like no betas were published.
+#
+# What the suffix must NOT reach is Inno's VersionInfoVersion, which writes the Windows file-version
+# resource and is four numbers or nothing. So the two are separated here and passed as separate
+# defines: $version is displayed and names the file, $versionInfo is numeric.
+if ($version -notmatch '^\d+\.\d+(\.\d+){0,2}(-[0-9A-Za-z.-]+)?$') {
+    throw "Version '$version' is not a version this script can build. Expected 1.2.3 or 1.2.3-beta.1."
 }
+
+$versionInfo = ($version -split '-', 2)[0]
+if ($versionInfo -notmatch '^\d+\.\d+(\.\d+){0,2}$') {
+    throw "Version '$version' does not start with a numeric x.y.z, so there is no file-version to stamp."
+}
+
 Write-Host "    version $version"
+if ($versionInfo -ne $version) {
+    Write-Host "    file-version resource $versionInfo (pre-release suffix stripped - it cannot go in a Windows version resource)"
+}
 
 # ---------------------------------------------------------------------------------------------
 # 2. Inno Setup
@@ -155,6 +173,7 @@ $OutputPath = (Resolve-Path $OutputPath).Path
 Invoke-Native {
     & $IsccPath `
         "/DAppVersion=$version" `
+        "/DVersionInfo=$versionInfo" `
         "/DPublishDir=$publishDir" `
         "/DOutputDir=$OutputPath" `
         $issPath

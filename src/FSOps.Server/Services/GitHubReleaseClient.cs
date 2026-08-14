@@ -37,6 +37,23 @@ public sealed record ReleaseLookup(bool Success, GitHubRelease? Release, string?
     public static ReleaseLookup Found(GitHubRelease release) => new(true, release, null);
 }
 
+/// <summary>
+/// Outcome of listing recent releases - what the development channel reads, because
+/// <c>/releases/latest</c> excludes pre-releases by definition and so can never return one.
+/// <para>
+/// The list arrives unfiltered on purpose, exactly as <see cref="GitHubRelease.IsPrerelease"/> does:
+/// deciding which of these releases may be offered is <see cref="UpdateChecker"/>'s job and is
+/// asserted there. A transport that quietly pre-filtered would make the channel's behaviour an
+/// accident of which URL was called.
+/// </para>
+/// </summary>
+public sealed record ReleaseListLookup(bool Success, IReadOnlyList<GitHubRelease> Releases, string? FailureReason)
+{
+    public static ReleaseListLookup Failed(string reason) => new(false, Array.Empty<GitHubRelease>(), reason);
+
+    public static ReleaseListLookup Found(IReadOnlyList<GitHubRelease> releases) => new(true, releases, null);
+}
+
 /// <summary>Outcome of streaming a release asset to disk. Never throws for expected failures.</summary>
 public sealed record AssetDownload(bool Success, long BytesWritten, string? FailureReason)
 {
@@ -52,6 +69,11 @@ public sealed record TextDownload(bool Success, string? Text, string? FailureRea
 public interface IGitHubReleaseClient
 {
     Task<ReleaseLookup> GetLatestReleaseAsync(CancellationToken ct);
+
+    /// <summary>Recent releases, newest-published first, as GitHub returns them. Includes
+    /// pre-releases; excludes drafts, which the API does not disclose to an unauthenticated
+    /// caller.</summary>
+    Task<ReleaseListLookup> GetRecentReleasesAsync(int count, CancellationToken ct);
 
     Task<TextDownload> DownloadTextAsync(Uri url, int maxBytes, CancellationToken ct);
 
@@ -84,8 +106,16 @@ public sealed class GitHubReleaseClient : IGitHubReleaseClient
     private const string RepositoryOwner = "NW11NGW";
     private const string RepositoryName = "FSOps";
 
-    private const string LatestReleaseUrl =
-        $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest";
+    private const string ReleasesUrl =
+        $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases";
+
+    /// <summary>
+    /// The stable channel's feed. GitHub documents this as the newest release excluding both drafts
+    /// and pre-releases, which is exactly the guarantee the stable channel rests on: a pre-release
+    /// cannot appear here however it is tagged, so publishing one can never reach somebody who did
+    /// not ask for it.
+    /// </summary>
+    private const string LatestReleaseUrl = ReleasesUrl + "/latest";
 
     /// <summary>GitHub rejects API requests that arrive without a User-Agent, with a 403.</summary>
     private const string UserAgent = "FSOps-UpdateCheck";
@@ -158,34 +188,104 @@ public sealed class GitHubReleaseClient : IGitHubReleaseClient
                 return ReleaseLookup.Failed("release payload did not parse");
             }
 
-            if (string.IsNullOrWhiteSpace(payload.TagName))
-            {
-                return ReleaseLookup.Failed("release payload had no tag name");
-            }
-
-            var assets = (payload.Assets ?? new List<GitHubAssetPayload>())
-                .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.BrowserDownloadUrl))
-                .Select(a => Uri.TryCreate(a.BrowserDownloadUrl, UriKind.Absolute, out var uri)
-                    ? new ReleaseAsset(a.Name!, uri, a.Size)
-                    : null)
-                .Where(a => a is not null)
-                .Select(a => a!)
-                .ToList();
-
-            return ReleaseLookup.Found(new GitHubRelease(
-                payload.TagName!,
-                payload.Draft,
-                payload.Prerelease,
-                payload.HtmlUrl ?? $"https://github.com/{RepositoryOwner}/{RepositoryName}/releases",
-                payload.Body,
-                payload.PublishedAt,
-                assets));
+            var release = MapRelease(payload);
+            return release is null
+                ? ReleaseLookup.Failed("release payload had no tag name")
+                : ReleaseLookup.Found(release);
         }
         catch (Exception ex) when (IsExpectedTransportFailure(ex, ct))
         {
             _logger.LogDebug(ex, "Update check could not reach GitHub - treating as no update available");
             return ReleaseLookup.Failed(ex.GetType().Name);
         }
+    }
+
+    /// <summary>
+    /// Lists recent releases for the development channel. Same host, same headers, same timeout and
+    /// the same silent-failure contract as <see cref="GetLatestReleaseAsync"/> - the only difference
+    /// between the two channels at this layer is which URL is asked and how many results come back.
+    /// <para>
+    /// A release whose payload carries no tag name is dropped rather than failing the whole lookup:
+    /// one unusable entry in a list of ten is not a reason to tell the user nothing.
+    /// </para>
+    /// </summary>
+    public async Task<ReleaseListLookup> GetRecentReleasesAsync(int count, CancellationToken ct)
+    {
+        var perPage = Math.Clamp(count, 1, 100);
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{ReleasesUrl}?per_page={perPage}");
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            request.Headers.UserAgent.ParseAdd(UserAgent);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(MetadataTimeout);
+
+            var client = _httpClientFactory.CreateClient(HttpClientName);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var rateLimited = response.StatusCode == System.Net.HttpStatusCode.Forbidden &&
+                    response.Headers.TryGetValues("x-ratelimit-remaining", out var remaining) &&
+                    remaining.FirstOrDefault() == "0";
+                return ReleaseListLookup.Failed(rateLimited
+                    ? "GitHub API rate limit reached"
+                    : $"GitHub API returned {(int)response.StatusCode}");
+            }
+
+            var payloads = await response.Content.ReadFromJsonAsync<List<GitHubReleasePayload>>(JsonOptions, timeoutCts.Token);
+            if (payloads is null)
+            {
+                return ReleaseListLookup.Failed("release list payload did not parse");
+            }
+
+            var releases = payloads
+                .Select(MapRelease)
+                .Where(r => r is not null)
+                .Select(r => r!)
+                .ToList();
+
+            return ReleaseListLookup.Found(releases);
+        }
+        catch (Exception ex) when (IsExpectedTransportFailure(ex, ct))
+        {
+            _logger.LogDebug(ex, "Update check could not list releases - treating as no update available");
+            return ReleaseListLookup.Failed(ex.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// Turns one release payload into the shape the checker reasons about, or null when it carries no
+    /// tag name and therefore nothing that could be compared to a version. Assets whose URL does not
+    /// parse are dropped here; assets whose URL is not on an allowed host are dropped later, by the
+    /// selection rules, so that refusal stays visible where it is asserted.
+    /// </summary>
+    private static GitHubRelease? MapRelease(GitHubReleasePayload payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload.TagName))
+        {
+            return null;
+        }
+
+        var assets = (payload.Assets ?? new List<GitHubAssetPayload>())
+            .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.BrowserDownloadUrl))
+            .Select(a => Uri.TryCreate(a.BrowserDownloadUrl, UriKind.Absolute, out var uri)
+                ? new ReleaseAsset(a.Name!, uri, a.Size)
+                : null)
+            .Where(a => a is not null)
+            .Select(a => a!)
+            .ToList();
+
+        return new GitHubRelease(
+            payload.TagName!,
+            payload.Draft,
+            payload.Prerelease,
+            payload.HtmlUrl ?? $"https://github.com/{RepositoryOwner}/{RepositoryName}/releases",
+            payload.Body,
+            payload.PublishedAt,
+            assets);
     }
 
     public async Task<TextDownload> DownloadTextAsync(Uri url, int maxBytes, CancellationToken ct)
