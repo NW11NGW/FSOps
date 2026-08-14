@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { CalendarClock, Info, Loader2, RotateCcw, Save, Sparkles } from 'lucide-react'
@@ -197,7 +197,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     const overlap = findOverlappingLeg(leg, dayLegs)
     if (overlap) {
       toast.error(
-        `That slot overlaps ${overlap.flightNumber ?? 'another leg'} (${overlap.departureIcao} â†’ ${overlap.arrivalIcao}). Pick a different time.`,
+        `That slot overlaps ${overlap.flightNumber ?? 'another leg'} (${overlap.departureIcao} → ${overlap.arrivalIcao}). Pick a different time.`,
       )
       return
     }
@@ -337,7 +337,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
           </Button>
           <Button type="button" size="sm" onClick={handleSave} disabled={saving || !isDirty}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            {saving ? 'Savingâ€¦' : 'Save schedule'}
+            {saving ? 'Saving…' : 'Save schedule'}
           </Button>
         </div>
       </div>

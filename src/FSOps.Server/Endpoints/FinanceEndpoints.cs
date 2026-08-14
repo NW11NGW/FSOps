@@ -542,6 +542,15 @@ public static class FinanceEndpoints
     /// moved the cash balance. Unlike <see cref="PilotsAsync"/> there is no fixed cost to prorate
     /// here (a route has no monthly wage of its own), so every figure this endpoint returns is real
     /// money, not an estimate.
+    /// <para>
+    /// <c>paxFlown</c>/<c>seatsFlown</c>/<c>loadFactorPercent</c> answer the other half of "is this
+    /// route any good": whether the sectors are full. They are counted off the same flights this
+    /// endpoint already loaded - <c>seatsFlown</c> is the seat count of the aircraft each sector was
+    /// actually flown by, summed, so a route flown by two different aircraft types is measured
+    /// against the seats it really offered rather than a nominal capacity.
+    /// <c>loadFactorPercent</c> is null (never 0) when not one sector on the route can be matched to
+    /// a known aircraft type, because "we cannot tell" and "nobody travelled" are different facts.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> RoutesAsync(int? days, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
     {
@@ -576,11 +585,32 @@ public static class FinanceEndpoints
         var costByFlight = ledgerLines.Where(t => FlightOperatingCostCategories.Contains(t.Category))
             .GroupBy(t => t.FlightId!.Value).ToDictionary(g => g.Key, g => -g.Sum(t => t.Amount));
 
+        // Seats offered per sector, for the load factor below. Two lookups for the whole page, not
+        // one per flight - the same shape StatsEndpoints.PerformanceAsync already uses.
+        var fleetAircraftIds = flights.Select(f => f.FleetAircraftId).Distinct().ToList();
+        var fleet = await db.FleetAircraft.Where(f => fleetAircraftIds.Contains(f.Id)).ToListAsync(ct);
+        var typeIdByAircraft = fleet.ToDictionary(f => f.Id, f => f.AircraftTypeId);
+        var typeIdsForSeats = fleet.Select(f => f.AircraftTypeId).Distinct().ToList();
+        var seatsByType = await db.AircraftTypes.Where(t => typeIdsForSeats.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.PaxCapacity, ct);
+
+        int SeatsFor(Flight flight) =>
+            typeIdByAircraft.TryGetValue(flight.FleetAircraftId, out var typeId) && seatsByType.TryGetValue(typeId, out var seats)
+                ? seats
+                : 0;
+
         var result = flights.GroupBy(f => f.RouteId).Select(g =>
         {
             var route = routeById.GetValueOrDefault(g.Key);
             var revenue = g.Sum(f => revenueByFlight.GetValueOrDefault(f.Id));
             var cost = g.Sum(f => costByFlight.GetValueOrDefault(f.Id));
+
+            // Only sectors whose seat count is actually known contribute to either side of the
+            // load-factor fraction - a sector flown by an aircraft whose type has since been removed
+            // would otherwise drag the percentage down as though it had flown empty.
+            var measurable = g.Where(f => SeatsFor(f) > 0).ToList();
+            var seatsFlown = measurable.Sum(SeatsFor);
+            var paxOnMeasurable = measurable.Sum(f => f.PaxFlown);
+            double? loadFactorPercent = seatsFlown > 0 ? Math.Round(100.0 * paxOnMeasurable / seatsFlown, 1) : null;
 
             return new
             {
@@ -592,6 +622,9 @@ public static class FinanceEndpoints
                 revenue,
                 cost,
                 profit = revenue - cost,
+                paxFlown = g.Sum(f => f.PaxFlown),
+                seatsFlown,
+                loadFactorPercent,
             };
         }).OrderByDescending(r => r.profit).ToList();
 

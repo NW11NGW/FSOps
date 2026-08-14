@@ -16,6 +16,7 @@ const RoutesPage = lazy(() => import('@/pages/Routes').then((m) => ({ default: m
 const Fleet = lazy(() => import('@/pages/Fleet').then((m) => ({ default: m.Fleet })))
 const Pilots = lazy(() => import('@/pages/Pilots').then((m) => ({ default: m.Pilots })))
 const Finances = lazy(() => import('@/pages/Finances').then((m) => ({ default: m.Finances })))
+const Logbook = lazy(() => import('@/pages/Logbook').then((m) => ({ default: m.Logbook })))
 const Stats = lazy(() => import('@/pages/Stats').then((m) => ({ default: m.Stats })))
 const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
 // Lazy for the same reason: the wizard drags in the whole onboarding tree, which nothing on the
@@ -74,6 +75,7 @@ function App() {
             <Route path="fleet" element={<Fleet />} />
             <Route path="pilots" element={<Pilots />} />
             <Route path="finances" element={<Finances />} />
+            <Route path="logbook" element={<Logbook />} />
             <Route path="stats" element={<Stats />} />
             <Route path="settings" element={<Settings />} />
             {/* Any unknown path lands on the dashboard rather than rendering nothing at all. */}

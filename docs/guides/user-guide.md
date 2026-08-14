@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. Everything described below is built and describes how FSOps actually behaves today: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Finances page and a Statistics page, importing your SimBrief flight plan, and seeing online VATSIM controllers and traffic on your live map. FSOps is still under active development, so this guide changes as the app does — but nothing here is a description of something that hasn't shipped.
+This guide covers how to use FSOps, feature by feature. Everything described below is built and describes how FSOps actually behaves today: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Finances page, a Statistics page with a profitability map of your whole network and cash and reputation trends, a browsable flight logbook showing the path each sector actually flew, importing your SimBrief flight plan, and seeing online VATSIM controllers and traffic on your live map. FSOps is still under active development, so this guide changes as the app does — but nothing here is a description of something that hasn't shipped.
 
 ## Table of contents
 
@@ -30,7 +30,9 @@ This guide covers how to use FSOps, feature by feature. Everything described bel
 - [Plan in SimBrief](#plan-in-simbrief)
   - [Importing your OFP back](#importing-your-ofp-back)
 - [Reading the post-flight report card](#reading-the-post-flight-report-card)
+  - [The flown track](#the-flown-track)
   - [Flight integrity](#flight-integrity)
+- [The flight logbook](#the-flight-logbook)
 - [The economy simulation](#the-economy-simulation)
   - [Your airline's reputation](#your-airlines-reputation)
 - [The monthly billing cycle](#the-monthly-billing-cycle)
@@ -51,6 +53,8 @@ This guide covers how to use FSOps, feature by feature. Everything described bel
   - [Your VATSIM CID](#your-vatsim-cid)
   - [The online-flying bonus](#the-online-flying-bonus)
 - [Statistics dashboards](#statistics-dashboards)
+  - [Trends](#trends)
+  - [The route network map](#the-route-network-map)
 - [A worked example, start to finish](#a-worked-example-start-to-finish)
 
 ## Current build
@@ -319,6 +323,22 @@ The report card's header shows the route, the airports' names, and a status badg
 
 A completed Bristol–Edinburgh sector. The touchdown rate of -250 fpm is graded **Firm** — the bar underneath shows where that sits against the smooth/firm/hard bands — alongside peak G, bounce count and centreline deviation. The phase timeline below carries the real clock times each OOOI milestone was captured at, and "Actual vs. planned" sets the 52-minute block time and 2,371 kg burn against the 55 minutes and 4,866 kg the plan expected. The fuel section states plainly that only the 2,371 kg actually burned was billed.
 
+### The flown track
+
+Underneath the landing card, the report shows **where the aircraft actually went**.
+
+While FSOps is tracking a flight it records a position roughly every 15 seconds — latitude, longitude, altitude, ground speed and the flight phase it was in. The flown track draws all of them as a solid line in your airline's accent colour, over the **great circle the sector was planned along**, drawn thin and dashed as a reference. The difference between the two lines is the point: the vectors ATC gave you, the hold, a long downwind, a go-around and a diversion all show up as the flown line departing from the planned one, and none of that is visible anywhere else.
+
+Underneath the map it tells you how many positions were recorded, and the highest altitude reached.
+
+Three things it will not do:
+
+- **It will not draw a track for a flight that has none.** A sector flown by one of your virtual pilots never had a simulator attached to record from, so it has no positions at all — and neither does any flight from before position recording existed. Instead of an empty map you get a short explanation of which of those it is.
+- **It will not draw a line through a single point.** If the simulator disconnected almost immediately, one position was recorded — that is a position, not a path, so it is shown as a marker and the card says so.
+- **It will not draw a track the wrong way round the planet.** A sector crossing the antimeridian is split into separate segments at the edge of the map rather than being joined by a straight line all the way back across it.
+
+On a very long sector the line is drawn from an evenly-spaced sample of the recorded positions rather than all of them, purely so the map stays quick. When that happens the card says exactly how many of how many are being drawn. The first and last positions are always kept, so the track still begins and ends where it really did, and **nothing that was recorded is ever changed or deleted** — the stored track stays complete whatever the map chooses to draw.
+
 ### Flight integrity
 
 This card only appears when it has something to say — most flights won't show it at all. It covers two independent things, neither of which is an accusation:
@@ -330,6 +350,29 @@ This card only appears when it has something to say — most flights won't show 
 
 - **Aircraft type noted, not penalised** — shown only when the aircraft you flew didn't match the route's expected family. This explains what was flown versus what was expected, and states plainly that **it does not affect payment** — a type mismatch in FSOps is purely informational, never a financial penalty, by deliberate design.
 - **Financial outcome** — every ledger line the flight posted (ticket revenue, fuel, landing/handling/parking/passenger fees, maintenance accrual, crew cost), each signed and itemised exactly as it hit your airline's ledger, followed by the sector's net. If the flight was flagged for slew or a position jump during tracking (see [Flight integrity](#flight-integrity) above), no ticket revenue line appears at all — only whatever fuel was actually burned still gets billed.
+
+## The flight logbook
+
+The **Logbook** page (main navigation) is your airline's record of flying done: one row per sector that was actually attempted, newest first.
+
+It covers **completed, abandoned and interrupted** sectors — everything where the aircraft left the gate. It deliberately does not include a scheduled flight that hasn't happened yet, or one a virtual pilot skipped or had cancelled, because none of those is flying done. A logbook that quietly left out the sectors that went wrong would be flattering rather than accurate, so the ones that went wrong are in there, badged.
+
+Each row carries the things you actually look up afterwards:
+
+- **Date**, and the **route** with its callsign. A small pin marks a sector that has a [flown track](#the-flown-track) to look at; a radio icon marks one flown online on VATSIM.
+- **Aircraft** — registration and ICAO type — and **who was flying**, you or one of your pilots.
+- **Block time**, and **vs plan** — how many minutes over or under the planned block it ran, coloured only where it's genuinely good or bad news.
+- **Landing** — the touchdown rate, graded by the same smooth/firm/hard bands the report card uses.
+- **Load** — passengers carried against the seats that aircraft actually offered.
+- **Net** — what the sector did to your bank balance, summed from the ledger lines it actually posted. This is deliberately the identical figure the flight's own report card shows as its net, so clicking a row never reveals a different number.
+
+**Sorting and filtering.** Every column that means anything is sortable — click its header, click again to reverse. You can filter by status, by whether you or your crew flew it, by whether it has a flown track, and by free text matched against airports, flight number, registration, aircraft type and pilot name (so typing `EGGD-EGPH`, `G-ABCD` or a pilot's name all work). The three figures at the top — sectors, block hours and net earned — follow the filter rather than ignoring it, so what they describe is always what's on screen.
+
+**"Not measured" means not measured.** A landing whose rate the simulator never reported, and a block time made meaningless by time acceleration, both read *Not measured* rather than a zero — and when you sort by those columns they sort to the **bottom in both directions**, never floating to the top of an ascending sort as though "we couldn't measure this" were the smallest measurement. For the same reason the block-hours figure at the top is a floor rather than a total, and says so whenever any sector in view couldn't be measured.
+
+Clicking any row opens that flight's full [report card](#reading-the-post-flight-report-card), flown track included.
+
+The Fly screen keeps a short **Recent flights** list of your last ten sectors for convenience, with a link straight through to here.
 
 ## The economy simulation
 
@@ -644,12 +687,46 @@ It's meant to reward the extra effort of flying online **without making offline 
 
 The **Stats** page (main navigation) is where your airline's history turns into trends rather than a single current snapshot. A period selector at the top switches the whole page between the trailing **7, 30 or 90 days** — every figure below is measured fresh from your completed flights and ledger over exactly that window, never a running total that ignores the period.
 
+- **Trends** — cash and reputation over time. See [Trends](#trends) below.
+- **Network** — your whole route network on a map, coloured by how each route is actually doing. See [The route network map](#the-route-network-map) below.
 - **Performance** — a chart of on-time performance and load factor, one point per day that had at least one completed sector (a quiet day is simply absent, never a fabricated 0%). On-time performance here uses the identical rule your [reputation card](#your-airlines-reputation) does, so the two can never disagree about whether a given day counted as punctual.
 - **Finance** — the same revenue/cost split and per-route profit-and-loss figures shown on the [Finances page](#the-finances-page), charted rather than tabulated. These aren't recalculated separately — they're the exact same numbers, so the two pages can never show you conflicting totals.
 - **Fleet** — every aircraft's sectors flown, hours flown and idle in the period, a utilisation percentage, hours to its next A- or C-check, and current condition — the same "how close to its next check" figures the Fleet page itself shows, so they can't drift apart either.
 - **Pilots** — a logbook covering every pilot who's flown in the window, you included: sectors, hours, on-time percentage, and average landing rate. A figure that genuinely couldn't be measured (for example, a pilot whose every sector in the window was a manual completion) reads "Not measured," never a misleading zero.
 
 Performance, Fleet and Pilots each have their own **Export CSV** button, exporting exactly the rows currently on screen for the period selected — handy for keeping your own record outside FSOps, or just looking at the raw numbers in a spreadsheet. Finance has none, because it isn't this page's data to export: those figures come from the Finances page's own endpoints, and its [Ledger tab](#the-finances-page) is the place to take them from.
+
+### Trends
+
+Direction of travel, rather than where you happen to stand today. Two charts, one point per calendar day across the period selected.
+
+**Cash** is the balance at the end of each day. It isn't a separate calculation: your cash balance in FSOps *is* the sum of every ledger transaction, and the ledger is append-only, so a running total up to a given day is literally what the balance was on that day. It's the same money the [Finances page](#the-finances-page) shows, on the day it moved. Every day in the window has a point, including days nothing flew — cash doesn't stop existing on a quiet day, it just doesn't move — and zero is marked with a dashed line, so a slide toward insolvency is visible before it arrives.
+
+**Reputation** is two lines, and it's worth being clear about which is which, because they mean different things.
+
+- **Recorded** is your actual [reputation score](#your-airlines-reputation), written down once a day. It's a real reading rather than a reconstruction, which has one consequence worth knowing: **days FSOps wasn't running have no reading at all**, and appear as gaps rather than being filled in or carried forward. A score FSOps never observed isn't one it will claim. This line necessarily starts from the day FSOps began keeping it, so on an older airline it will only cover the recent end of the chart.
+- **Pressure** (dashed) is *not* your reputation. It's the standard each day's flying was pulling your reputation **toward** — above your current score means it's being pulled up, below means down. This isn't a stand-in invented for the chart: it's the exact figure the Dashboard's reputation card already averages to decide whether it reads "improving", "steady" or "declining", so the two can never disagree. Its value is that it works right back through your whole history, which a recorded score cannot. A day whose sectors carried no measurable signal at all — every one flown with time acceleration and no landing rate captured — has no pressure to report and is left out rather than guessed at.
+
+Your current score is drawn across the chart as a labelled reference line, so both series can be read against where you actually stand.
+
+**Why reputation isn't reconstructed.** Reputation is a running number that each sector nudges; it isn't stored per flight. Replaying your history to rebuild it would look possible, but it would quietly get two things wrong — a manually-completed sector takes a different, harsher step than a normally-completed one and nothing on the flight record distinguishes them, and the step size depends on your playstyle's settings, which are the *current* ones rather than whichever were in force at the time. Rather than draw a plausible-looking invented line, FSOps records the real number from now on and offers the pressure line for everything before that.
+
+### The route network map
+
+Your whole network on one map, every route drawn as a curved great-circle line and **coloured by profit per sector** over the period selected.
+
+Profit per sector is what one more flight on that route adds to the bank, and it's the right comparison because aircraft time is what you're actually spending: a route earning twice as much per sector is worth twice as much of your aircraft's day, however thin its margin looks next to a short hop's. The four colours:
+
+- **Green — at or above your average.** Earns at least as much per sector as your network as a whole.
+- **Amber — below your average.** Earns, but the slot could be earning more.
+- **Red — losing money.** Every sector on it makes the airline poorer. This wins regardless of anything else.
+- **Grey — not flown yet.** Nothing flew on it in this window, so there's nothing to judge it on. A route you built and never flew is exactly the thing a table sorted by profit can't show you, which is a large part of why this map exists.
+
+**"Your average" is stated, in money, right there in the legend** — total profit over total sectors flown, so a route you flew once can't weigh as heavily as one you flew fifty times. No threshold here is hidden: clicking any route on the map, or in the ranked list beside it (worst per sector first, so the thing most worth acting on is at the top), gives you a single sentence justifying its colour that quotes both its own figure and the average it was judged against.
+
+The detail panel also gives that route's sectors flown, profit per sector, margin, revenue, cost and load factor — and, separately, **how each direction did on its own**. Both directions of a city pair are drawn as one line, because that's how FSOps creates routes and because two lines between the same two airports would sit exactly on top of each other; but a route that earns outbound and loses on the way back is a real and common situation, and it has nowhere to hide here.
+
+Every figure on this map is the same per-route profit and loss the [Finances page](#the-finances-page) shows. It isn't recalculated for the map, so the two can't disagree.
 
 ## A worked example, start to finish
 

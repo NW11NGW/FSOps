@@ -113,7 +113,24 @@ try {
            What = 'Remove it. If it is genuinely an example, make the value obviously fake.' },
         @{ Rule = 'ai-tooling-reference'; Pattern = '(?i)(co-authored-by:\s*claude|generated with \[?claude|anthropic\.com|\bclaude\.ai\b|superlocalmemory|graphify)'
            Why = 'A reference to the tooling used to write this. The repository is public and carries no such trace by deliberate policy.'
-           What = 'Remove the reference. Keep tool paths in .git/info/exclude, never in a tracked file.' }
+           What = 'Remove the reference. Keep tool paths in .git/info/exclude, never in a tracked file.' },
+        # This shipped in 1.0.0 and nobody noticed. An arrow written as UTF-8, read back as
+        # Windows-1252 and re-saved, became three stray characters - which the app then rendered to
+        # the player in a route message and on the Save button. It survives review because it reads
+        # as an encoding quirk in the diff rather than a defect, and no test asserts on a character
+        # nobody thought could change. PowerShell is the usual culprit: Set-Content and Out-File
+        # default to the ANSI codepage.
+        #
+        # The pattern is BUILT FROM CODE POINTS rather than written literally, so this file stays
+        # pure ASCII. Spelling the sequences out here both trips the rule on itself and, worse,
+        # stops PowerShell parsing the script at all - which is how the first attempt at this rule
+        # silently turned the whole check into a no-op.
+        @{ Rule = 'mojibake'
+           Pattern = ('[{0}{1}{2}][{3}-{4}{5}-{6}]' -f `
+                [char]0x00C2, [char]0x00C3, [char]0x00E2, `
+                [char]0x0080, [char]0x00BF, [char]0x2013, [char]0x20AC)
+           Why = 'Text that was written UTF-8, read back as Windows-1252 and re-saved, so a character the player is meant to see has turned into stray ones.'
+           What = 'Restore the intended character and save the file as UTF-8. In PowerShell write with [System.IO.File]::WriteAllText and a UTF8Encoding($false); Set-Content and Out-File default to the ANSI codepage.' }
     )
 
     # Skip binaries and the one file that legitimately contains the patterns: this script.

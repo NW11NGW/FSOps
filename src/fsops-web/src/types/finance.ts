@@ -162,6 +162,15 @@ export interface FinanceRoute {
   revenue: number
   cost: number
   profit: number
+  /** Passengers actually carried on this route's sectors in the window. */
+  paxFlown: number
+  /** Seats those sectors actually offered - the seat count of the aircraft each one was flown by,
+   *  summed. Sectors flown by an aircraft whose type can no longer be resolved are excluded from
+   *  both this and `loadFactorPercent`, so an unknown aircraft never reads as an empty one. */
+  seatsFlown: number
+  /** `paxFlown` over `seatsFlown` as a percentage. Null (never 0) when not one sector on the route
+   *  could be matched to a known aircraft type - "we cannot tell" is not "nobody travelled". */
+  loadFactorPercent: number | null
 }
 
 export interface FinanceRoutesResponse {

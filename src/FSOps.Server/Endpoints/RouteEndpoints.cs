@@ -1,4 +1,4 @@
-﻿using FSOps.Core.Economy;
+using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Planning;
 using FSOps.Core.Routes;
@@ -111,7 +111,7 @@ public static class RouteEndpoints
             var priceNowUtc = DateTimeOffset.UtcNow;
             var fuelPricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, departure.Icao, departure.Country, priceNowUtc, worldSeed);
 
-            // The live "at this fare, expect ~N passengers (X% load factor), ~Â£Y revenue per
+            // The live "at this fare, expect ~N passengers (X% load factor), ~£Y revenue per
             // sector" readout - the real DemandCalculator/FareDemandModel engine, not the rough
             // distance-only estimate above. Needs an airline (for strategy profile and
             // reputation) and a real sector, so it's null for onboarding or a same-airport/no
@@ -713,8 +713,8 @@ public static class RouteEndpoints
         if (flightInProgress is not null)
         {
             var leg = flightInProgress.RouteId == route.Id
-                ? $"{route.DepartureIcao} â†’ {route.ArrivalIcao}"
-                : $"{route.ArrivalIcao} â†’ {route.DepartureIcao}";
+                ? $"{route.DepartureIcao} → {route.ArrivalIcao}"
+                : $"{route.ArrivalIcao} → {route.DepartureIcao}";
             return Results.BadRequest(new
             {
                 message = $"There is a flight in progress on {leg}. Finish or abandon it before deleting this route - deleting it now would leave that sector unable to be paid.",
@@ -733,7 +733,7 @@ public static class RouteEndpoints
         {
             return Results.BadRequest(new
             {
-                message = $"{route.DepartureIcao} â†” {route.ArrivalIcao} is still on a pilot's schedule. Remove those legs first, or the aircraft flying them would be left with nowhere to go.",
+                message = $"{route.DepartureIcao} ↔ {route.ArrivalIcao} is still on a pilot's schedule. Remove those legs first, or the aircraft flying them would be left with nowhere to go.",
             });
         }
 
@@ -749,8 +749,8 @@ public static class RouteEndpoints
 
         var deletedRouteIds = reverse is not null ? new[] { route.Id, reverse.Id } : new[] { route.Id };
         var message = reverse is not null
-            ? $"Deleted both legs of the route: {route.DepartureIcao} â†” {route.ArrivalIcao}."
-            : $"Deleted {route.DepartureIcao} â†’ {route.ArrivalIcao}. It had no return leg to remove.";
+            ? $"Deleted both legs of the route: {route.DepartureIcao} ↔ {route.ArrivalIcao}."
+            : $"Deleted {route.DepartureIcao} → {route.ArrivalIcao}. It had no return leg to remove.";
 
         return Results.Ok(new { deletedRouteIds, message });
     }

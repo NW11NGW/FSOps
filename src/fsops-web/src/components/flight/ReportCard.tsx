@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { AlertTriangle, ArrowRight, Banknote, Clock3, Fuel, Gauge, Info, Minus, Plus, RadioTower, RotateCw, Target } from 'lucide-react'
 
 import { LandingGauge } from '@/components/flight/LandingGauge'
@@ -24,6 +25,13 @@ interface ReportCardProps {
   detail: FlightDetail
   route: ReportRouteInfo | null
   airlineIcaoCode: string | null
+  /**
+   * Optional slot rendered immediately after the landing card - in practice the flown-track map
+   * (see FlightTrackCard), which reads best right after "how was the landing" and before the
+   * timings. A slot rather than a built-in so this component keeps needing exactly one thing (a
+   * FlightDetail) and never fetches on its own behalf.
+   */
+  track?: ReactNode
   className?: string
 }
 
@@ -70,7 +78,7 @@ function inferFinalPhase(flight: FlightDetail['flight']): FlightPhase {
  * recomputation, so it can never show a figure that doesn't match what actually moved the
  * airline's cash balance.
  */
-export function ReportCard({ detail, route, airlineIcaoCode, className }: ReportCardProps) {
+export function ReportCard({ detail, route, airlineIcaoCode, track, className }: ReportCardProps) {
   const { flight } = detail
   const { fmt } = useSettings()
 
@@ -169,6 +177,8 @@ export function ReportCard({ detail, route, airlineIcaoCode, className }: Report
           </div>
         </CardContent>
       </Card>
+
+      {track}
 
       <Card>
         <CardHeader>

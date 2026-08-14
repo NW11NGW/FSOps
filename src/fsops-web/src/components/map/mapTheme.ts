@@ -89,6 +89,23 @@ export function readMapColors(): MapColors {
   }
 }
 
+/**
+ * One design token, resolved from the live computed style into an rgb()/rgba() string MapLibre can
+ * actually parse. Same conversion (and the same reason for it) as <see cref="readMapColors"/> - see
+ * `tokenToRgb` above for why the space-separated hsl() form silently fails to paint. Exported so a
+ * map that colours features by a semantic token (the network map's success/warning/danger bands)
+ * can do it from tokens rather than hardcoding hexes.
+ *
+ * `name` is the CSS custom property including its leading dashes, e.g. `--success`.
+ */
+export function readTokenRgb(name: string, alpha = 1): string {
+  const style = typeof window === 'undefined' ? null : getComputedStyle(document.documentElement)
+  const triplet = style?.getPropertyValue(name).trim()
+  // An unset or unreadable token falls through tokenToRgb's own guard to a visible colour rather
+  // than an unpaintable one - an invisible line is far harder to diagnose than a wrong-coloured one.
+  return tokenToRgb(triplet || '', alpha)
+}
+
 const CARTO_SUBDOMAINS = ['a', 'b', 'c', 'd']
 
 function cartoTiles(variant: 'dark_all' | 'light_all'): string[] {

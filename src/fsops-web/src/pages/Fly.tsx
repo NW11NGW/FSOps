@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import { FlightBrief } from '@/components/flight/FlightBrief'
 import { FlightHistoryList } from '@/components/flight/FlightHistoryList'
+import { FlightTrackCard } from '@/components/flight/FlightTrackCard'
 import { FlightPlanImportBanner } from '@/components/flight/FlightPlanImportBanner'
 import { LiveFlightView } from '@/components/flight/LiveFlightView'
 import { NeedsResolutionPanel } from '@/components/flight/NeedsResolutionPanel'
@@ -305,6 +306,13 @@ export function Fly() {
                 : null
             }
             airlineIcaoCode={airlineIcaoCode}
+            track={
+              <FlightTrackCard
+                flightId={completedDetail.data.flight.id}
+                departureIcao={(routesById[completedDetail.data.flight.routeId] as RouteSummary | undefined)?.departureIcao ?? null}
+                arrivalIcao={(routesById[completedDetail.data.flight.routeId] as RouteSummary | undefined)?.arrivalIcao ?? null}
+              />
+            }
           />
         )}
       </div>
@@ -453,6 +461,13 @@ export function Fly() {
                   : null
               }
               airlineIcaoCode={airlineIcaoCode}
+              track={
+                <FlightTrackCard
+                  flightId={historyFlight.id}
+                  departureIcao={(routesById[historyFlight.routeId] as RouteSummary | undefined)?.departureIcao ?? null}
+                  arrivalIcao={(routesById[historyFlight.routeId] as RouteSummary | undefined)?.arrivalIcao ?? null}
+                />
+              }
             />
           )}
         </DialogContent>

@@ -23,6 +23,9 @@ function route(overrides: Partial<FinanceRoute> = {}): FinanceRoute {
     revenue: 220000,
     cost: 165000,
     profit: 55000,
+    paxFlown: 1440,
+    seatsFlown: 2160,
+    loadFactorPercent: 66.7,
     ...overrides,
   }
 }

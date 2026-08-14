@@ -1,28 +1,31 @@
 import { lazy, Suspense } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { BarChart3, Building2, Clock, DollarSign, Gauge, Plane, RadioTower } from 'lucide-react'
+import { BarChart3, Building2, Clock, DollarSign, Gauge, Plane, RadioTower, TrendingUp } from 'lucide-react'
 
 import { ChartSkeleton } from '@/components/stats/ChartSkeleton'
 import { ExportCsvButton } from '@/components/stats/ExportCsvButton'
 import { FleetUtilisationTable } from '@/components/stats/FleetUtilisationTable'
 import { PeriodSelector } from '@/components/stats/PeriodSelector'
 import { PilotLogbookTable } from '@/components/stats/PilotLogbookTable'
+import { RouteNetworkSection } from '@/components/stats/RouteNetworkSection'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatTile } from '@/components/shared/StatTile'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useRoutes } from '@/hooks/useRoutes'
 import { useSettings } from '@/hooks/useSettings'
 import { useStatsOverview } from '@/hooks/useStatsOverview'
 import type { CsvColumn } from '@/lib/csv'
 import type { LiveContext } from '@/types/live-context'
 import type { StatsPerformancePoint } from '@/types/stats'
 
-// Both charts pull in recharts, so both are lazy-loaded exactly like maplibre-gl is for
+// Every chart pulls in recharts, so all of them are lazy-loaded exactly like maplibre-gl is for
 // Dashboard/Routes/Fly (see App.tsx) - a player who never opens Stats never downloads a charting
 // library at all, and this page's own chunk (already lazy at the route level) stays lean too.
 const PerformanceChart = lazy(() => import('@/components/stats/PerformanceChart').then((m) => ({ default: m.PerformanceChart })))
 const FinanceOverviewCharts = lazy(() => import('@/components/stats/FinanceOverviewCharts').then((m) => ({ default: m.FinanceOverviewCharts })))
+const TrendCharts = lazy(() => import('@/components/stats/TrendCharts').then((m) => ({ default: m.TrendCharts })))
 
 const PERFORMANCE_CSV_COLUMNS: CsvColumn<StatsPerformancePoint>[] = [
   { key: 'dateUtc', header: 'Date' },
@@ -38,6 +41,9 @@ function average(values: number[]): number | null {
 export function Stats() {
   const { airlineSummary } = useOutletContext<LiveContext>()
   const overview = useStatsOverview()
+  // The network map needs every route the airline has, not only the ones that flew in the window -
+  // a route built and never flown is exactly the thing a profit-sorted table cannot show you.
+  const routesQuery = useRoutes()
   const { fmt } = useSettings()
 
   if (airlineSummary.status === 'loading') {
@@ -124,13 +130,60 @@ export function Stats() {
         />
       </div>
 
-      <Tabs defaultValue="performance">
+      <Tabs defaultValue="trends">
         <TabsList>
+          <TabsTrigger value="trends">Trends</TabsTrigger>
+          <TabsTrigger value="network">Network</TabsTrigger>
           <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="finance">Finance</TabsTrigger>
           <TabsTrigger value="fleet">Fleet</TabsTrigger>
           <TabsTrigger value="pilots">Pilots</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="trends">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <TrendingUp className="size-4 text-muted-foreground" />
+                Where the airline is heading
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Direction, not a single number. Cash comes straight from the ledger; reputation is explained beneath its own chart.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {loading && <ChartSkeleton height={240} />}
+              {!loading && overview.trends.length === 0 && (
+                <EmptyState
+                  icon={TrendingUp}
+                  title="Nothing to plot yet"
+                  description="Once your airline has a day of history behind it, cash and reputation start charting here."
+                />
+              )}
+              {!loading && overview.trends.length > 0 && (
+                <Suspense fallback={<ChartSkeleton height={240} />}>
+                  <TrendCharts
+                    points={overview.trends}
+                    currentReputation={overview.currentReputation}
+                    reputationRecordedDays={overview.reputationRecordedDays}
+                    fmtMoney={fmt.money}
+                  />
+                </Suspense>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="network">
+          <RouteNetworkSection
+            routes={routesQuery.routes}
+            routesLoading={routesQuery.status === 'loading'}
+            financeRoutes={overview.routes}
+            homeAirportIcao={airlineSummary.data?.airline.homeAirportIcao ?? null}
+            periodDays={overview.periodDays}
+            loading={loading}
+          />
+        </TabsContent>
 
         <TabsContent value="performance">
           <Card>
