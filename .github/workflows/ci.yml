@@ -1,10 +1,15 @@
 name: CI
 
+# `develop` is where V2 work happens, so it gets the same test run as main - a long-lived branch
+# with no CI is a branch whose breakages are all discovered at merge time, in a batch, by whoever
+# opens the pull request. The slower Installer and Release workflows deliberately stay on main
+# only: they publish self-contained builds and are far too expensive to run on every push to a
+# working branch.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 jobs:
