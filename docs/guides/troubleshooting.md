@@ -35,6 +35,7 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [The "Flown online" history card is empty, or says I haven't set a CID](#the-flown-online-history-card-is-empty-or-says-i-havent-set-a-cid)
 - [Other VATSIM traffic isn't showing on the map](#other-vatsim-traffic-isnt-showing-on-the-map)
 - [FSOps never tells me about updates](#fsops-never-tells-me-about-updates)
+- [FSOps says I'm "ahead of the stable channel"](#fsops-says-im-ahead-of-the-stable-channel)
 - [A downloaded update was rejected, or disappeared](#a-downloaded-update-was-rejected-or-disappeared)
 - [Where a downloaded update goes, and why FSOps won't run it](#where-a-downloaded-update-goes-and-why-fsops-wont-run-it)
 - [Where the database lives](#where-the-database-lives)
@@ -45,6 +46,8 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [A sector wasn't valid for payment (slew or a position jump)](#a-sector-wasnt-valid-for-payment-slew-or-a-position-jump)
 - [Why did completing manually cost me reputation](#why-did-completing-manually-cost-me-reputation)
 - [A route doesn't show as flyable](#a-route-doesnt-show-as-flyable)
+- [A saved schedule says its aircraft isn't where the pattern starts](#a-saved-schedule-says-its-aircraft-isnt-where-the-pattern-starts)
+- ["FSOps couldn't fit a legal starter schedule together"](#fsops-couldnt-fit-a-legal-starter-schedule-together)
 - [Where to find log files](#where-to-find-log-files)
 - [How to report a problem](#how-to-report-a-problem)
 
@@ -223,7 +226,7 @@ Neither range nor runway is a blocker on its own, though, and it's worth knowing
 
 **Symptom:** A virtual pilot's flight history shows a leg marked **Skipped**, **Cancelled**, or **Suspended** rather than completed, sometimes with a cancellation fee posted to the ledger.
 
-**Cause:** A scheduled occurrence only flies if the aircraft assigned to it is actually available and at the right airport when its departure time arrives — see [The wall-clock economy](../guides/user-guide.md#the-wall-clock-economy-flying-while-youre-away). If it's mid-flight, or sitting at a different airport (most often because an earlier leg in the chain didn't land where the schedule expected), FSOps records the occurrence rather than silently dropping it or teleporting the aircraft, and what happens next depends on your playstyle: **Casual** records it as **Skipped** with no charge; **True-life** records it as **Cancelled** with a real cancellation fee, since a badly-planned schedule should genuinely cost something under that playstyle. If the reason is specifically that the aircraft is **in maintenance**, it's recorded as **Suspended** instead, under either playstyle — no cancellation fee, since the aircraft needing a check isn't a mistake in the schedule, and the occurrence resumes on its own the next time it's due once the aircraft is released.
+**Cause:** A scheduled occurrence only flies if the aircraft assigned to it is actually available and at the right airport when its departure time arrives — see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away). If it's mid-flight, or sitting at a different airport (most often because an earlier leg in the chain didn't land where the schedule expected), FSOps records the occurrence rather than silently dropping it or teleporting the aircraft, and what happens next depends on your playstyle: **Casual** records it as **Skipped** with no charge; **True-life** records it as **Cancelled** with a real cancellation fee, since a badly-planned schedule should genuinely cost something under that playstyle. If the reason is specifically that the aircraft is **in maintenance**, it's recorded as **Suspended** instead, under either playstyle — no cancellation fee, since the aircraft needing a check isn't a mistake in the schedule, and the occurrence resumes on its own the next time it's due once the aircraft is released.
 
 **Solution:** Check the flight record for the specific reason (it names the aircraft and where it actually is, or which check it's waiting on). For a **Skipped** or **Cancelled** occurrence, this usually means the pilot's weekly schedule has a gap — a leg that assumes the aircraft is somewhere it won't actually be that day, most often because a repositioning leg is missing from an earlier day. Adjust the schedule so each aircraft's chain of legs is geographically continuous. For a **Suspended** occurrence, there's nothing to fix — wait for the aircraft to come out of maintenance, or bring the check forward yourself with "Perform maintenance now" on the Fleet page if you'd rather control when the downtime lands.
 
@@ -274,7 +277,7 @@ The most common cause is a pilot who was hired but never given a schedule, or on
 - **"The player pilot cannot be released."** — you're trying to release **yourself**. Your own entry on the Pilots page is your airline's founding pilot rather than a hire, so there's no releasing it; an airline always has you. If what you actually want is to be rid of the airline entirely, that's [Settings → Data → start over](user-guide.md#data), not this.
 - **"… is in the air right now. Wait for the flight to finish before releasing them."** — that virtual pilot has a sector in progress. Releasing them out from under an in-progress flight would leave that flight with no pilot to resolve against, so it's refused outright rather than half-applied.
 
-Note that the **Status** column is no help in telling these apart — it reads "Available" for every pilot at all times, including one currently flying. The Dashboard's [live operations map](user-guide.md#the-live-operations-map) is where to look if you want to see what's actually airborne.
+The **Status** column tells you which of the two you're about to hit before you try: a pilot with a sector in the air reads **Flying**, and that is the same fact the release check itself reads, so the column and the refusal can never disagree. To see where that flight actually is, the Dashboard's [live operations map](user-guide.md#the-live-operations-map) draws every airborne sector, yours and your virtual pilots'.
 
 **Solution:** For the first, nothing to do — you can't release yourself, by design. For the second, wait for that flight to resolve; a virtual pilot's flights complete on their own against the wall clock (see [The wall-clock economy](user-guide.md#the-wall-clock-economy-flying-while-youre-away)), so this is usually a short wait rather than something you have to act on. Then release them.
 
@@ -533,7 +536,7 @@ This means an occasional bad reading from the simulator — most commonly right 
 
 The distinction the two messages draw is the one that matters. A pattern is a **closed loop**, so if the aircraft is parked at *any* airport the week departs from, that airport's own leg simply flies, moves the aircraft on, and everything after it lines up by itself — the aircraft never has to return to the airport the week happens to begin at. It's only genuinely stuck when it's somewhere **no leg departs from**, because then nothing in the schedule can ever move it.
 
-**Solution:** For the first message, nothing at all — the pattern repairs itself, and the only cost is the legs due before that airport's own leg comes round. For the second, the aircraft needs a hand: either add a leg departing from where it actually is, or reserve it and use **Reposition** on the Fleet page to move it back for the standard fee (see [Repositioning a stranded aircraft](user-guide.md#the-fleet-page)) — flying it back yourself costs nothing and earns a sector, which is why both are offered. If the pattern was never meant to start from that airport at all, edit the schedule so its first leg departs from where the aircraft really is.
+**Solution:** For the first message, nothing at all — the pattern repairs itself, and the only cost is the legs due before that airport's own leg comes round. For the second, the aircraft needs a hand: either add a leg departing from where it actually is, or reserve it and use **Reposition** on the Fleet page to move it back for the standard fee (see [Moving an aircraft to another airport](user-guide.md#moving-an-aircraft-to-another-airport)) — flying it back yourself costs nothing and earns a sector, which is why both are offered. If the pattern was never meant to start from that airport at all, edit the schedule so its first leg departs from where the aircraft really is.
 
 If a schedule that's already running gets into the second state, the **Pilots** page flags it there too — deliberately with the same facts and the same two ways out, so the two screens can never tell you different things about the same aircraft.
 

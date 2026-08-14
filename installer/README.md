@@ -30,9 +30,13 @@ current `artifacts\publish`, skip straight to compiling:
 Two files land in `artifacts\installer`:
 
 ```
-FSOps-Setup-0.1.0.exe
-FSOps-Setup-0.1.0.exe.sha256
+FSOps-Setup-<version>.exe
+FSOps-Setup-<version>.exe.sha256
 ```
+
+`<version>` is whatever `<Version>` in `Directory.Build.props` currently says — the script reads it
+rather than being told, so the two cannot disagree. A pre-release keeps its suffix in the filename
+(`FSOps-Setup-1.1.0-beta.1.exe`); see [Releasing a beta](#releasing-a-beta).
 
 **A release must publish both.** See [Releasing](#releasing) below for why the sidecar is not
 optional.
@@ -41,7 +45,7 @@ To compile by hand without the wrapper — bearing in mind you then have to prod
 yourself — the script's own invocation is:
 
 ```
-ISCC /DAppVersion=0.1.0 /DPublishDir=<repo>\artifacts\publish /DOutputDir=<repo>\artifacts\installer installer\FSOps.iss
+ISCC /DAppVersion=<version> /DPublishDir=<repo>\artifacts\publish /DOutputDir=<repo>\artifacts\installer installer\FSOps.iss
 ```
 
 All three defines are optional; their defaults are in the script's header.

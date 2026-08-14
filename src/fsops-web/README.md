@@ -12,9 +12,13 @@ FSOps itself on `http://localhost:5977`, so the API and the UI share one origin.
 npm run dev        # dev server on 5173, proxying /api and /hubs to the server on 5977
 npm run build      # type-check, then build into ../FSOps.Server/wwwroot
 npm run test:run   # Vitest, once
-npm run lint       # oxlint
+npm run lint -- --deny-warnings   # oxlint, the way CI runs it
 npx tsc --noEmit   # type-check only
 ```
+
+**Lint with `--deny-warnings` or it cannot fail you.** oxlint exits 0 with its warnings printed to
+stdout, so a bare `npm run lint` reports problems and still succeeds. CI passes the flag
+(`.github/workflows/ci.yml`), so that is the command whose result actually decides anything.
 
 `npm run dev` needs the FSOps server running separately for anything that touches data. To see the
 app exactly as a player does, build it and run the server on its own.

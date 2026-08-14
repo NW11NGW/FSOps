@@ -622,11 +622,11 @@ public static class FlightEndpoints
     }
 
     /// <summary>
-    /// Flight statuses the logbook covers: sectors that were actually attempted. A
-    /// <see cref="FlightStatus.Planned"/> row has not happened yet, and the
+    /// Flight statuses the logbook covers: sectors that were actually attempted. The
     /// <see cref="FlightStatus.Skipped"/>/<see cref="FlightStatus.Cancelled"/>/
     /// <see cref="FlightStatus.Suspended"/> statuses are virtual-pilot occurrences that never
-    /// flew at all - none of them belongs in a record of flying done.
+    /// flew at all - none of them belongs in a record of flying done. There is no "planned"
+    /// status to exclude: a flight row only ever exists once the sector has begun.
     /// <see cref="FlightStatus.Abandoned"/> and <see cref="FlightStatus.Interrupted"/> do: the
     /// aircraft left the gate, and a logbook that quietly omitted the sectors that went wrong would
     /// be flattering rather than accurate.

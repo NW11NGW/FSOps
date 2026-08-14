@@ -42,7 +42,7 @@ From the [Releases page](https://github.com/NW11NGW/FSOps/releases), download tw
 **FSOps is not code-signed.** There is no code-signing certificate behind this project, and buying one is not currently on the cards. That has a real consequence you should know about rather than discover: Windows cannot tell you who built the file, so the checksum is the only thing that distinguishes the installer the author built from a file that has been tampered with somewhere between the release page and your disk. Checking it takes one command in PowerShell, run from wherever you saved the download:
 
 ```
-Get-FileHash .\FSOps-Setup-0.1.0.exe -Algorithm SHA256
+Get-FileHash .\FSOps-Setup-<version>.exe -Algorithm SHA256
 ```
 
 Compare the hash it prints against the contents of the `.sha256` file. They should match, ignoring case. If they don't, delete the download and fetch it again — and if it still doesn't match, don't run it.
