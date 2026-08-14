@@ -5,12 +5,15 @@ import { toast } from 'sonner'
 
 import type { NetworkAirport, SavedRouteArc } from '@/components/map/RouteMap'
 import { AirportPickerCard } from '@/components/routes/AirportPickerCard'
+import { FarePricingDialog } from '@/components/routes/FarePricingDialog'
+import { OpportunitiesCard } from '@/components/routes/OpportunitiesCard'
 import { PlanPanel } from '@/components/routes/PlanPanel'
 import { RoutesTable } from '@/components/routes/RoutesTable'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAirportCoordinates } from '@/hooks/useAirportCoordinates'
+import { useOpportunities } from '@/hooks/usePlanning'
 import { useRouteBlockTimes } from '@/hooks/useRouteBlockTimes'
 import { useRoutePreview } from '@/hooks/useRoutePreview'
 import { useRoutes } from '@/hooks/useRoutes'
@@ -44,6 +47,7 @@ export function RoutesPage() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [hoveredRouteId, setHoveredRouteId] = useState<string | null>(null)
+  const [pricingPair, setPricingPair] = useState<{ outbound: RouteSummary; inbound: RouteSummary | null } | null>(null)
 
   // Same base-currency conversion handleCreate uses for the actual baseFare it submits - the
   // live economics readout must be priced in the same units the engine actually charges in.
@@ -55,6 +59,9 @@ export function RoutesPage() {
   const preview = useRoutePreview(departure?.icao ?? null, arrival?.icao ?? null, fareOverrideInBase)
   const routesQuery = useRoutes()
   const blockMinutes = useRouteBlockTimes(routesQuery.routes)
+  // Suggestions depend on the route list (a pair already flown is never suggested), so they are
+  // refetched whenever it changes rather than going stale behind a newly-created route.
+  const opportunities = useOpportunities(Boolean(airlineSummary.data))
 
   const homeAirportIcao = airlineSummary.data?.airline.homeAirportIcao ?? null
   const airlineIcaoCode = airlineSummary.data?.airline.icaoCode ?? null
@@ -192,6 +199,24 @@ export function RoutesPage() {
     if (selectedRouteId === route.id) setSelectedRouteId(null)
     toast.success(result.message)
     routesQuery.refetch()
+    opportunities.refetch()
+  }
+
+  /** Loads a suggested pair into the planner above rather than creating it outright - the player
+   *  still sees the full plan, the warnings and the fare before committing. */
+  async function handlePlanOpportunity(opportunity: { departureIcao: string; arrivalIcao: string }) {
+    try {
+      const [dep, arr] = await Promise.all([
+        get<AirportDetail>(`/airports/${opportunity.departureIcao}`),
+        get<AirportDetail>(`/airports/${opportunity.arrivalIcao}`),
+      ])
+      setSelectedRouteId(null)
+      setDeparture(dep)
+      setArrival(arr)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch {
+      toast.error("Could not load that suggestion's airports.")
+    }
   }
 
   async function handleCreate() {
@@ -224,6 +249,7 @@ export function RoutesPage() {
       )
       setFareTouched(false)
       routesQuery.refetch()
+      opportunities.refetch()
     } catch (err) {
       setCreateError(
         err instanceof ApiError ? err.message : 'Could not create this route. Check your connection and try again.',
@@ -349,6 +375,24 @@ export function RoutesPage() {
         onSelect={handleSelectRoute}
         onDelete={handleDeleteRoute}
         onHover={setHoveredRouteId}
+        onSetFare={(outbound, inbound) => setPricingPair({ outbound, inbound })}
+      />
+
+      <OpportunitiesCard
+        data={opportunities.data}
+        status={opportunities.status}
+        isRefreshing={opportunities.isRefreshing}
+        onPlan={handlePlanOpportunity}
+      />
+
+      <FarePricingDialog
+        route={pricingPair?.outbound ?? null}
+        returnRoute={pricingPair?.inbound ?? null}
+        onClose={() => setPricingPair(null)}
+        onSaved={() => {
+          routesQuery.refetch()
+          opportunities.refetch()
+        }}
       />
     </div>
   )

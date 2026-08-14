@@ -240,6 +240,7 @@ apiV1.MapAirportEndpoints();
 apiV1.MapWorldDataEndpoints();
 apiV1.MapAirlineEndpoints();
 apiV1.MapRouteEndpoints();
+apiV1.MapPlanningEndpoints();
 apiV1.MapSettingsEndpoints();
 apiV1.MapSimEndpoints();
 apiV1.MapFlightEndpoints();

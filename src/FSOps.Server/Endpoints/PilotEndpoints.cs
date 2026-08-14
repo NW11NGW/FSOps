@@ -789,18 +789,11 @@ public static class PilotEndpoints
                     continue;
                 }
 
-                var plan = RoutePreviewCalculator.Calculate(economyConfig, departureAirport, arrivalAirport, chosenType, airline.StrategyProfile);
-                var referenceFare = ReferenceFareCalculator.Calculate(economyConfig, airline.StrategyProfile, route.DistanceNm);
-                var marketDemandPax = DemandCalculator.AvailablePassengers(
-                    economyConfig.Demand, departureAirport.SizeCategory, arrivalAirport.SizeCategory, route.DistanceNm, pricedAtUtc, airline.ReputationScore);
-                var pricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, departureAirport.Icao, departureAirport.Country, pricedAtUtc, worldSeed);
+                var projection = SectorProjector.Project(
+                    economyConfig, airline.StrategyProfile, airline.ReputationScore, departureAirport, arrivalAirport, chosenType,
+                    route.DistanceNm, route.BaseFare, pricedAtUtc, worldSeed);
 
-                var economics = FlightEconomicsCalculator.Calculate(
-                    economyConfig, airline.StrategyProfile, route.BaseFare, referenceFare, chosenType.PaxCapacity, marketDemandPax,
-                    chargedFuelKg: plan.FuelBreakdown.ChargedFuelKg, pricePerKgAtDepartureAirport: pricePerKg,
-                    arrivalAirport.SizeCategory, chosenType.MtowTonnes, plan.BlockTimeBreakdown.TotalMinutes / 60.0);
-
-                netProfitByRouteId[route.Id] = Math.Round(economics.NetProfit, 2);
+                netProfitByRouteId[route.Id] = Math.Round(projection.NetProfit, 2);
             }
         }
 
@@ -1253,18 +1246,14 @@ public static class PilotEndpoints
                 continue;
             }
 
-            var plan = RoutePreviewCalculator.Calculate(economyConfig, dep, arr, type, airline.StrategyProfile);
-            var referenceFare = ReferenceFareCalculator.Calculate(economyConfig, airline.StrategyProfile, route.DistanceNm);
-            var marketDemandPax = DemandCalculator.AvailablePassengers(economyConfig.Demand, dep.SizeCategory, arr.SizeCategory, route.DistanceNm, now, airline.ReputationScore);
-            var pricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, dep.Icao, dep.Country, now, worldSeed);
+            // Same one projector every other "what would this be worth" surface runs, and the same
+            // one FlightEconomicsPoster posts from - see SectorProjector's class doc.
+            var projection = SectorProjector.Project(
+                economyConfig, airline.StrategyProfile, airline.ReputationScore, dep, arr, type,
+                route.DistanceNm, route.BaseFare, now, worldSeed);
 
-            var result = FlightEconomicsCalculator.Calculate(
-                economyConfig, airline.StrategyProfile, route.BaseFare, referenceFare, type.PaxCapacity, marketDemandPax,
-                chargedFuelKg: plan.FuelBreakdown.ChargedFuelKg, pricePerKgAtDepartureAirport: pricePerKg,
-                arr.SizeCategory, type.MtowTonnes, plan.BlockTimeBreakdown.TotalMinutes / 60.0);
-
-            revenue += result.TicketRevenue;
-            cost += result.TotalCost;
+            revenue += projection.Revenue;
+            cost += projection.TotalCost;
         }
 
         return new WeeklySummary(entries.Count, Math.Round(revenue, 2), Math.Round(cost, 2));

@@ -19,6 +19,9 @@ This guide covers how to use FSOps, feature by feature. Everything described bel
 - [Building routes](#building-routes)
   - [Your route network on the map](#your-route-network-on-the-map)
   - [Round trips and where your aircraft actually is](#round-trips-and-where-your-aircraft-actually-is)
+- [Setting a fare on a route you already have](#setting-a-fare-on-a-route-you-already-have)
+- [Where to fly next](#where-to-fly-next)
+- [What to buy next](#what-to-buy-next)
 - [Where your data lives](#where-your-data-lives)
 - [Planning and flying a tracked flight](#planning-and-flying-a-tracked-flight)
   - [Connecting to the simulator](#connecting-to-the-simulator)
@@ -196,6 +199,8 @@ Elsewhere, it's a hard limit on a specific airframe, exactly like range:
 
 The fare field under the plan panel starts pre-filled with the suggested fare. Edit it to set your own fare instead — enter a value that's a sane multiple of the suggested fare (very roughly, no less than a tenth and no more than ten times the suggestion); wildly out-of-range values like zero or a fare thousands of times the suggestion are rejected with an explanation. Leave the field untouched and the route is priced at the suggested fare automatically. Select **Create route** once the plan looks right and no blocking warning is showing.
 
+As you type a fare, the tiles beneath show what it would actually do: expected passengers, load factor, revenue per sector, and **profit per sector** with the cost figure it was struck from. That last tile is the one worth watching — a fare that fills the aeroplane and a fare that makes money are not always the same fare. Once the route exists you can revisit its fare any time, with the full picture; see [Setting a fare on a route you already have](#setting-a-fare-on-a-route-you-already-have).
+
 ![The Routes page: the build panel, the network map, and the route list](../../Screenshots/Routes.png)
 
 The Routes page with four round trips built out of Bristol. The build panel on the left is waiting for both airports before it will show a plan; the map draws the whole network at once, and the table below lists each round trip once — note the paired flight numbers (`OLA501`/`OLA502` and so on), which are the outbound and return legs of a single row. The Munich sector is the only one priced above the £65 floor, because it's the only one long enough for the distance-based fare to exceed it.
@@ -217,6 +222,60 @@ Every route you create in FSOps is a **round trip**. Creating a route from, say,
 This pairing exists because of how FSOps thinks about your fleet: an aircraft is always sitting at a specific airport, and you can only fly a route whose departure airport matches where your aircraft actually is. This is what the [Fly screen's "Ready now" grouping](#picking-a-route-to-fly) is checking — a route with no aircraft currently at its departure airport shows as not flyable, with the reason stated plainly (for example, "No aircraft at EGPH — your fleet is currently at EGGD"). A newly founded airline's starter aircraft begins at your home base, which is why your first flight is always one of the routes leaving your hub.
 
 A completed flight moves its aircraft's recorded location to wherever it actually landed — not just to the route's expected arrival airport, but to whichever airport the touchdown was actually closest to (within about 5 nm), so a diversion is reflected honestly. That's what makes the pairing above actually useful in practice: fly the outbound leg of a round trip and the return leg immediately shows as flyable from the far end, because your aircraft is now really there. An abandoned flight, by contrast, leaves the aircraft exactly where it was — nothing moves for a flight that never completed. See [Troubleshooting](troubleshooting.md#a-route-doesnt-show-as-flyable) if a route you expect to be flyable isn't.
+
+## Setting a fare on a route you already have
+
+A route's fare used to be decided once, when you created it, and then never revisited. It is now a lever you can pull whenever you like, and — the important half — you can see what pulling it would do before you commit to anything.
+
+Select the **price tag** button on any route in the list to open the fare workbench. Type a fare and everything below it moves as you type:
+
+- **Passengers** actually booked, against the aircraft's seats.
+- **Load factor** — what fraction of the aeroplane that fills.
+- **Revenue per sector** — passengers times your fare.
+- **Profit per sector** — that revenue less every cost the sector will really incur: fuel at the departure airport's price, landing, handling, parking and passenger charges at the arrival airport, the turnaround fee, maintenance accrual and crew cost. The tile states the cost figure underneath, so you can see both halves.
+
+Underneath is a chart of **every other fare worth considering** — revenue and profit plotted across a band from half the suggested fare to twice it — with your current fare, the suggested fare, and the best sampled fare all marked. This is the picture that makes pricing a decision rather than a guess: raising a fare trades passengers for yield, and the curve shows you exactly where that trade stops paying.
+
+Three buttons set the fare for you:
+
+- **Suggested** — what FSOps itself would charge for a sector this long under your strategy profile. This is the same figure a brand-new route is created at.
+- **Best profit** — the highest-profit fare among the ones sampled on the curve. Deliberately described that way rather than as "the optimum": it is the best of a fixed set of sampled fares, not a claim of infinite precision.
+- **Most revenue** — the fare that sells the most money's worth of tickets, which is not always the same fare that makes the most profit (past the revenue peak, each passenger you lose takes their passenger charge with them).
+
+A sentence above the chart says whether you are pricing above, below or exactly at the suggestion, and — if a better fare exists — names it and what it looks worth per sector. You can disagree with it: every number it is built from is on the screen beside it.
+
+Two things the workbench is careful to be honest about:
+
+- **Which aircraft the figures assume.** A sector is genuinely worth different money to different airframes — seats decide bookings, weight decides the airport fees, block time decides crew, maintenance and fuel. The panel names the aircraft it priced with and why it picked that one (the one already rostered on the route, or the one reserved to you that can fly it, or the largest thing you own that can). If you own more than one type it says so, so you know the figures move with the choice.
+- **The fare band.** The input tells you the range the save will actually accept, rather than letting you find the limit by being refused. It is the same band route creation enforces — very roughly no less than a tenth and no more than ten times the suggested fare.
+
+Because a route is always a there-and-back pair, saving offers to set the same fare on the return leg as well, which is ticked by default. Untick it to price the two directions differently.
+
+**These figures are not a separate model.** They come from the same calculators that write your ledger, so a fare you accept on the strength of this panel earns what the panel said it would. The one thing a projection cannot know in advance is a virtual pilot's delay on the day, which bills a little extra crew and maintenance time — so a virtual sector lands slightly under the predicted profit, never over, and never for any reason to do with the fare you chose.
+
+## Where to fly next
+
+Below the route list, **Where to fly next** answers the question the route planner never could: given the airports you actually operate from, the aircraft you actually own and the reputation you have actually earned, which city pairs are worth opening?
+
+Each suggestion is a real projection, not a score: the aircraft that would fly it, the distance, expected passengers against seats, and profit per sector — with a one-sentence reason saying why it made the list (usually either "there is more demand here than the aircraft has seats" or "this pair draws about N passengers a day"). They are ranked by profit per sector.
+
+FSOps looks outward from up to six **bases**: your home airport first, then anywhere you currently have an aircraft parked, then anywhere you already fly. Pairs you already serve are never suggested, in either direction.
+
+Underneath, **"Worth having, but nothing you own can fly it"** lists a few pairs that would be good business and says exactly what stops you — a sector beyond every aircraft's range, or an airport whose runways nothing you own can use. These are shown rather than hidden on purpose: an opportunity your fleet cannot take is still worth knowing about, because it tells you what a different aircraft would be for. It is the same principle route creation already follows, which names the aircraft and the one action that changes the answer instead of leaving a dead end.
+
+Selecting the **+** on a suggestion loads that pair into the route planner at the top of the page. It does not create anything — you still see the full plan, the fare, and every warning before you decide.
+
+## What to buy next
+
+The Fleet page carries the matching question. **What to buy next** starts by telling you whether buying anything is the right move at all:
+
+- If any aircraft has **nothing scheduled**, that is the headline, and it names them. Rostering an airframe you already pay for earns more than adding another one. An aircraft reserved to you is never counted as idle — it has no schedule because it is being kept free for you to fly, which is the whole point of the reservation.
+- If any of your routes **cannot be flown by anything you own**, that gap is next, with the reason for each.
+- If any of your routes **turn passengers away for want of seats**, they are listed with the arithmetic: how many want to fly, how many the aircraft seats, and roughly how many go unsold each sector.
+
+Then come the acquisition suggestions themselves, each with a sentence saying what it opens — routes you already have but cannot fly, city pairs currently out of reach, extra seats on routes already turning passengers away — and the best single sector it would make possible, with what that sector would net.
+
+Every price is real and is your playstyle's own: the purchase price, the monthly lease rate, the deposit that lease would need up front, and the monthly insurance the aircraft adds. The buy and deposit figures are highlighted when your current cash covers them. A type with no configured lease rate says "Not leasable" rather than inventing a number.
 
 ## Where your data lives
 

@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { KeyboardEvent, MouseEvent } from 'react'
-import { ArrowLeftRight, ChevronDown, ChevronRight, Route as RouteIcon, Trash2, TriangleAlert } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronRight, Route as RouteIcon, Tag, Trash2, TriangleAlert } from 'lucide-react'
 
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +26,10 @@ interface RoutesTableProps {
   onSelect: (route: RouteSummary) => void
   onDelete: (route: RouteSummary) => Promise<void>
   onHover?: (routeId: string | null) => void
+  /** Opens the fare workbench for this pair. The outbound leg is the one priced; the dialog offers
+   *  to apply the same fare to the return leg, which is what sharing a fare between the two legs
+   *  has always meant. */
+  onSetFare?: (outbound: RouteSummary, inbound: RouteSummary | null) => void
 }
 
 interface RoutePair {
@@ -61,7 +65,7 @@ function groupRoutePairs(routes: RouteSummary[]): RoutePair[] {
 
 /** The airline's saved routes (GET /routes), grouped into round-trip pairs. Each pair expands to
  *  show both legs; deleting a pair removes both legs together. */
-export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredId, airlineIcaoCode, onSelect, onDelete, onHover }: RoutesTableProps) {
+export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredId, airlineIcaoCode, onSelect, onDelete, onHover, onSetFare }: RoutesTableProps) {
   const { fmt } = useSettings()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [deletingPair, setDeletingPair] = useState<RoutePair | null>(null)
@@ -149,7 +153,7 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredI
                 <TableHead>Distance</TableHead>
                 <TableHead>Block time</TableHead>
                 <TableHead>Fare</TableHead>
-                <TableHead className="w-10">
+                <TableHead className="w-20">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -231,17 +235,35 @@ export function RoutesTable({ routes, status, blockMinutes, selectedId, hoveredI
                         {faresMatch ? fmt.money(outbound.baseFare) : `${fmt.money(outbound.baseFare)} / ${fmt.money(inbound!.baseFare)}`}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-8 text-muted-foreground hover:text-danger"
-                          aria-label={`Delete route ${outbound.departureIcao} to ${outbound.arrivalIcao} and its return leg`}
-                          onClick={(event) => requestDelete(event, pair)}
-                          onKeyDown={stopRowActivation}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
+                        <div className="flex items-center gap-0.5">
+                          {onSetFare && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 text-muted-foreground hover:text-accent"
+                              aria-label={`Set the fare for ${outbound.departureIcao} to ${outbound.arrivalIcao}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onSetFare(outbound, inbound)
+                              }}
+                              onKeyDown={stopRowActivation}
+                            >
+                              <Tag className="size-4" />
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-muted-foreground hover:text-danger"
+                            aria-label={`Delete route ${outbound.departureIcao} to ${outbound.arrivalIcao} and its return leg`}
+                            onClick={(event) => requestDelete(event, pair)}
+                            onKeyDown={stopRowActivation}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
 

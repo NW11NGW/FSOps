@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock3, Compass, Fuel, Gauge, Percent, Route as RouteIcon, Ruler, Tag, TriangleAlert, Users } from 'lucide-react'
+import { AlertTriangle, Clock3, Compass, Fuel, Gauge, Percent, Route as RouteIcon, Ruler, Tag, TrendingUp, TriangleAlert, Users } from 'lucide-react'
 
 import { StatTile } from '@/components/shared/StatTile'
 import { Button } from '@/components/ui/button'
@@ -206,6 +206,20 @@ export function PlanPanel({
                   <StatTile label="At this fare" icon={Users} value={`${preview.economics.expectedPassengers} pax`} />
                   <StatTile label="Load factor" icon={Percent} value={`${preview.economics.loadFactorPercent.toFixed(1)}%`} />
                   <StatTile label="Revenue per sector" icon={Tag} value={fmt.money(preview.economics.expectedRevenuePerSector)} />
+                  <StatTile
+                    label="Profit per sector"
+                    icon={TrendingUp}
+                    value={fmt.money(preview.economics.expectedProfitPerSector)}
+                    trend={{
+                      direction:
+                        preview.economics.expectedProfitPerSector > 0
+                          ? 'up'
+                          : preview.economics.expectedProfitPerSector < 0
+                            ? 'down'
+                            : 'flat',
+                      label: `after ${fmt.money(preview.economics.expectedCostPerSector)} of costs`,
+                    }}
+                  />
                 </div>
               )}
 

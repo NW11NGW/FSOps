@@ -19,6 +19,24 @@ public static class RouteEndpoints
     private const decimal MinFareMultiplierOfSuggested = 0.1m;
     private const decimal MaxFareMultiplierOfSuggested = 10m;
 
+    /// <summary>
+    /// The band above, exposed so the fare workbench can bound its own input rather than letting the
+    /// player discover the limit by being refused. Deliberately not a second copy of the numbers:
+    /// creation, editing and the workbench all read these two methods, so the input, the validation
+    /// and the error message can never describe three different bands.
+    /// <para>
+    /// The suggested fare a route is created with is exactly
+    /// <see cref="ReferenceFareCalculator"/>'s output for its distance and strategy (see
+    /// <see cref="RoutePreviewCalculator"/>), so passing the reference fare here is the same band the
+    /// route was created under.
+    /// </para>
+    /// </summary>
+    public static decimal MinimumFareFor(decimal suggestedFare) =>
+        Math.Round(suggestedFare * MinFareMultiplierOfSuggested, 2, MidpointRounding.AwayFromZero);
+
+    public static decimal MaximumFareFor(decimal suggestedFare) =>
+        Math.Round(suggestedFare * MaxFareMultiplierOfSuggested, 2, MidpointRounding.AwayFromZero);
+
     public static void MapRouteEndpoints(this IEndpointRouteBuilder group)
     {
         group.MapPost("/routes/preview", PreviewAsync);
@@ -122,21 +140,27 @@ public static class RouteEndpoints
             if (airline is not null && !result.Validation.SameAirport && result.DistanceNm > 0)
             {
                 var fare = request.Fare is decimal requestedFare && requestedFare > 0 ? requestedFare : result.SuggestedFare;
-                var strategyConfig = economyConfig.GetStrategy(airline.StrategyProfile);
-                var referenceFare = ReferenceFareCalculator.Calculate(economyConfig, airline.StrategyProfile, result.DistanceNm);
-                var marketDemandPax = DemandCalculator.AvailablePassengers(
-                    economyConfig.Demand, departure.SizeCategory, arrival.SizeCategory, result.DistanceNm, DateTimeOffset.UtcNow, airline.ReputationScore);
-                var booking = FareDemandModel.Calculate(
-                    economyConfig.MaxLoadFactor, strategyConfig, fare, referenceFare, aircraftType.PaxCapacity, marketDemandPax,
-                    economyConfig.CaptiveFareCeilingMultiple, economyConfig.PostCaptiveElasticity);
+                // One projector, shared with the schedule leg picker, the pilot weekly summary, the
+                // fare workbench and FlightEconomicsPoster itself - see SectorProjector's class doc
+                // for why a second copy of this arithmetic is not allowed to exist.
+                var plan = SectorProjector.Plan(
+                    economyConfig, airline.StrategyProfile, airline.ReputationScore, departure, arrival, aircraftType,
+                    result.DistanceNm, priceNowUtc, worldSeed);
+                var projection = SectorProjector.AtFare(economyConfig, airline.StrategyProfile, plan, fare);
 
                 economics = new
                 {
                     fare,
-                    referenceFare,
-                    expectedPassengers = booking.PaxBooked,
-                    loadFactorPercent = Math.Round(booking.LoadFactor * 100, 1),
-                    expectedRevenuePerSector = booking.Revenue,
+                    referenceFare = plan.ReferenceFare,
+                    expectedPassengers = projection.PaxBooked,
+                    loadFactorPercent = Math.Round(projection.LoadFactor * 100, 1),
+                    expectedRevenuePerSector = projection.Revenue,
+                    // New alongside the revenue figure that was always here: a fare decision the
+                    // player can only see one side of is not a decision. Costs are every non-ticket
+                    // line the ledger will post for this sector, fuel included at the departure
+                    // airport's price.
+                    expectedCostPerSector = Math.Round(projection.TotalCost, 2),
+                    expectedProfitPerSector = Math.Round(projection.NetProfit, 2),
                 };
             }
 
@@ -449,8 +473,8 @@ public static class RouteEndpoints
             // Guard against fat-finger / garbage input while still letting the user meaningfully
             // undercut or beat the suggested fare - "sane" is defined relative to the suggestion
             // rather than as a fixed currency band, since suggested fares vary a lot by distance.
-            var minAllowedFare = result.SuggestedFare * MinFareMultiplierOfSuggested;
-            var maxAllowedFare = result.SuggestedFare * MaxFareMultiplierOfSuggested;
+            var minAllowedFare = MinimumFareFor(result.SuggestedFare);
+            var maxAllowedFare = MaximumFareFor(result.SuggestedFare);
             if (fareValue <= 0m || fareValue < minAllowedFare || fareValue > maxAllowedFare)
             {
                 return (null, Results.BadRequest(new
@@ -520,7 +544,8 @@ public static class RouteEndpoints
         return (trimmed, null);
     }
 
-    private static async Task<IResult> UpdateAsync(Guid id, UpdateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+    internal static async Task<IResult> UpdateAsync(
+        Guid id, UpdateRouteRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -568,6 +593,28 @@ public static class RouteEndpoints
                 return Results.BadRequest(new { error = "baseFare must be greater than zero." });
             }
 
+            // The SAME band route creation enforces. Until the fare workbench there was no UI that
+            // could reach this path at all, so the gap between "creating a route refuses a fare 40x
+            // the suggestion" and "editing one accepts it silently" never showed; giving the player
+            // a fare control makes the two visible side by side, and a limit that applies only to
+            // the fare you never revisit is not a limit. A route whose airports have since gone
+            // missing from world data cannot be re-priced against a suggestion, so it keeps the old
+            // ">0" rule rather than being frozen at whatever it holds.
+            var suggestedFare = SuggestedFareFor(airline, route, economyConfigCatalog);
+            if (suggestedFare is decimal suggested)
+            {
+                var minAllowedFare = MinimumFareFor(suggested);
+                var maxAllowedFare = MaximumFareFor(suggested);
+                if (fareValue < minAllowedFare || fareValue > maxAllowedFare)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = $"Fare {fareValue:F2} is outside the allowed range " +
+                                $"({minAllowedFare:F2}-{maxAllowedFare:F2}) for this route (suggested fare {suggested:F2}).",
+                    });
+                }
+            }
+
             route.BaseFare = fareValue;
         }
 
@@ -578,6 +625,23 @@ public static class RouteEndpoints
 
         await db.SaveChangesAsync(ct);
         return Results.Ok(await ToRouteDtoAsync(route, db, ct));
+    }
+
+    /// <summary>
+    /// What the app would charge for this saved route if the player expressed no opinion - the same
+    /// <see cref="ReferenceFareCalculator"/> figure a brand-new route is created at, recomputed from
+    /// the route's own stored distance. Null when the route has no usable distance, which is the
+    /// only case where "there is no suggestion to compare against" is the honest answer.
+    /// </summary>
+    private static decimal? SuggestedFareFor(Airline airline, Route route, EconomyConfigCatalog economyConfigCatalog)
+    {
+        if (route.DistanceNm <= 0)
+        {
+            return null;
+        }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+        return ReferenceFareCalculator.Calculate(economyConfig, airline.StrategyProfile, route.DistanceNm);
     }
 
     internal static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)

@@ -82,6 +82,8 @@ function preview(overrides: Partial<RoutePreviewResponse> = {}): RoutePreviewRes
       expectedPassengers: 150,
       loadFactorPercent: 83,
       expectedRevenuePerSector: 14250,
+      expectedCostPerSector: 9000,
+      expectedProfitPerSector: 5250,
     },
     greatCirclePath: [],
     validation: {
@@ -200,7 +202,7 @@ describe('FlightBrief - preview loading state', () => {
   it('shows expected passengers against capacity and expected revenue from the real economics figures', async () => {
     const { container, unmount } = await render({
       selectedAircraft: aircraft({ paxCapacity: 180 }),
-      preview: preview({ economics: { fare: 95, referenceFare: 95, expectedPassengers: 150, loadFactorPercent: 83, expectedRevenuePerSector: 14250 } }),
+      preview: preview({ economics: { fare: 95, referenceFare: 95, expectedPassengers: 150, loadFactorPercent: 83, expectedRevenuePerSector: 14250, expectedCostPerSector: 9000, expectedProfitPerSector: 5250 } }),
     })
     const body = text(container)
     expect(body).toContain('150 / 180')
@@ -305,7 +307,7 @@ describe('FlightBrief - SimBrief hand-off passenger count', () => {
   it('sends the real expected booking, not the airframe\'s full seat capacity', async () => {
     const { container, unmount } = await render({
       selectedAircraft: aircraft({ paxCapacity: 180 }),
-      preview: preview({ economics: { fare: 65, referenceFare: 65, expectedPassengers: 150, loadFactorPercent: 83, expectedRevenuePerSector: 9750 } }),
+      preview: preview({ economics: { fare: 65, referenceFare: 65, expectedPassengers: 150, loadFactorPercent: 83, expectedRevenuePerSector: 9750, expectedCostPerSector: 9000, expectedProfitPerSector: 750 } }),
     })
 
     click(getByRole(container, 'button', { name: /Plan in SimBrief/ }))
