@@ -153,6 +153,19 @@ export interface LegalLegOption {
   arrivalIcao: string
   flightNumber: string | null
   blockMinutes: number | null
+  /** What ONE sector on this route is expected to net, in base currency, flown by the specific
+   *  aircraft this query named - the backend's own economy engine (the same one that posts to the
+   *  ledger), never a client-side estimate. Aircraft-specific on purpose: seats, MTOW and this
+   *  airframe's block time all feed it, so the same city pair is worth different money to
+   *  different aircraft. Informational only - it never affects whether an option is legal, only
+   *  how a caller ranks options that already are. Absent/null when the backend could not resolve a
+   *  figure (a world-data gap, or a zero-distance route); callers must fall back to ordering by
+   *  something else rather than treating it as zero. */
+  expectedNetProfit?: number | null
+  /** How many legs OTHER pilots already fly on this route in the saved week. A city pair's market
+   *  is finite, so this is the honest signal that putting a second pilot on the same pair is worth
+   *  less than the first. Never blocking, and never counts the caller's own draft. */
+  scheduledLegsThisWeek?: number
   warnings: LegWarning[]
 }
 

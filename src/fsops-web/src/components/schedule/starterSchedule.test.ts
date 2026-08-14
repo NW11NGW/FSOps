@@ -1,6 +1,6 @@
 ﻿import { describe, expect, it, vi } from 'vitest'
 
-import { buildStarterSchedule, rankAircraftForStarterSchedule, STARTER_DAYS, type StarterScheduleDeps } from './starterSchedule'
+import { buildStarterSchedule, rankAircraftForStarterSchedule, scoreLegOption, STARTER_DAYS, type StarterScheduleDeps } from './starterSchedule'
 import type { AircraftOptionsResponse, DayOfWeek, DutyDayInput, LegalLegOption, LegOptionsResponse } from '@/types/schedule'
 
 const AIRCRAFT = { fleetAircraftId: 'ac-1', registration: 'G-TEST' }
@@ -489,5 +489,229 @@ describe('buildStarterSchedule - the whole week, weekend included', () => {
     expect(outcome.result.daysUsed).toBe(2)
     expect(outcome.result.week[6]?.legs).toHaveLength(4)
     expect(outcome.result.week[0]?.legs).toHaveLength(4)
+  })
+})
+
+// ---- User's decision, 2026-08-14: suggest the most profitable week for THAT aircraft and pilot,
+// ---- not the same merely-legal route for everybody ----
+
+describe('scoreLegOption - what a legal option is actually worth', () => {
+  function priced(overrides: Partial<LegalLegOption> & { blockMinutes: number }): LegalLegOption {
+    return legOption({ routeId: 'r', departureIcao: 'EGKK', arrivalIcao: 'EGPH', ...overrides })
+  }
+
+  it('cannot score an option the backend did not price, and says so rather than calling it worthless', () => {
+    expect(scoreLegOption(priced({ blockMinutes: 65 }))).toBeNull()
+    expect(scoreLegOption(priced({ blockMinutes: 65, expectedNetProfit: null }))).toBeNull()
+  })
+
+  it('values a short sector by the four legs a day of it carries', () => {
+    // 65 min block: 08:00, 09:50, 11:40, 13:30 - the full four-leg cap inside one duty day.
+    expect(scoreLegOption(priced({ blockMinutes: 65, expectedNetProfit: 800 }))).toBe(3200)
+  })
+
+  it('values a long-haul sector by the two days one out-and-back actually costs', () => {
+    // 540 min block: the return cannot close the same day, so the pattern is two legs over two
+    // days - one leg a day, however handsome the sector is on its own.
+    expect(scoreLegOption(priced({ blockMinutes: 540, expectedNetProfit: 2000 }))).toBe(2000)
+  })
+
+  it('prefers the week that fills the aircraft over the single most profitable sector', () => {
+    // The whole point of scoring a DAY rather than a sector: a transatlantic worth 2.5x per sector
+    // is still the worse pattern when it leaves the airframe closing one round trip every two days.
+    const shortHop = scoreLegOption(priced({ blockMinutes: 65, expectedNetProfit: 800 }))
+    const longHaul = scoreLegOption(priced({ blockMinutes: 540, expectedNetProfit: 2000 }))
+    expect(shortHop).toBeGreaterThan(longHaul!)
+  })
+
+  it('does not credit a five-hour sector with a second round trip the duty day cannot hold', () => {
+    // 300 min block: a second departure at 19:30 still leaves before midnight, so "departs today"
+    // alone would say four legs - but it would land at 00:30, a 16.5-hour duty day the backend
+    // refuses. Two legs is the honest figure, and getting this wrong systematically over-rates
+    // long sectors.
+    expect(scoreLegOption(priced({ blockMinutes: 300, expectedNetProfit: 1000 }))).toBe(2000)
+  })
+
+  it('halves what a leg is worth once another pilot is already flying it - a shared market, not a ban', () => {
+    const alone = scoreLegOption(priced({ blockMinutes: 65, expectedNetProfit: 800 }))
+    const shared = scoreLegOption(priced({ blockMinutes: 65, expectedNetProfit: 800, scheduledLegsThisWeek: 1 }))
+    expect(shared).toBe(alone! / 2)
+  })
+})
+
+describe('buildStarterSchedule - the route is chosen for what it earns', () => {
+  // Two legs the aircraft could equally legally fly out of EGKK. The LESS profitable one is listed
+  // first on purpose: before this change the generator took whatever the backend listed first, so a
+  // test that passes only because of list order would prove nothing.
+  const thinOut = legOption({ routeId: 'r-thin-out', departureIcao: 'EGKK', arrivalIcao: 'EIDW', blockMinutes: 65, expectedNetProfit: 300 })
+  const thinBack = legOption({ routeId: 'r-thin-back', departureIcao: 'EIDW', arrivalIcao: 'EGKK', blockMinutes: 65, expectedNetProfit: 290 })
+  const richOut = legOption({ routeId: 'r-rich-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65, expectedNetProfit: 1200 })
+  const richBack = legOption({ routeId: 'r-rich-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65, expectedNetProfit: 1180 })
+
+  /** Both pairs on offer at 08:00; every later slot in the day offers both directions of both, so
+   *  whichever outbound wins can close its own round trips without the fixture steering it. */
+  function twoRoutesDeps(aircraft?: AircraftOptionsResponse) {
+    const responder = (time: string): LegOptionsResponse =>
+      time === '08:00'
+        ? { legal: [thinOut, richOut], illegal: [] }
+        : { legal: [thinOut, thinBack, richOut, richBack], illegal: [] }
+    return fakeDeps(
+      Object.fromEntries(STARTER_DAYS.map((day) => [day, responder])),
+      aircraft,
+    )
+  }
+
+  it('takes the most profitable legal leg, not the first one offered', async () => {
+    const outcome = await buildStarterSchedule(ROUTES, twoRoutesDeps())
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.legs[0]?.routeId).toBe('r-rich-out')
+    expect(outcome.result.week[1]?.legs).toHaveLength(4)
+  })
+
+  it('explains itself: the reason names the aircraft, the leg and what a sector of it earns', async () => {
+    const outcome = await buildStarterSchedule(ROUTES, twoRoutesDeps())
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.reason).toEqual({
+      registration: 'G-TEST',
+      departureIcao: 'EGKK',
+      arrivalIcao: 'EGPH',
+      profitPerSector: 1200,
+      otherPilotLegs: 0,
+    })
+  })
+
+  it('leaves the reason unset rather than inventing one when the backend priced nothing', async () => {
+    const unpricedOut = legOption({ routeId: 'r-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65 })
+    const unpricedBack = legOption({ routeId: 'r-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65 })
+    const deps = fakeDeps({ 1: () => ({ legal: [unpricedOut, unpricedBack], illegal: [] }) })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.reason).toBeNull()
+    // ...and the schedule itself is exactly what it always was: the first legal option.
+    expect(outcome.result.week[1]?.legs[0]?.routeId).toBe('r-out')
+  })
+
+  it('is still deterministic: the same airline in the same state suggests the same week twice', async () => {
+    const first = await buildStarterSchedule(ROUTES, twoRoutesDeps())
+    const second = await buildStarterSchedule(ROUTES, twoRoutesDeps())
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+    expect(stripIds(first.result.week)).toEqual(stripIds(second.result.week))
+    expect(first.result.reason).toEqual(second.result.reason)
+  })
+
+  it('never lets a profitable option carrying an alert past a clean one - ranking is among legal options only', async () => {
+    // The richest leg on offer is double-booked. Profit must not buy it a way past a warning the
+    // generator's own next action cannot resolve; the thin-but-clean pair is the right answer.
+    const richButBlocked = legOption({
+      routeId: 'r-rich-out',
+      departureIcao: 'EGKK',
+      arrivalIcao: 'EGPH',
+      blockMinutes: 65,
+      expectedNetProfit: 99_000,
+      warnings: [{ message: 'G-TEST is already flying EGKK -> EGPH at this time for another pilot.', severity: 'alert' }],
+    })
+    const deps = fakeDeps({
+      1: (time) => (time === '08:00'
+        ? { legal: [richButBlocked, thinOut], illegal: [] }
+        : { legal: [richButBlocked, thinOut, thinBack], illegal: [] }),
+    })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.legs[0]?.routeId).toBe('r-thin-out')
+  })
+})
+
+describe('buildStarterSchedule - two pilots do not get the same week', () => {
+  const richOut = legOption({ routeId: 'r-rich-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65, expectedNetProfit: 1000 })
+  const richBack = legOption({ routeId: 'r-rich-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65, expectedNetProfit: 980 })
+  const otherOut = legOption({ routeId: 'r-other-out', departureIcao: 'EGKK', arrivalIcao: 'EIDW', blockMinutes: 65, expectedNetProfit: 700 })
+  const otherBack = legOption({ routeId: 'r-other-back', departureIcao: 'EIDW', arrivalIcao: 'EGKK', blockMinutes: 65, expectedNetProfit: 690 })
+
+  /** `contendedLegs` is what the backend reports for the rich pair once the FIRST pilot's week has
+   *  been saved on it - the second pilot is asking the same question against a different world. */
+  function depsFor(contendedLegs: number) {
+    const rich = { ...richOut, scheduledLegsThisWeek: contendedLegs }
+    const responder = (time: string): LegOptionsResponse =>
+      time === '08:00'
+        ? { legal: [rich, otherOut], illegal: [] }
+        : { legal: [rich, richBack, otherOut, otherBack], illegal: [] }
+    return fakeDeps(Object.fromEntries(STARTER_DAYS.map((day) => [day, responder])))
+  }
+
+  it('hands the second pilot a different pair once the first is working the best one', async () => {
+    const firstPilot = await buildStarterSchedule(ROUTES, depsFor(0))
+    // Four legs a day, seven days: the rich pair now carries 28 of the first pilot's legs.
+    const secondPilot = await buildStarterSchedule(ROUTES, depsFor(28))
+
+    expect(firstPilot.ok && secondPilot.ok).toBe(true)
+    if (!firstPilot.ok || !secondPilot.ok) return
+
+    expect(firstPilot.result.week[1]?.legs[0]?.routeId).toBe('r-rich-out')
+    expect(secondPilot.result.week[1]?.legs[0]?.routeId).toBe('r-other-out')
+    expect(secondPilot.result.week[1]?.legs[0]?.routeId).not.toBe(firstPilot.result.week[1]?.legs[0]?.routeId)
+  })
+
+  it('still gives the second pilot the contended pair when it is genuinely the only legal one', async () => {
+    // The fall-back the design asks for: sharing a market is a reason to prefer something else, not
+    // a reason to hand back an empty week when there IS nothing else.
+    const rich = { ...richOut, scheduledLegsThisWeek: 28 }
+    const deps = fakeDeps({
+      1: (time) => (time === '08:00' ? { legal: [rich], illegal: [] } : { legal: [rich, richBack], illegal: [] }),
+    })
+
+    const outcome = await buildStarterSchedule(ROUTES, deps)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.result.week[1]?.legs[0]?.routeId).toBe('r-rich-out')
+    expect(outcome.result.legsAdded).toBeGreaterThan(0)
+    expect(outcome.result.reason?.otherPilotLegs).toBe(28)
+  })
+
+  it('gives the same aircraft type a different answer at a different base', async () => {
+    // Two identical airframes, one at EGKK and one at EGPH, each with its own market on its
+    // doorstep. Whichever one the aircraft ranking reaches for, the ROUTE it gets is the best one
+    // from where it is standing - "the most profitable route" is not a property of the route alone.
+    const fromEgkk = legOption({ routeId: 'r-egkk-out', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65, expectedNetProfit: 900 })
+    const toEgkk = legOption({ routeId: 'r-egkk-back', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65, expectedNetProfit: 880 })
+    const fromEgph = legOption({ routeId: 'r-egph-out', departureIcao: 'EGPH', arrivalIcao: 'EGKK', blockMinutes: 65, expectedNetProfit: 880 })
+    const toEgph = legOption({ routeId: 'r-egph-back', departureIcao: 'EGKK', arrivalIcao: 'EGPH', blockMinutes: 65, expectedNetProfit: 900 })
+
+    function depsForBase(location: 'EGKK' | 'EGPH'): StarterScheduleDeps {
+      // Only a leg departing where the aircraft actually stands can lead the chain - the backend
+      // would never offer the other direction at 08:00, so the fixture does not either.
+      const outbound = location === 'EGKK' ? fromEgkk : fromEgph
+      const inbound = location === 'EGKK' ? toEgkk : toEgph
+      return {
+        fetchAircraftOptions: vi.fn().mockResolvedValue(
+          aircraftOptions([{ fleetAircraftId: 'ac-1', registration: 'G-TWIN', aircraftTypeName: 'ATR 72-600', locationIcao: location, eligible: true, reason: null, scheduledLegsThisWeek: 0 }]),
+        ),
+        fetchLegOptions: vi.fn(async (day: DayOfWeek, time: string) => {
+          if (day !== 1) return { legal: [], illegal: [] }
+          return time === '08:00' ? { legal: [outbound], illegal: [] } : { legal: [outbound, inbound], illegal: [] }
+        }),
+      }
+    }
+
+    const atEgkk = await buildStarterSchedule(ROUTES, depsForBase('EGKK'))
+    const atEgph = await buildStarterSchedule(ROUTES, depsForBase('EGPH'))
+
+    expect(atEgkk.ok && atEgph.ok).toBe(true)
+    if (!atEgkk.ok || !atEgph.ok) return
+    expect(atEgkk.result.week[1]?.legs[0]?.routeId).toBe('r-egkk-out')
+    expect(atEgph.result.week[1]?.legs[0]?.routeId).toBe('r-egph-out')
+    expect(atEgkk.result.reason?.departureIcao).toBe('EGKK')
+    expect(atEgph.result.reason?.departureIcao).toBe('EGPH')
   })
 })

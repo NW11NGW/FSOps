@@ -22,13 +22,14 @@ import { LegDialog } from './LegDialog'
 import { MaintenanceSuspendToggle } from './MaintenanceSuspendToggle'
 import { OrphanedLegsDialog, type PendingRemoval } from './OrphanedLegsDialog'
 import { ScheduleGrid } from './ScheduleGrid'
-import { buildStarterSchedule, type StarterScheduleIssue } from './starterSchedule'
+import { buildStarterSchedule, type StarterScheduleIssue, type StarterScheduleReason } from './starterSchedule'
 import { WeeklySummary } from './WeeklySummary'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useFleetLite, useSchedule, fetchAircraftOptions, fetchLegOptions } from '@/hooks/useSchedule'
 import { useRoutes } from '@/hooks/useRoutes'
+import { useSettings } from '@/hooks/useSettings'
 import type { PilotSummary } from '@/types/pilot'
 import type { DayOfWeek } from '@/types/schedule'
 
@@ -93,6 +94,21 @@ function describeStarterScheduleIssue(issue: StarterScheduleIssue): { message: s
   }
 }
 
+/**
+ * One sentence saying why this pilot got this route, from the generator's own structured reason -
+ * see starterSchedule.ts's `scoreLegOption`. A suggestion the player cannot interrogate is a
+ * suggestion they have to take on trust, and "why did FSOps put G-FWLY on Bristol - Edinburgh"
+ * deserves an answer that names the money and the airframe rather than a shrug. `money` is passed
+ * in from `useSettings().fmt` so the figure is shown in the player's own currency.
+ */
+function describeStarterScheduleReason(reason: StarterScheduleReason, money: (value: number) => string): string {
+  const leg = `${reason.departureIcao} - ${reason.arrivalIcao}`
+  const shared = reason.otherPilotLegs > 0
+    ? ' It still wins despite sharing that market with another pilot already flying it.'
+    : ''
+  return `${leg} is the most profitable leg ${reason.registration} can fly from ${reason.departureIcao} - about ${money(reason.profitPerSector)} a sector.${shared}`
+}
+
 /** The full weekly schedule builder for one pilot: loads their saved schedule and the airline's
  *  fleet/routes, holds an editable draft (aircraft-per-duty-day), and drives the grid, the
  *  aircraft/leg picker dialog, and save. */
@@ -100,6 +116,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   const schedule = useSchedule(pilot.id)
   const routesQuery = useRoutes()
   const fleetQuery = useFleetLite()
+  const { fmt } = useSettings()
 
   const [week, setWeek] = useState<DraftWeek>({})
   const [savedSignature, setSavedSignature] = useState('')
@@ -114,6 +131,10 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
    *  so it will not begin flying until the airframe is back). Never an error, never blocking. */
   const [saveAdvisories, setSaveAdvisories] = useState<string[]>([])
   const [suggestionIssue, setSuggestionIssue] = useState<StarterScheduleIssue | null>(null)
+  /** Why the last suggestion chose what it chose - cleared the moment the draft changes, for the
+   *  same reason the failure banner is (see `updateWeek`): it is a verdict on ONE draft, and a
+   *  stale explanation of a week that no longer exists is worse than none. */
+  const [suggestionReason, setSuggestionReason] = useState<StarterScheduleReason | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null)
   const initializedForPilot = useRef<string | null>(null)
 
@@ -128,6 +149,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setAutoSuspendOnMaintenance(schedule.autoSuspendOnMaintenance)
     setSavedAutoSuspendOnMaintenance(schedule.autoSuspendOnMaintenance)
     setSuggestionIssue(null)
+    setSuggestionReason(null)
     setPendingRemoval(null)
     initializedForPilot.current = pilot.id
   }, [schedule.status, schedule.dutyDays, schedule.autoSuspendOnMaintenance, pilot.id])
@@ -150,6 +172,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setWeek(next)
     setSaveFailure(null)
     setSuggestionIssue(null)
+    setSuggestionReason(null)
     setSaveAdvisories([])
   }
 
@@ -256,6 +279,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
   async function handleUseSuggestion() {
     setSuggesting(true)
     setSuggestionIssue(null)
+    setSuggestionReason(null)
     try {
       const outcome = await buildStarterSchedule(routesQuery.routes, {
         fetchAircraftOptions: (day) => fetchAircraftOptions(pilot.id, day),
@@ -266,6 +290,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
         return
       }
       setWeek(outcome.result.week)
+      setSuggestionReason(outcome.result.reason)
       const { legsAdded, daysUsed } = outcome.result
       toast.success(
         `Added ${legsAdded} leg${legsAdded === 1 ? '' : 's'} across ${daysUsed} day${daysUsed === 1 ? '' : 's'} - review and save when ready.`,
@@ -346,6 +371,20 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
             </Button>
           }
         />
+      )}
+
+      {/* Why the suggestion picked this route for this aircraft. A notice, never a warning:
+          nothing is wrong, the player is simply owed the reasoning behind a week someone else
+          built for them - and it is the thing that makes "why did my two pilots get different
+          routes" answerable at a glance. */}
+      {suggestionReason && (
+        <div
+          data-testid="starter-schedule-reason"
+          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+        >
+          <Sparkles className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 break-words">{describeStarterScheduleReason(suggestionReason, fmt.money)}</span>
+        </div>
       )}
 
       {suggestionIssueDescription && (

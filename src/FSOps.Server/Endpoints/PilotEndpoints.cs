@@ -497,6 +497,14 @@ public static class PilotEndpoints
     /// an unclosed week outright, so a warning shown here is a promise the player still has to keep
     /// before the week can actually be saved, never a permission slip.
     /// </para>
+    /// <para>
+    /// <b>Every legal option also carries what it is worth.</b> <c>expectedNetProfit</c> is one
+    /// sector's expected profit on that route flown by THIS aircraft, and
+    /// <c>scheduledLegsThisWeek</c> is how many legs other pilots already fly on it. Both are
+    /// informational, exactly like <c>aircraftPosition</c> - they are what lets a caller rank the
+    /// options it has been given, and neither has any say in which options it is given. See where
+    /// they are computed below for how they are derived and why they are aircraft-specific.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> GetLegOptionsAsync(
         Guid id, LegOptionsRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
@@ -608,6 +616,64 @@ public static class PilotEndpoints
             .Select(e => routesById.TryGetValue(e.RouteId, out var r) ? r.ArrivalIcao : null)
             .FirstOrDefault() ?? fleetAircraft.LocationIcao;
 
+        // What each candidate route would actually EARN, flown by THIS aircraft. Deliberately not a
+        // second economic model: the same ReferenceFareCalculator / DemandCalculator /
+        // FlightEconomicsCalculator chain the weekly summary below and FlightEconomicsPoster (the
+        // real, money-moving path) both run, so a figure quoted here can never disagree with what
+        // the sector eventually posts to the ledger for reasons of its own.
+        //
+        // <b>Informational only.</b> Nothing about this decides whether an option is legal - every
+        // route is still tested by PilotScheduleValidator exactly as before, and a route with a
+        // magnificent profit and a conflict is still illegal. It exists so callers can RANK options
+        // that are already legal: the "Suggest a starter schedule" generator picks the most
+        // profitable leg the aircraft can fly rather than merely the first legal one.
+        //
+        // <b>Aircraft-specific by construction</b>, which is the whole point: seats feed the booking
+        // model, MTOW feeds the fee lines, and block time - resolved against this airframe, exactly
+        // as blockMinutes below is - feeds crew, maintenance and fuel burn. The same city pair is
+        // therefore genuinely worth different money to different airframes, which is what makes
+        // "the most profitable route for THIS aircraft" a different question from "the best route".
+        var worldSeed = await FlightEconomicsPoster.ResolveWorldSeedAsync(db, ct);
+        var pricedAtUtc = DateTimeOffset.UtcNow;
+        var netProfitByRouteId = new Dictionary<Guid, decimal>();
+        if (aircraftTypesById.TryGetValue(fleetAircraft.AircraftTypeId, out var chosenType))
+        {
+            foreach (var route in routes)
+            {
+                // A zero-distance route would make DemandCalculator throw (it has no market to
+                // speak of anyway), and a world-data gap leaves an airport unresolvable - either
+                // way the honest answer is "no figure", never a guessed one.
+                if (route.DistanceNm <= 0 ||
+                    !airportsByIcao.TryGetValue(route.DepartureIcao, out var departureAirport) ||
+                    !airportsByIcao.TryGetValue(route.ArrivalIcao, out var arrivalAirport))
+                {
+                    continue;
+                }
+
+                var plan = RoutePreviewCalculator.Calculate(economyConfig, departureAirport, arrivalAirport, chosenType, airline.StrategyProfile);
+                var referenceFare = ReferenceFareCalculator.Calculate(economyConfig, airline.StrategyProfile, route.DistanceNm);
+                var marketDemandPax = DemandCalculator.AvailablePassengers(
+                    economyConfig.Demand, departureAirport.SizeCategory, arrivalAirport.SizeCategory, route.DistanceNm, pricedAtUtc, airline.ReputationScore);
+                var pricePerKg = FuelPricing.PricePerKg(economyConfig.Fuel, departureAirport.Icao, departureAirport.Country, pricedAtUtc, worldSeed);
+
+                var economics = FlightEconomicsCalculator.Calculate(
+                    economyConfig, airline.StrategyProfile, route.BaseFare, referenceFare, chosenType.PaxCapacity, marketDemandPax,
+                    chargedFuelKg: plan.FuelBreakdown.ChargedFuelKg, pricePerKgAtDepartureAirport: pricePerKg,
+                    arrivalAirport.SizeCategory, chosenType.MtowTonnes, plan.BlockTimeBreakdown.TotalMinutes / 60.0);
+
+                netProfitByRouteId[route.Id] = Math.Round(economics.NetProfit, 2);
+            }
+        }
+
+        // How hard the rest of the airline already works this leg. OTHER pilots' saved entries only,
+        // never this pilot's draft - a count that climbed as the generator built would make one
+        // week's own days disagree with each other, and the whole week is meant to be one repeating
+        // pattern out of one base. A city pair's market is finite, so this is what lets a caller
+        // treat the second pilot put on the same pair as worth less than the first.
+        var otherPilotLegsByRouteId = otherEntries
+            .GroupBy(e => e.RouteId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         var legal = new List<object>();
         var illegal = new List<object>();
 
@@ -663,7 +729,19 @@ public static class PilotEndpoints
             // which is why an ATR duty day could show an A320's faster block time right up until
             // save recomputed it against the real airframe and the number visibly jumped.
             var blockMinutes = blockMinutesByLeg.TryGetValue((candidate.RouteId, fleetAircraftId), out var minutes) ? (int?)minutes : null;
-            legal.Add(new { routeId = candidate.RouteId, route.DepartureIcao, route.ArrivalIcao, route.FlightNumber, blockMinutes, warnings });
+            var expectedNetProfit = netProfitByRouteId.TryGetValue(candidate.RouteId, out var profit) ? (decimal?)profit : null;
+            otherPilotLegsByRouteId.TryGetValue(candidate.RouteId, out var scheduledLegsThisWeek);
+            legal.Add(new
+            {
+                routeId = candidate.RouteId,
+                route.DepartureIcao,
+                route.ArrivalIcao,
+                route.FlightNumber,
+                blockMinutes,
+                expectedNetProfit,
+                scheduledLegsThisWeek,
+                warnings,
+            });
         }
 
         return Results.Ok(new { legal, illegal, aircraftPosition });

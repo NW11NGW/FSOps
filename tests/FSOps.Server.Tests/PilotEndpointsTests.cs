@@ -620,6 +620,101 @@ public class PilotEndpointsTests
     }
 
     [Fact]
+    public async Task LegOptions_LegalOption_CarriesWhatThatSectorEarnsForTheChosenAircraft()
+    {
+        // "The most profitable route for THAT aircraft" only means anything if a route's worth is
+        // resolved against the airframe actually flying it - seats feed the booking model, weight
+        // feeds the fee lines, and block time feeds crew, maintenance and fuel. Proven the same way
+        // block time is above: identical route, two very different airframes, two different figures.
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, _) = await SeedRoundTripRoutesAsync(ctx);
+        var bigAircraftId = await FleetAircraftIdAsync(ctx); // RouteTestContext's A320neo
+        await ReleaseReservationAsync(ctx, bigAircraftId);
+
+        var smallType = new AircraftType
+        {
+            Id = Guid.NewGuid(), IcaoType = "ATR72", Family = "ATR", Manufacturer = "ATR", Name = "ATR 72-600",
+            PaxCapacity = 70, RangeNm = 900, CruiseTasKts = 275, FuelBurnKgPerHour = 700, MtowTonnes = 23.0,
+            MinRunwayFt = 3500, ServiceCeilingFt = 25000, PurchasePrice = 20_000_000m, MonthlyLeaseRate = 100_000m, MatchPatterns = "[]",
+        };
+        ctx.Db.AircraftTypes.Add(smallType);
+        var smallAircraft = new FleetAircraft
+        {
+            Id = Guid.NewGuid(), AirlineId = ctx.Airline.Id, AircraftTypeId = smallType.Id, Registration = "G-SMAL",
+            Ownership = AircraftOwnership.Owned, LocationIcao = "EGGD", Status = FleetAircraftStatus.Active,
+            ReservedForPlayer = false, CreatedUtc = DateTimeOffset.UtcNow,
+        };
+        ctx.Db.FleetAircraft.Add(smallAircraft);
+        await ctx.Db.SaveChangesAsync();
+
+        var bigResult = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", bigAircraftId, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var smallResult = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(1, "06:00", smallAircraft.Id, null), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var bigOption = Assert.Single(OkValueOf<LegOptionsDto>(bigResult).Legal, l => l.RouteId == outbound.Id);
+        var smallOption = Assert.Single(OkValueOf<LegOptionsDto>(smallResult).Legal, l => l.RouteId == outbound.Id);
+
+        Assert.NotNull(bigOption.ExpectedNetProfit);
+        Assert.NotNull(smallOption.ExpectedNetProfit);
+        Assert.NotEqual(bigOption.ExpectedNetProfit, smallOption.ExpectedNetProfit);
+        // Nothing about this may change what is on OFFER - both airframes can fly this sector, and
+        // the figure is only ever a way to rank options that are already legal.
+        Assert.Empty(bigOption.Warnings);
+        Assert.Empty(smallOption.Warnings);
+    }
+
+    [Fact]
+    public async Task LegOptions_LegalOption_CountsHowManyLegsOtherPilotsAlreadyFlyOnIt_NotTheCallersOwnDraft()
+    {
+        // A city pair's market is finite, so "another pilot is already working this one" is the
+        // signal that stops every virtual pilot being handed the same week. It must count only
+        // OTHER pilots' saved legs: counting the caller's own draft would make the count climb as
+        // the starter-schedule generator built, and one week's own days would stop agreeing.
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var dave = await HirePilotAsync(ctx, catalog);
+        var jenny = await SeedExtraPilotAsync(ctx, "Jenny");
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var firstAircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, firstAircraftId);
+        var secondAircraftId = await LeaseSecondAircraftAsync(ctx, catalog);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(await PilotEndpoints.SaveScheduleAsync(
+            jenny.Id,
+            new SaveScheduleRequest(new[]
+            {
+                new DutyDayRequest(1, secondAircraftId, new[]
+                {
+                    new DutyLegRequest("08:00:00", outbound.Id),
+                    new DutyLegRequest("12:00:00", inbound.Id),
+                }),
+            }),
+            ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None)));
+
+        // Dave's own draft already flies both legs too - a closed Wednesday round trip, so the
+        // aircraft is back at EGGD and both routes are still legal for the Friday slot below. If the
+        // draft counted, each leg would read 2 rather than the 1 Jenny actually accounts for.
+        var daveDraft = new[]
+        {
+            new DutyDayRequest(3, firstAircraftId, new[]
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("10:00:00", inbound.Id),
+            }),
+        };
+
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            dave.Id, new LegOptionsRequest(5, "06:00", firstAircraftId, daveDraft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var value = OkValueOf<LegOptionsDto>(result);
+        var outboundOption = Assert.Single(value.Legal, l => l.RouteId == outbound.Id);
+        Assert.Equal(1, outboundOption.ScheduledLegsThisWeek);
+    }
+
+    [Fact]
     public async Task LegOptions_WrongAirportIsStillIllegal_WithItsReason()
     {
         // Geographic continuity within the drafted day must still be enforced even with closure
@@ -1399,7 +1494,9 @@ public class PilotEndpointsTests
 
     private sealed record LegOptionsDto(List<LegOptionDto> Legal, List<IllegalLegOptionDto> Illegal);
 
-    private sealed record LegOptionDto(Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber, int? BlockMinutes, List<LegWarningDto> Warnings);
+    private sealed record LegOptionDto(
+        Guid RouteId, string DepartureIcao, string ArrivalIcao, string? FlightNumber, int? BlockMinutes,
+        decimal? ExpectedNetProfit, int ScheduledLegsThisWeek, List<LegWarningDto> Warnings);
 
     private sealed record LegWarningDto(string Message, string Severity);
 

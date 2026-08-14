@@ -27,6 +27,14 @@ import { minutesToTime, timeToMinutes } from '@/types/schedule'
  * ever tried was one parked away from every route and already flown hard by another pilot - while a
  * second, idle airframe sitting at the hub every route touches would have succeeded immediately.
  *
+ * <b>The route is chosen for what it earns, not just for being allowed.</b> Every option this
+ * module considers is one the backend has already called legal; among those it takes the most
+ * valuable rather than the first (see {@link scoreLegOption}). This is what stops every virtual
+ * pilot in an airline being handed the same week: they used to all solve the identical "what is
+ * legal from here" question and unavoidably get the identical answer. Ranking never widens what is
+ * on offer - an option carrying an alert is still refused, a base airport is still fixed for the
+ * whole week, and a day the backend will not close is still abandoned.
+ *
  * <b>At most four legs a day - a ceiling on the GENERATOR only.</b> {@link MAX_LEGS_PER_GENERATED_DAY}
  * caps how many legs one calendar day can be offered here (two return trips); hand-building
  * through the picker can still go further, that is a different path this module has no say over.
@@ -77,6 +85,19 @@ const MAX_LEGS_PER_GENERATED_DAY = 4
 
 const MINUTES_PER_DAY = 24 * 60
 
+/**
+ * Mirrors `SchedulingConfig.MaxDutyHoursPerDay` (13 hours, backend) purely so {@link estimateDayShape}
+ * can guess how much of a duty day a sector would fill when RANKING routes.
+ *
+ * This number never decides what is proposed. Every leg the generator actually offers is still
+ * confirmed legal by the backend, which applies the real duty rule against the real config; if this
+ * constant ever drifted from that config the only consequence would be two routes ordered slightly
+ * wrongly, never an illegal leg or a widened rule. It is here because ignoring duty length entirely
+ * would systematically over-rate long sectors - a 5-hour sector reads as three legs a day if you
+ * only ask "does the next departure still land before midnight", when the real answer is two.
+ */
+const DUTY_ESTIMATE_MINUTES = 13 * 60
+
 /** Everything the generator needs from the network, injected so it can be driven by canned
  *  responses in tests. Mirrors `fetchAircraftOptions`/`fetchLegOptions` from `useSchedule.ts`
  *  minus the pilot id, which the caller already has bound in. */
@@ -105,10 +126,30 @@ export type StarterScheduleIssue =
   | { kind: 'no-legal-schedule' }
   | { kind: 'check-failed' }
 
+/**
+ * Why the generator picked what it picked, in the handful of facts a one-sentence explanation
+ * needs. Deliberately structured rather than a finished string: money has to be rendered in the
+ * player's chosen currency (see `useSettings().fmt.money`), which is a display concern this module
+ * has no business knowing about. Null when the backend supplied no profit figures at all, in which
+ * case there is genuinely nothing to explain beyond "it was legal" - see {@link scoreLegOption}.
+ */
+export interface StarterScheduleReason {
+  registration: string
+  departureIcao: string
+  arrivalIcao: string
+  /** One sector's expected net profit in base currency, straight from the backend's economy. */
+  profitPerSector: number
+  /** How many legs other pilots already fly on this exact leg. Zero for the ordinary case; above
+   *  zero means this was chosen despite a market it now shares, which is worth saying out loud. */
+  otherPilotLegs: number
+}
+
 export interface StarterScheduleBuilt {
   week: DraftWeek
   legsAdded: number
   daysUsed: number
+  /** See {@link StarterScheduleReason} - null when no option carried a profit figure. */
+  reason: StarterScheduleReason | null
 }
 
 export type StarterScheduleOutcome = { ok: true; result: StarterScheduleBuilt } | { ok: false; issue: StarterScheduleIssue }
@@ -118,6 +159,66 @@ export type StarterScheduleOutcome = { ok: true; result: StarterScheduleBuilt } 
  *  chain at all - see {@link rankAircraftForStarterSchedule}. */
 export interface StarterScheduleRoute {
   departureIcao: string
+}
+
+/**
+ * How much of a duty day one out-and-back on a sector of this length would fill, using EXACTLY the
+ * arithmetic {@link buildChain} already uses to place the next departure (08:00 start, block time
+ * plus {@link LEG_GAP_MINUTES}, must still depart the same calendar day, at most
+ * {@link MAX_LEGS_PER_GENERATED_DAY} legs), plus the duty-length estimate above.
+ *
+ * A ranking aid, never a rule: the backend still decides every leg. It exists because "most
+ * profitable" is a question about a WEEK, not a sector - a 9-hour transatlantic that nets four
+ * times what a 65-minute hop does is still the worse pattern if the hop closes two round trips a
+ * day and the transatlantic takes two days to close one. Returning legs-per-cycle and
+ * days-per-cycle separately lets {@link scoreLegOption} compare the two on the same footing.
+ */
+function estimateDayShape(blockMinutes: number): { legs: number; days: number } {
+  const start = timeToMinutes(`${STARTER_TIME}:00`)
+  const dutyEnd = start + DUTY_ESTIMATE_MINUTES
+
+  const fits = (departure: number) => departure < MINUTES_PER_DAY && departure + blockMinutes <= dutyEnd
+
+  const returnStart = start + blockMinutes + LEG_GAP_MINUTES
+  if (!fits(returnStart)) {
+    // The long-haul shape: one leg out, closed by a return the NEXT day. Two legs, two days.
+    return { legs: 2, days: 2 }
+  }
+
+  const secondOutStart = returnStart + blockMinutes + LEG_GAP_MINUTES
+  const secondReturnStart = secondOutStart + blockMinutes + LEG_GAP_MINUTES
+  const twoRoundTrips = MAX_LEGS_PER_GENERATED_DAY >= 4 && fits(secondOutStart) && fits(secondReturnStart)
+  return { legs: twoRoundTrips ? 4 : 2, days: 1 }
+}
+
+/**
+ * What one legal option is worth per day of the aircraft's week. Three things, in one number a
+ * player can be told in a sentence:
+ *
+ * 1. <b>What the sector earns.</b> `expectedNetProfit` is the backend's own economy engine - the
+ *    same fare, demand, fee and fuel model that eventually posts to the ledger - resolved against
+ *    THIS airframe, so seats, weight and block time all count. That is what makes the answer
+ *    different for a 70-seat turboprop and a 180-seat narrowbody standing at the same gate.
+ * 2. <b>How much of the week it can fill.</b> Multiplied by the legs a day of it would carry and
+ *    divided by the days that costs (see {@link estimateDayShape}), so a magnificent sector that
+ *    leaves the aircraft parked for a day does not beat an ordinary one flown four times.
+ * 3. <b>Who else is already flying it.</b> A city pair's market is finite, so a leg N other pilots
+ *    already work is shared N + 1 ways. This is a diminishing return, deliberately not a ban: the
+ *    second pilot on a pair is worth less than the first, so an alternative that is anywhere near
+ *    as good wins - but a pair that is genuinely the only thing worth flying is still flown, which
+ *    is exactly the fall-back the design calls for.
+ *
+ * `null` means "this option cannot be scored" (an older server, or a route the backend could not
+ * price), never "worth nothing" - callers must fall back to their previous ordering rather than
+ * treating an unpriced option as a zero-profit one.
+ */
+export function scoreLegOption(option: LegalLegOption): number | null {
+  const profit = option.expectedNetProfit
+  if (profit === null || profit === undefined || !Number.isFinite(profit)) return null
+
+  const shape = estimateDayShape(option.blockMinutes ?? 60)
+  const sharedWith = Math.max(0, option.scheduledLegsThisWeek ?? 0)
+  return (profit * shape.legs) / shape.days / (1 + sharedWith)
 }
 
 /**
@@ -171,6 +272,11 @@ export function rankAircraftForStarterSchedule<T extends { locationIcao: string;
  * none of them yielded a single leg - it now means what it says, rather than "the one aircraft we
  * happened to ask about was busy". A partial week (some days legal, some not) is a success, not a
  * failure: the days that fit are handed back and the rest are simply left empty for the player.
+ *
+ * <b>Which ROUTE that aircraft flies is decided by {@link scoreLegOption}</b>, so two pilots with
+ * two aircraft do not both end up on the airline's single most obvious city pair. Nothing about
+ * that is random: the ranking is a pure function of figures the backend supplied, so the same
+ * airline in the same state always suggests the same week.
  */
 export async function buildStarterSchedule(
   routes: readonly StarterScheduleRoute[],
@@ -233,6 +339,10 @@ async function buildWeekFor(
   const usedDays = new Set<DayOfWeek>()
   let legsAdded = 0
   let daysUsed = 0
+  /** The option the FIRST chain led with - the one whose value actually decided this week's shape,
+   *  and therefore the only honest thing to quote as the reason. Every later day departs the same
+   *  base and is scored the same way, so in practice it is the same leg every day. */
+  let reason: StarterScheduleReason | null = null
 
   // Every day this generator builds must be an out-and-back from the SAME airport, and that is the
   // whole reason its weeks close. Defect caught in testing, 2026-08-13: each day was built
@@ -255,6 +365,7 @@ async function buildWeekFor(
       if (chain) {
         built = chain.week
         baseIcao ??= chain.baseIcao
+        reason ??= reasonFor(aircraft.registration, chain.leadOption)
         for (const usedDay of chain.days) usedDays.add(usedDay)
         legsAdded += chain.legsAdded
         daysUsed += chain.days.length
@@ -266,7 +377,21 @@ async function buildWeekFor(
     }
   }
 
-  return { week: built, legsAdded, daysUsed }
+  return { week: built, legsAdded, daysUsed, reason }
+}
+
+/** The reason, or null when this option carried no profit figure - see {@link StarterScheduleReason}
+ *  for why an unpriced option is left unexplained rather than explained with a made-up number. */
+function reasonFor(registration: string, option: LegalLegOption): StarterScheduleReason | null {
+  const profit = option.expectedNetProfit
+  if (profit === null || profit === undefined || !Number.isFinite(profit)) return null
+  return {
+    registration,
+    departureIcao: option.departureIcao,
+    arrivalIcao: option.arrivalIcao,
+    profitPerSector: profit,
+    otherPilotLegs: Math.max(0, option.scheduledLegsThisWeek ?? 0),
+  }
 }
 
 /**
@@ -286,7 +411,7 @@ async function buildChain(
    *  `null` only for that very first chain, which is free to start wherever the aircraft is. See
    *  {@link buildWeekFor} for why this is what keeps the generated week closed. */
   baseIcao: string | null,
-): Promise<{ week: DraftWeek; days: DayOfWeek[]; legsAdded: number; baseIcao: string } | null> {
+): Promise<{ week: DraftWeek; days: DayOfWeek[]; legsAdded: number; baseIcao: string; leadOption: LegalLegOption } | null> {
   const dayWithAircraft = setDayAircraft(weekSoFar, day, aircraft.fleetAircraftId, aircraft.registration)
 
   const outboundOptions = await deps.fetchLegOptions(day, STARTER_TIME, aircraft.fleetAircraftId, draftWeekToInput(dayWithAircraft))
@@ -321,7 +446,7 @@ async function buildChain(
         }
       }
 
-      return { week, days: [day], legsAdded: legs, baseIcao: base }
+      return { week, days: [day], legsAdded: legs, baseIcao: base, leadOption: outboundPick }
     }
   }
 
@@ -346,7 +471,7 @@ async function buildChain(
   const nextReturnBlock = nextReturnPick.blockMinutes ?? 60
   nextWeek = addLegToDay(nextWeek, nextDay, draftLegFromOption(nextReturnPick, STARTER_TIME, nextReturnBlock))
 
-  return { week: nextWeek, days: [day, nextDay], legsAdded: 2, baseIcao: base }
+  return { week: nextWeek, days: [day, nextDay], legsAdded: 2, baseIcao: base, leadOption: outboundPick }
 }
 
 /** The third and fourth legs of a day already closed once - both-or-nothing, so a duty day this
@@ -404,16 +529,44 @@ function isBlockingWarning(option: LegalLegOption): boolean {
   return option.warnings.some((warning) => warning.severity === 'alert')
 }
 
-/** The best legal option to lead a chain with: one that is completely unencumbered if there is one,
- *  otherwise the first whose only warnings are the resolvable kind (see {@link isBlockingWarning}).
- *  Preferring the clean option keeps every case that already worked behaving exactly as it did.
- *  `baseIcao`, once the week has one, restricts this to legs departing that airport - see
- *  {@link buildWeekFor} for why every day has to leave from the same place. */
+/**
+ * The best legal option to lead a chain with. Two tiers, in this order, and the order matters:
+ *
+ * 1. <b>Encumbrance first.</b> A completely unencumbered option always beats one carrying even a
+ *    resolvable warning, exactly as before profit entered into this. Profit never promotes a
+ *    warned option over a clean one - what a leg is worth is a question about legal options, not a
+ *    reason to prefer a more complicated one.
+ * 2. <b>Then value.</b> Within a tier, the highest {@link scoreLegOption} wins. Options the backend
+ *    could not price are not treated as worthless: if NOTHING in the tier can be scored the first
+ *    one is taken, which is precisely the behaviour this function had before, so an older server or
+ *    a world-data gap degrades to the old ordering rather than to a bad one.
+ *
+ * `baseIcao`, once the week has one, restricts this to legs departing that airport - see
+ * {@link buildWeekFor} for why every day has to leave from the same place.
+ */
 function legalOptionOf(options: LegalLegOption[], baseIcao: string | null): LegalLegOption | undefined {
   const candidates = baseIcao === null
     ? options
     : options.filter((option) => option.departureIcao.toUpperCase() === baseIcao.toUpperCase())
-  return candidates.find((option) => option.warnings.length === 0) ?? candidates.find((option) => !isBlockingWarning(option))
+  return mostValuableOf(candidates.filter((option) => option.warnings.length === 0))
+    ?? mostValuableOf(candidates.filter((option) => !isBlockingWarning(option)))
+}
+
+/** Highest-scoring option in one tier, falling back to the first when none of them can be scored.
+ *  Ties keep the earlier option, so the result is a total order and two identical runs always agree
+ *  - the determinism the whole module is built on (see this module's own doc). */
+function mostValuableOf(tier: LegalLegOption[]): LegalLegOption | undefined {
+  let best: LegalLegOption | undefined
+  let bestScore: number | null = null
+  for (const option of tier) {
+    const score = scoreLegOption(option)
+    if (score === null) continue
+    if (bestScore === null || score > bestScore) {
+      best = option
+      bestScore = score
+    }
+  }
+  return best ?? tier[0]
 }
 
 /** The option that flies the exact reverse of `outbound` - the only shape this generator ever
