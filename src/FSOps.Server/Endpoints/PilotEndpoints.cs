@@ -41,6 +41,7 @@ public static class PilotEndpoints
         group.MapDelete("/pilots/{id:guid}", ReleaseAsync);
         group.MapGet("/pilots/{id:guid}/schedule", GetScheduleAsync);
         group.MapPut("/pilots/{id:guid}/schedule", SaveScheduleAsync);
+        group.MapPost("/pilots/{id:guid}/schedule/preview", PreviewScheduleAsync);
         group.MapPost("/pilots/{id:guid}/schedule/aircraft-options", GetAircraftOptionsAsync);
         group.MapPost("/pilots/{id:guid}/schedule/leg-options", GetLegOptionsAsync);
         group.MapGet("/pilots/schedule/overview", GetScheduleOverviewAsync);
@@ -422,40 +423,11 @@ public static class PilotEndpoints
 
         var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
         var otherEntries = await LoadOtherPilotsEntriesAsync(db, airline.Id, excludingPilotId: pilot.Id, ct);
-        var unionEntries = otherEntries.Concat(proposed).ToList();
 
-        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs, airportsByIcao) = await BuildValidationDataAsync(db, airline, economyConfig, unionEntries, ct);
-
-        // requireWeekClosure: true - a SAVED week must genuinely repeat indefinitely, so Saturday's
-        // last leg on an aircraft has to connect back to Sunday's first. Unlike the leg-options
-        // endpoint below, which is deliberately
-        // asking a narrower, per-leg question about a week still under construction. Never weaken
-        // this.
-        var result = PilotScheduleValidator.Validate(unionEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
-        if (!result.IsValid)
+        var evaluation = await EvaluateProposedWeekAsync(db, airline, economyConfig, otherEntries, proposed, ct);
+        if (evaluation.Conflicts.Count > 0)
         {
-            // Only what THIS save actually introduces. Validating airline-wide is right and stays
-            // (an aircraft's chain and double-booking span every pilot), but reporting airline-wide
-            // is not: a conflict that is equally true whether or not this pilot's week is saved was
-            // not caused by it, cannot be fixed from the screen the player is looking at, and may
-            // name an aircraft that appears nowhere in the week in front of them. Real-use defect,
-            // 2026-08-13: saving one virtual pilot's week was refused with "G-NZHG is at LFPG, but
-            // this pattern's first leg departs EGGD" while every day on screen showed a different
-            // airframe entirely - the conflict belonged to ANOTHER pilot's already-saved schedule.
-            // Same "before" vs "after" set difference GetLegOptionsAsync has always used to tell a
-            // genuine disqualifier from a pre-existing one; nothing is relaxed, because a save that
-            // genuinely worsens another pilot's chain produces a conflict sentence that is NOT in
-            // the baseline (different aircraft, airports or times) and is therefore still refused,
-            // and the other pilot's own save still faces their own conflict exactly as before.
-            var preExisting = PilotScheduleValidator
-                .Validate(otherEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true)
-                .Conflicts.ToHashSet();
-            var introduced = result.Conflicts.Where(c => !preExisting.Contains(c)).ToList();
-
-            if (introduced.Count > 0)
-            {
-                return Results.BadRequest(new { error = "This schedule has conflicts.", conflicts = introduced });
-            }
+            return Results.BadRequest(new { error = "This schedule has conflicts.", conflicts = evaluation.Conflicts });
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -497,6 +469,110 @@ public static class PilotEndpoints
         var savedEntries = await db.PilotScheduleEntries.Where(e => e.PilotScheduleId == schedule.Id).ToListAsync(ct);
         var dto = await BuildDutyDayDtosAsync(db, savedEntries, ct);
 
+        return Results.Ok(new { pilotId = pilot.Id, dutyDays = dto, autoSuspendOnMaintenance = schedule.AutoSuspendOnMaintenance, advisories = evaluation.Advisories });
+    }
+
+    /// <summary>
+    /// What <see cref="SaveScheduleAsync"/> WOULD say about a proposed week, without writing a
+    /// single row. Same pilot, same request shape, same validator, same airline-wide merge, same
+    /// "only what this week introduces" differential - it is literally the save path's own
+    /// evaluation step (<see cref="EvaluateProposedWeekAsync"/>) with the persistence left off, so
+    /// there is no possibility of a preview disagreeing with the save it is previewing.
+    /// <para>
+    /// It exists for "copy this day onto those days" (see CopyDayDialog). A pasted duty day is not
+    /// automatically legal - Monday's chain out of EGGD only works on Wednesday if the aircraft is
+    /// at EGGD on Wednesday morning, which depends entirely on what Tuesday did - and the three ways
+    /// of handling that are refusing outright (safe, but leaves the player doing by hand the exact
+    /// work they asked to be spared), pasting anyway and letting Save fail later (worse: it moves the
+    /// failure away from the action that caused it), or showing what the paste would do BEFORE it is
+    /// committed. This endpoint is what makes the third possible. It is a read-only question about a
+    /// hypothetical week; nothing about it relaxes any rule, because it does not have its own copy of
+    /// any rule to relax.
+    /// </para>
+    /// </summary>
+    internal static async Task<IResult> PreviewScheduleAsync(
+        Guid id, SaveScheduleRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
+    {
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.BadRequest(new { error = "Create an airline before building a schedule." });
+        }
+
+        var pilot = await db.Pilots.FirstOrDefaultAsync(p => p.Id == id && p.AirlineId == airline.Id, ct);
+        if (pilot is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (pilot.IsPlayer)
+        {
+            return Results.BadRequest(new { error = "The player pilot cannot be given a standing schedule - they fly whatever they choose from the Fly screen." });
+        }
+
+        var (parseError, proposed) = ParseDutyDays(pilot.Id, request.DutyDays);
+        if (parseError is not null)
+        {
+            return Results.BadRequest(new { error = parseError });
+        }
+
+        var economyConfig = economyConfigCatalog.Get(airline.Playstyle);
+        var otherEntries = await LoadOtherPilotsEntriesAsync(db, airline.Id, excludingPilotId: pilot.Id, ct);
+        var evaluation = await EvaluateProposedWeekAsync(db, airline, economyConfig, otherEntries, proposed, ct);
+
+        return Results.Ok(new
+        {
+            isValid = evaluation.Conflicts.Count == 0,
+            conflicts = evaluation.Conflicts,
+            advisories = evaluation.Advisories,
+        });
+    }
+
+    /// <summary>What a proposed replacement week for one pilot would be refused for, and what it
+    /// would merely be told - shared verbatim by <see cref="SaveScheduleAsync"/> and
+    /// <see cref="PreviewScheduleAsync"/> so the two can never drift.</summary>
+    private sealed record WeekEvaluation(IReadOnlyList<string> Conflicts, IReadOnlyList<string> Advisories);
+
+    private static async Task<WeekEvaluation> EvaluateProposedWeekAsync(
+        FsOpsDbContext db,
+        Airline airline,
+        EconomyConfig economyConfig,
+        IReadOnlyList<PilotScheduleEntryInput> otherEntries,
+        IReadOnlyList<PilotScheduleEntryInput> proposed,
+        CancellationToken ct)
+    {
+        var unionEntries = otherEntries.Concat(proposed).ToList();
+        var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs, airportsByIcao) = await BuildValidationDataAsync(db, airline, economyConfig, unionEntries, ct);
+
+        // requireWeekClosure: true - a SAVED week must genuinely repeat indefinitely, so every
+        // consecutive pair on an aircraft has to connect, all the way round the cycle. Unlike the
+        // leg-options endpoint, which is deliberately asking a narrower, per-leg question about a
+        // week still under construction. Never weaken this.
+        var result = PilotScheduleValidator.Validate(
+            unionEntries, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true);
+
+        var conflicts = new List<string>();
+        if (!result.IsValid)
+        {
+            // Only what THIS week actually introduces. Validating airline-wide is right and stays
+            // (an aircraft's chain and double-booking span every pilot), but reporting airline-wide
+            // is not: a conflict that is equally true whether or not this pilot's week is saved was
+            // not caused by it, cannot be fixed from the screen the player is looking at, and may
+            // name an aircraft that appears nowhere in the week in front of them. Real-use defect,
+            // 2026-08-13: saving one virtual pilot's week was refused with "G-NZHG is at LFPG, but
+            // this pattern's first leg departs EGGD" while every day on screen showed a different
+            // airframe entirely - the conflict belonged to ANOTHER pilot's already-saved schedule.
+            // Same "before" vs "after" set difference GetLegOptionsAsync has always used to tell a
+            // genuine disqualifier from a pre-existing one; nothing is relaxed, because a save that
+            // genuinely worsens another pilot's chain produces a conflict sentence that is NOT in
+            // the baseline (different aircraft, airports or times) and is therefore still refused,
+            // and the other pilot's own save still faces their own conflict exactly as before.
+            var preExisting = PilotScheduleValidator
+                .Validate(otherEntries.ToList(), routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true)
+                .Conflicts.ToHashSet();
+            conflicts.AddRange(result.Conflicts.Where(c => !preExisting.Contains(c)));
+        }
+
         // Same "only what the player can see and act on" rule the conflict differential above
         // applies, for the same reason: an advisory about an airframe that appears nowhere in the
         // week they just saved is the exact unactionable message this whole fix exists to remove.
@@ -510,7 +586,7 @@ public static class PilotEndpoints
             .Where(a => ownRegistrations.Contains(a.Split(' ', 2)[0]))
             .ToList();
 
-        return Results.Ok(new { pilotId = pilot.Id, dutyDays = dto, autoSuspendOnMaintenance = schedule.AutoSuspendOnMaintenance, advisories });
+        return new WeekEvaluation(conflicts, advisories);
     }
 
     /// <summary>
@@ -724,34 +800,70 @@ public static class PilotEndpoints
         var allEntriesForValidation = baseline.Concat(candidates).ToList();
         var (routesById, fleetById, aircraftTypesById, blockMinutesByLeg, existingRoutePairs, airportsByIcao) = await BuildValidationDataAsync(db, airline, economyConfig, allEntriesForValidation, ct);
 
+        // Where in the CYCLE this slot sits. A saved week rolls forever, so "before this slot" only
+        // means anything once you know where the loop is open - and that is where the chosen
+        // aircraft joins what is ALREADY committed, not Sunday midnight (see WeekCycle.OriginMinute).
+        // Real-use defect, 2026-08-20: a pilot flying Monday to Saturday out of EGGD was offered
+        // nothing but EGPH departures on Sunday morning, because with a Sunday-first ordering NOTHING
+        // was "before" a Sunday 08:00 slot - so the candidate stood alone, got anchored to the
+        // airframe's live position at EGPH, and Saturday's arrival back at EGGD was never consulted.
+        // Ordering from the aircraft's own entry point makes Saturday -> Sunday an ordinary "before"
+        // pair and Sunday -> Monday an ordinary "after" one.
+        //
+        // Computed ONCE, from the baseline alone, and then handed to every Validate call below - the
+        // three passes difference each other's results, so they have to be describing the same week.
+        // See PilotScheduleValidator.Validate's cycleOriginMinutesByAircraft parameter for what goes
+        // wrong when each pass finds its own.
+        var cycleOriginMinute = WeekCycle.OriginMinute(
+            fleetAircraft.Status == FleetAircraftStatus.InFlight ? null : fleetAircraft.LocationIcao,
+            baseline
+                .Where(e => e.FleetAircraftId == fleetAircraftId && routesById.ContainsKey(e.RouteId))
+                .Select(e => new CycleLeg(e.DayOfWeek, e.DepartureTimeUtc, routesById[e.RouteId].DepartureIcao, routesById[e.RouteId].ArrivalIcao))
+                .ToList());
+        var cycleOrigins = new Dictionary<Guid, int> { [fleetAircraftId] = cycleOriginMinute };
+
+        int CycleOffsetOf(DayOfWeek day, TimeSpan time) => WeekCycle.MinutesFrom(cycleOriginMinute, WeekCycle.AbsoluteMinute(day, time));
+
+        // The baseline for the WARNING half of this endpoint (the "what does taking this leg commit
+        // you to" question further down), and therefore closure-checked: a warning is a promise the
+        // player still has to keep before the week can be saved, so the honest set of promises is
+        // exactly the set PUT /schedule will demand. Real defect caught while fixing the Sunday
+        // ordering, 2026-08-20: with closure relaxed here too, the one pair a week under construction
+        // skips is the pair AFTER the last leg round the cycle - and a leg added just before the
+        // cycle's start lands exactly there, so picking Sunday 07:00 in a week that already departs
+        // Sunday 08:00 came back with no warning at all, neither the continuity consequence nor the
+        // outright double-booking. Asking the closure question is what puts both back. The "before"
+        // slice below is the opposite case and stays open: the pair after the candidate is the one
+        // the player has not built yet, and refusing them for not having built it is the 2026-08-12
+        // defect.
         var baselineResult = PilotScheduleValidator
-            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+            .Validate(baseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true, cycleOrigins);
         var baselineConflicts = baselineResult.Conflicts.ToHashSet();
         var baselineGaps = baselineResult.ContinuityGaps.ToHashSet();
 
-        // The "before" slice: only what's already committed strictly earlier than this slot (any
-        // pilot, any aircraft - reservation/range/runway are structural per-entry checks that fire
-        // regardless, and continuity/rest are pairwise, so nothing chronologically LATER than the
-        // candidate can ever appear as its "next" entry once it's excluded here). Validating against
-        // this slice, and only this slice, is what tells a genuine, permanent disqualifier (the
-        // aircraft isn't there yet, no rest since the last already-drafted duty day, ...) apart from
-        // a conflict that only exists because of something drafted AFTER this slot - see this
-        // method's own remarks above for why that distinction is the whole fix.
-        var slotMinute = AbsoluteWeekMinuteFor(dayOfWeek, departureTime);
-        var beforeBaseline = baseline.Where(e => AbsoluteWeekMinuteFor(e.DayOfWeek, e.DepartureTimeUtc) < slotMinute).ToList();
+        // The "before" slice: only what's already committed strictly earlier round the cycle than
+        // this slot (any pilot, any aircraft - reservation/range/runway are structural per-entry
+        // checks that fire regardless, and continuity/rest are pairwise, so nothing LATER round the
+        // cycle than the candidate can ever appear as its "next" entry once it's excluded here).
+        // Validating against this slice, and only this slice, is what tells a genuine, permanent
+        // disqualifier (the aircraft isn't there yet, no rest since the last already-drafted duty
+        // day, ...) apart from a conflict that only exists because of something drafted AFTER this
+        // slot - see this method's own remarks above for why that distinction is the whole fix.
+        var slotOffset = CycleOffsetOf(dayOfWeek, departureTime);
+        var beforeBaseline = baseline.Where(e => CycleOffsetOf(e.DayOfWeek, e.DepartureTimeUtc) < slotOffset).ToList();
         var beforeBaselineConflicts = PilotScheduleValidator
-            .Validate(beforeBaseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false)
+            .Validate(beforeBaseline, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false, cycleOrigins)
             .Conflicts.ToHashSet();
 
         // Display-only - never used to decide legality (see this method's own remarks: every route
         // is still tested, exactly as before). The arrival ICAO of whichever of THIS aircraft's own
-        // entries in beforeBaseline departs latest, or its recorded LocationIcao if nothing precedes
-        // the slot yet - the same anchor PilotScheduleValidator's own chain check uses for a week's
-        // real first leg. Lets the picker lead with "G-TXFE is at EGGD" instead of making the player
-        // infer it from which options happen to be legal.
+        // entries in beforeBaseline departs latest round the cycle, or its recorded LocationIcao if
+        // nothing precedes the slot at all - the same anchor PilotScheduleValidator's own chain
+        // check uses for the leg an aircraft enters its cycle on. Lets the picker lead with "G-TXFE
+        // is at EGGD" instead of making the player infer it from which options happen to be legal.
         var aircraftPosition = beforeBaseline
             .Where(e => e.FleetAircraftId == fleetAircraftId)
-            .OrderByDescending(e => AbsoluteWeekMinuteFor(e.DayOfWeek, e.DepartureTimeUtc))
+            .OrderByDescending(e => CycleOffsetOf(e.DayOfWeek, e.DepartureTimeUtc))
             .Select(e => routesById.TryGetValue(e.RouteId, out var r) ? r.ArrivalIcao : null)
             .FirstOrDefault() ?? fleetAircraft.LocationIcao;
 
@@ -806,6 +918,16 @@ public static class PilotEndpoints
             .GroupBy(e => e.RouteId)
             .ToDictionary(g => g.Key, g => g.Count());
 
+        // Whether this slot's leg would be the ONLY thing this airframe flies all week. If it is, the
+        // closure question asked below can only ever answer "a one-leg week does not repeat" - which
+        // is true of every conceivable first leg, says nothing about the option being offered, and
+        // reads as nonsense because the leg the gap points at is the candidate itself ("leaves it at
+        // EGPH, its next leg departs EGGD Monday 06:00" - the same leg). Save still refuses a one-leg
+        // week outright, with its own sentence; there is simply nothing worth saying HERE, on the
+        // first pick of an empty week, which is exactly what the picker said before closure entered
+        // into this.
+        var candidateWouldBeTheOnlyLegOnThisAircraft = !baseline.Any(e => e.FleetAircraftId == fleetAircraftId);
+
         var legal = new List<object>();
         var illegal = new List<object>();
 
@@ -815,7 +937,7 @@ public static class PilotEndpoints
 
             var beforeWithCandidate = beforeBaseline.Append(candidate).ToList();
             var beforeResult = PilotScheduleValidator.Validate(
-                beforeWithCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+                beforeWithCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false, cycleOrigins);
             var disqualifying = beforeResult.Conflicts.Where(c => !beforeBaselineConflicts.Contains(c)).ToList();
 
             if (disqualifying.Count > 0)
@@ -825,13 +947,14 @@ public static class PilotEndpoints
             }
 
             // Nothing before the slot rules this out - now check the FULL week (everything already
-            // drafted, including entries later than this slot) to see what picking it takes on. Any
-            // NEW conflict here is, by construction, only reachable through a later entry (a "before"
-            // conflict would already have shown up above) - a consequence to warn about, never a
-            // reason to refuse the option.
+            // drafted, including entries later than this slot), closed on itself, to see what picking
+            // it takes on. Any NEW conflict here is, by construction, only reachable through a later
+            // entry or through the loop closing (a "before" conflict would already have shown up
+            // above) - a consequence to warn about, never a reason to refuse the option. Closure is
+            // required here and relaxed above, deliberately: see baselineResult's own remarks.
             var withCandidate = baseline.Append(candidate).ToList();
             var candidateResult = PilotScheduleValidator.Validate(
-                withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: false);
+                withCandidate, routesById, fleetById, aircraftTypesById, blockMinutesByLeg, airportsByIcao, economyConfig.Scheduling, existingRoutePairs, requireWeekClosure: true, cycleOrigins);
 
             // A continuity gap (this leg leaves the aircraft somewhere else; a later already-drafted
             // leg needs it back) is resolvable purely by continuing to build the week - adding the
@@ -846,11 +969,18 @@ public static class PilotEndpoints
             // committed to elsewhere, not resolvable simply by carrying on building, so those keep
             // "alert" severity and are surfaced first (LegOptionRow only ever shows warnings[0]).
             var newGaps = candidateResult.ContinuityGaps.Where(g => !baselineGaps.Contains(g)).ToList();
+            // Every continuity sentence this candidate introduced is excluded from the "alert" set
+            // regardless of whether it goes on to be SHOWN - a gap that is deliberately not worth
+            // saying (see candidateWouldBeTheOnlyLegOnThisAircraft) must not fall through and be
+            // reported as an alarm instead, which is strictly worse than the noise it was suppressing.
             var newGapConflictTexts = newGaps.Select(g => g.ConflictText).ToHashSet();
             var otherWarnings = candidateResult.Conflicts
                 .Where(c => !baselineConflicts.Contains(c) && !newGapConflictTexts.Contains(c))
                 .Select(message => new LegWarning(message, "alert"));
-            var gapWarnings = newGaps.Select(g => new LegWarning(PhraseContinuityGap(g), "info"));
+            var gapWarnings = newGaps
+                .Where(g => !(candidateWouldBeTheOnlyLegOnThisAircraft &&
+                              string.Equals(g.AircraftRegistration, fleetAircraft.Registration, StringComparison.OrdinalIgnoreCase)))
+                .Select(g => new LegWarning(PhraseContinuityGap(g), "info"));
             var warnings = otherWarnings.Concat(gapWarnings).ToList();
 
             // K34: this MUST be the block time for the aircraft actually chosen for this duty
@@ -896,13 +1026,6 @@ public static class PilotEndpoints
             : $"create a {gap.GapDepartureIcao} -> {gap.GapArrivalIcao} route on the Routes page, then add a leg on it after this one";
         return $"Leaves {gap.AircraftRegistration} at {gap.GapDepartureIcao}. Its next leg departs {gap.GapArrivalIcao} ({when}) - {fix}.";
     }
-
-    /// <summary>Same absolute-minute-of-week convention as <see cref="PilotScheduleValidator.WeekMinutes"/>
-    /// (Sunday 00:00 = 0), exposed as its own small helper here rather than reaching into the
-    /// validator's private one - <see cref="GetLegOptionsAsync"/> is answering "is this entry before
-    /// or after that slot", a simpler question than the validator's own chain logic, not a second
-    /// implementation of it.</summary>
-    private static int AbsoluteWeekMinuteFor(DayOfWeek dayOfWeek, TimeSpan timeOfDay) => (int)dayOfWeek * 1440 + (int)timeOfDay.TotalMinutes;
 
     /// <summary>
     /// Read-only, airline-wide: every aircraft as a row, its legs across the week, colour-coded by

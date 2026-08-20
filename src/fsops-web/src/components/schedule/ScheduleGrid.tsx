@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react'
-import { Plane, Plus, Repeat, TriangleAlert } from 'lucide-react'
+import { Copy, Plane, Plus, Repeat, TriangleAlert } from 'lucide-react'
 
 import type { DraftLeg, DraftWeek } from './draftEntry'
 import { layoutDay, minuteToHHMM, pixelsToSnappedMinute } from './scheduleMath'
@@ -20,6 +20,9 @@ interface ScheduleGridProps {
   onChangeAircraftClick: (day: DayOfWeek) => void
   onMoveLeg: (day: DayOfWeek, legId: string, time: string) => void
   onSelectLeg: (day: DayOfWeek, leg: DraftLeg) => void
+  /** Opens the copy-this-day dialog. Only offered on a day that actually has legs - there is nothing
+   *  to copy otherwise, and a control that opens a dialog only to say so is worse than no control. */
+  onCopyDayClick: (day: DayOfWeek) => void
 }
 
 /** Finds which day currently holds a leg id - used to reject a drag-move that was dropped onto a
@@ -42,7 +45,7 @@ function findLegDay(week: DraftWeek, legId: string): DayOfWeek | null {
  * legs are always that same airframe's own gap. The week repeats indefinitely - there is no "last
  * week of the month" concept, which is the point: set once, flies forever until changed.
  */
-export function ScheduleGrid({ week, onAddClick, onChangeAircraftClick, onMoveLeg, onSelectLeg }: ScheduleGridProps) {
+export function ScheduleGrid({ week, onAddClick, onChangeAircraftClick, onMoveLeg, onSelectLeg, onCopyDayClick }: ScheduleGridProps) {
   const columnRefs = useRef<Map<DayOfWeek, HTMLDivElement>>(new Map())
   const [dragHover, setDragHover] = useState<{ day: DayOfWeek; minute: number } | null>(null)
 
@@ -93,6 +96,7 @@ export function ScheduleGrid({ week, onAddClick, onChangeAircraftClick, onMoveLe
         <div className="sticky top-0 z-20 border-b border-border bg-surface-elevated" />
         {DAY_DISPLAY_ORDER.map((day) => {
           const { registration } = layoutDay(day, week)
+          const legCount = week[day]?.legs.length ?? 0
           return (
             <div
               key={`head-${day}`}
@@ -100,16 +104,31 @@ export function ScheduleGrid({ week, onAddClick, onChangeAircraftClick, onMoveLe
             >
               <div className="flex items-center justify-between gap-1">
                 <span className="min-w-0 break-words text-sm font-semibold">{DAY_SHORT_LABELS[day]}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-6 shrink-0 text-muted-foreground"
-                  aria-label={`Add leg on ${DAY_LABELS[day]}`}
-                  onClick={() => onAddClick(day)}
-                >
-                  <Plus className="size-3.5" />
-                </Button>
+                <div className="flex shrink-0 items-center">
+                  {legCount > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-6 shrink-0 text-muted-foreground"
+                      aria-label={`Copy ${DAY_LABELS[day]} to other days`}
+                      title={`Copy ${DAY_LABELS[day]}'s ${legCount} leg${legCount === 1 ? '' : 's'} to other days`}
+                      onClick={() => onCopyDayClick(day)}
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 shrink-0 text-muted-foreground"
+                    aria-label={`Add leg on ${DAY_LABELS[day]}`}
+                    onClick={() => onAddClick(day)}
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                </div>
               </div>
               {registration ? (
                 <button

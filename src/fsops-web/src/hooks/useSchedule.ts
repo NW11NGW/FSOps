@@ -182,6 +182,61 @@ export function fetchLegOptions(
   })
 }
 
+/**
+ * POST /pilots/{id}/schedule/preview - what a save of this exact week WOULD say, without writing
+ * anything. Not a second validator: the backend runs the save path's own evaluation step and leaves
+ * the persistence off (see PilotEndpoints.PreviewScheduleAsync), so a preview can never disagree
+ * with the save it is previewing.
+ *
+ * Used by "copy this day" to show what a paste would break before the player commits to it. A
+ * failure to reach the server is reported as a conflict-shaped answer rather than thrown, for the
+ * same reason `putSchedule` does it: the caller has a dialog on screen and needs something to say
+ * in it, not an exception.
+ */
+export async function previewSchedule(pilotId: string, dutyDays: DutyDayInput[]): Promise<SchedulePreviewResult> {
+  let response: Response
+  try {
+    response = await fetch(`/api/v1/pilots/${pilotId}/schedule/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ dutyDays, autoSuspendOnMaintenance: true }),
+    })
+  } catch {
+    return { reachable: false, isValid: false, conflicts: [], advisories: [] }
+  }
+
+  if (!response.ok) return { reachable: false, isValid: false, conflicts: [], advisories: [] }
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    return { reachable: false, isValid: false, conflicts: [], advisories: [] }
+  }
+
+  const record = (payload && typeof payload === 'object' ? payload : {}) as Partial<{
+    isValid: boolean
+    conflicts: string[]
+    advisories: string[]
+  }>
+  return {
+    reachable: true,
+    isValid: record.isValid === true,
+    conflicts: Array.isArray(record.conflicts) ? record.conflicts : [],
+    advisories: Array.isArray(record.advisories) ? record.advisories : [],
+  }
+}
+
+/** `reachable: false` means the question could not be asked at all (offline, or a server that has
+ *  never heard of this endpoint) - deliberately distinct from "asked, and the answer was no", because
+ *  a caller must never present an unanswered question as a refusal. */
+export interface SchedulePreviewResult {
+  reachable: boolean
+  isValid: boolean
+  conflicts: string[]
+  advisories: string[]
+}
+
 export type ScheduleOverviewStatus = 'loading' | 'ready' | 'error'
 
 interface UseScheduleOverviewResult {
