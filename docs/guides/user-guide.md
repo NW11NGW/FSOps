@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers how to use FSOps, feature by feature. Everything described below is built and describes how FSOps actually behaves today: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Finances page, a Statistics page with a profitability map of your whole network and cash and reputation trends, a browsable flight logbook showing the path each sector actually flew, importing your SimBrief flight plan, and seeing online VATSIM controllers and traffic on your live map. FSOps is still under active development, so this guide changes as the app does — but nothing here is a description of something that hasn't shipped.
+This guide covers how to use FSOps, feature by feature. Everything described below is built and describes how FSOps actually behaves today: founding an airline, adjusting settings, building a route network, flying a fully tracked flight, running a fleet, the monthly billing cycle that keeps it all honest, hiring virtual pilots to keep your airline flying while you're away, a Finances page, a Statistics page with a profitability map of your whole network and cash and reputation trends, a browsable flight logbook showing the path each sector actually flew, importing your SimBrief flight plan, seeing online VATSIM controllers and traffic on your live map, and saving your whole airline to a file you can restore from. FSOps is still under active development, so this guide changes as the app does — but nothing here is a description of something that hasn't shipped.
 
 ## Table of contents
 
@@ -15,6 +15,7 @@ This guide covers how to use FSOps, feature by feature. Everything described bel
   - [SimBrief](#simbrief)
   - [VATSIM](#vatsim)
   - [Data](#data)
+  - [Backup and restore](#backup-and-restore)
   - [Updates](#updates)
 - [Building routes](#building-routes)
   - [Your route network on the map](#your-route-network-on-the-map)
@@ -133,7 +134,46 @@ Two things share this card, and they are very different in consequence.
 
 **World data** shows how many airports and runways FSOps knows about and when that data last changed. A newer data set arrives with an FSOps update and is applied automatically the first time you start the app afterwards; the **Refresh** button does it sooner if you want. A refresh only ever **adds and updates — it never deletes**. Airports do sometimes disappear from the upstream source, occasionally because they really closed but just as often for editorial reasons FSOps can't tell apart. Either way, anything you've built on stays: your routes, your flight history and any aircraft parked there keep pointing at somewhere real, even if the wider world data no longer lists it.
 
-**Danger zone: start over** is a **Delete airline** action that permanently removes your airline, fleet, routes, pilots, and financial history — there is no undo. After confirming, you're returned to the setup wizard as if FSOps had never had an airline on this machine. The append-only financial ledger itself isn't purged (it's a historical record, harmless once its airline is gone) but nothing in the UI will reference it any more.
+**Danger zone: start over** is a **Delete airline** action that permanently removes your airline, fleet, routes, pilots, and financial history — there is no undo, and a [backup](#backup-and-restore) taken beforehand is the only way to get any of it back. After confirming, you're returned to the setup wizard as if FSOps had never had an airline on this machine. The append-only financial ledger itself isn't purged (it's a historical record, harmless once its airline is gone) but nothing in the UI will reference it any more.
+
+### Backup and restore
+
+Everything FSOps knows about your airline lives in one file on this computer. This card is how you keep a copy of it somewhere else, and how you put one back.
+
+#### What a backup contains
+
+Stated on the card itself, not only here, because finding out what a backup didn't cover on the day you need it is the whole failure this feature exists to prevent.
+
+A `.fsopsbak` file is **a complete copy of the FSOps database**: your airline, fleet, routes, pilots and their schedules, every flight you have flown, your finances and loans, your settings, and the world airport data.
+
+It does **not** contain anything from Microsoft Flight Simulator itself — no aircraft, no liveries, no flight plans — and no FSOps log files or downloaded installers. Restoring one **replaces** your whole airline with the one in the file; it does not merge them.
+
+#### Taking a backup
+
+Press **Back up** and choose where the file goes. It is named for your airline and the date — `Skyline Air backup 2026-08-20 1432.fsopsbak` — so a folder of them still means something six months later.
+
+It is safe to take at any time, **including mid-flight**. Nothing is paused, nothing is changed, and no flight is disturbed.
+
+That is worth one sentence of explanation, because it is also why **copying `fsops.db` yourself is not a backup**. FSOps runs its database in SQLite's write-ahead-log mode, which means a flight you completed a minute ago may still be sitting in `fsops.db-wal` rather than in `fsops.db`. A file copy of `fsops.db` on its own therefore produces something that opens perfectly, looks completely normal, and is missing your most recent flying — and you would not find that out until the day you needed it. FSOps takes the copy through SQLite's own backup mechanism instead, which sees everything, and then checks the result before handing it to you.
+
+#### Restoring from a backup
+
+Press **Choose a backup file**, pick the file, and confirm. FSOps then checks it, completely, before anything of yours is at risk:
+
+- Is it actually an FSOps backup?
+- Does it still match its own checksum — has it been truncated by an interrupted copy, or damaged since it was made?
+- Is the database inside it intact?
+- Was it made by a version of FSOps this one can read?
+
+Any of those failing means the restore is **refused**, in plain words, with your airline exactly as it was. A file that was never a backup, and one that is a backup whose copy didn't finish, are told apart and worded differently — the second is something you can do something about.
+
+**Version compatibility only works one way.** A backup made by an **older** FSOps restores into a newer one without any trouble: the database is brought up to date the same way your existing one would be. A backup made by a **newer** FSOps is refused, naming the version that made it and telling you to update first. That refusal matters more than it might look: a newer build can save things this one has never heard of, and attempting it would not fail cleanly — it would half-work, and leave you with a database that behaves like a damaged one.
+
+**Your current airline is saved first, automatically.** Before a restore is allowed to displace anything, FSOps writes a full backup of what is there now into its own backups folder — `%LOCALAPPDATA%\FSOps\backups\`, named `Before restore - …` — and tells you the exact path. Picking the wrong file is every bit as unrecoverable as losing the database, so this is not optional and there is no way to skip it. FSOps never deletes those, including if you cancel.
+
+**The restore finishes when FSOps next starts.** FSOps holds your airline's file open the whole time it is running, so the swap cannot be done underneath it — a restore that half-applied to a live database would be worse than one that waits. So the card tells you plainly: the file has been checked and is ready, **nothing has changed yet**, and closing FSOps and opening it again is what finishes it. Until then you can **Cancel the restore** and nothing will have happened at all.
+
+When you next open FSOps, the same card tells you what happened — which file was restored, when, and where your previous airline was saved — until you dismiss it. You are never left to work out from the numbers whether it worked.
 
 ### Updates
 
@@ -149,7 +189,7 @@ A **Stable / Development** choice sitting with the other update controls.
 
 - These builds **have not been through release testing**. Bugs are expected, and you are the person who finds them.
 - Some of those bugs will reach **your airline's saved data** — your fleet, your routes, your flight history.
-- A development build can **change the shape of your saved data** in ways an older version does not understand. Going back afterwards is not always simple. If your airline matters to you, copy `%LOCALAPPDATA%\FSOps` somewhere safe before you switch.
+- A development build can **change the shape of your saved data** in ways an older version does not understand. Going back afterwards is not always simple — and a backup taken *on* a development build cannot be restored into an older one, by design (see [Backup and restore](#backup-and-restore)). If your airline matters to you, take a backup **before** you switch, and keep it.
 
 What *doesn't* change is the checking. A development build's installer is downloaded and verified against the checksum published with its release exactly as strictly as a stable one — the same code, in the same order. The channel decides which build you are offered, never whether it is verified.
 
@@ -303,8 +343,9 @@ This means:
 
 - Your data survives FSOps updates — reinstalling or upgrading the app doesn't touch it.
 - Nothing is stored anywhere else; there's no account or server involved.
-- **Backing up** your airline is as simple as copying the `%LOCALAPPDATA%\FSOps\` folder somewhere safe. Restoring is copying it back.
+- **Backing up** your airline is a button: Settings → [Backup and restore](#backup-and-restore) writes the whole save to one file wherever you choose, and restores from one. **Do not copy `fsops.db` by hand instead.** FSOps runs the database in write-ahead-log mode, so a flight you completed a minute ago may still be in `fsops.db-wal` rather than in `fsops.db` — a copy of the database file alone opens perfectly and is quietly missing your most recent flying. The backup button copies through SQLite itself, which sees all of it, and checks the result.
 - Deleting that folder (or using the settings [danger zone](#settings)) resets FSOps to a blank slate — see [Troubleshooting](troubleshooting.md) if that happens unexpectedly.
+- **`%LOCALAPPDATA%\FSOps\backups\`** holds the copies FSOps takes on your behalf: one before every restore, named `Before restore - …`. Nothing in FSOps ever deletes those; they are yours to keep or clear out.
 - **FSOps copies your database before applying any change to its structure.** Updates occasionally need to alter the shape of the database, and a copy taken beforehand is what you would restore from if one ever went wrong. It's only taken when there's actually something to apply, and if the copy can't be made, FSOps stops rather than proceeding without it.
 - **If the database is ever damaged, FSOps will not try to fix it by itself.** It stops and tells you which file is affected, and asks you to copy it somewhere safe first — because a damaged file is sometimes still repairable, and a well-meant automatic "repair" is how an airline gets lost for good.
 
