@@ -18,7 +18,7 @@
        release and would make the update checker believe the app is newer than every release
        below it and go permanently silent. Bump this in step with the release tag. -->
   <PropertyGroup>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
   </PropertyGroup>
 
 </Project>

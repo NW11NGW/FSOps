@@ -48,6 +48,7 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [A route doesn't show as flyable](#a-route-doesnt-show-as-flyable)
 - [A saved schedule says its aircraft isn't where the pattern starts](#a-saved-schedule-says-its-aircraft-isnt-where-the-pattern-starts)
 - ["FSOps couldn't fit a legal starter schedule together"](#fsops-couldnt-fit-a-legal-starter-schedule-together)
+- [A suggested day is shorter than I expected](#a-suggested-day-is-shorter-than-i-expected)
 - [Where to find log files](#where-to-find-log-files)
 - [How to report a problem](#how-to-report-a-problem)
 
@@ -547,6 +548,19 @@ If a schedule that's already running gets into the second state, the **Pilots** 
 **Cause:** This message now means every eligible aircraft was tried, on every day of the week, and none of them could legally fly anything. The usual reasons are real ones: every unreserved aircraft is already carrying another pilot's week at those times; the only available airframe is parked at an airport none of your routes departs from and has no route back; or your routes are all beyond that aircraft's range.
 
 **Solution:** Open a day manually and pick the aircraft yourself — the **"Why can't I fly the others?"** list under the leg picker names the exact reason for each route, which is the fastest way to see which of the above it is. Hiring a second pilot doesn't help if the *aircraft* is the constraint; freeing one up (releasing a reservation on the Fleet page, or thinning another pilot's week) usually does. Note that a partial week is a success, not a failure — if only some days fit, you'll be offered those days rather than this message.
+
+**This got more likely, on purpose.** A suggested week now fills each duty day to the legal limit rather than stopping at four legs, so one pilot genuinely occupies an airframe from morning to evening. Where a lightly-loaded aircraft used to leave whole afternoons free for a second pilot to be slotted into, a filled one does not — so the practical answer for a second or third pilot is usually **another aircraft**, not another attempt. Suggested days always start at 08:00, so the generator cannot fit a pilot into the gaps around an airframe that is already flying at that hour; building those days by hand still works exactly as before.
+
+## A suggested day is shorter than I expected
+
+**Symptom:** The suggestion filled most days but one day is a leg shorter, or shorter than the duty hours seem to allow.
+
+**Cause:** Read the line under the suggestion — it names the fullest day, how many legs it carries, and what stopped it, usually in the validator's own words. There are two common answers and they mean different things:
+
+- *"Duty on Monday runs 13.4 hours, above the 13-hour maximum duty day"* and similar: the day is genuinely full. There are no more legal hours to find on that day without changing the sector or the aircraft.
+- *"There was room for one more, but it would have left the aircraft away from base with no day left to bring it home"*: the day had hours left, but a weekly pattern has to end where it starts, and that last leg would have broken the loop. Only the final day of a week can be shortened this way, and only by one leg.
+
+**Solution:** Neither is a fault, and neither needs fixing. If you want the extra sector anyway, add it by hand and add the leg that brings the aircraft home — the picker will tell you immediately if that doesn't work.
 
 ## Where to find log files
 
