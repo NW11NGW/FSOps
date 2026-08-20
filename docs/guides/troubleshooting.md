@@ -28,6 +28,8 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [Why is my pilot worse than they were](#why-is-my-pilot-worse-than-they-were)
 - [I can't release a pilot](#i-cant-release-a-pilot)
 - [SimBrief import did nothing](#simbrief-import-did-nothing)
+- [The aircraft scan found nothing, or found less than I expected](#the-aircraft-scan-found-nothing-or-found-less-than-i-expected)
+- [FSOps says I do not have an aircraft I definitely own](#fsops-says-i-do-not-have-an-aircraft-i-definitely-own)
 - [No controllers are showing](#no-controllers-are-showing)
 - [A controller is online but never appears anywhere on the map](#a-controller-is-online-but-never-appears-anywhere-on-the-map)
 - [En-route sectors never appear, only airport circles](#en-route-sectors-never-appear-only-airport-circles)
@@ -291,6 +293,27 @@ The **Status** column tells you which of the two you're about to hit before you 
 **Cause:** One of several ordinary reasons, all handled by falling back to FSOps' own plan rather than failing the flight: no Pilot ID set yet in [Settings → SimBrief](user-guide.md#simbrief), an incorrect Pilot ID, SimBrief has no plan on file for that Pilot ID (SimBrief itself can't distinguish "wrong ID" from "no plan filed" — FSOps can't tell them apart either), SimBrief was unreachable or timed out, or — the single most common cause in practice — **your latest OFP is filed for a different city pair than the route you're about to fly.** FSOps refuses to substitute a mismatched plan rather than silently applying the wrong fuel and altitude figures; see [Importing your OFP back](user-guide.md#importing-your-ofp-back).
 
 **Solution:** Read the panel's own message — it names the specific reason. Most often, this means filing a fresh OFP in SimBrief for the exact route (same origin and destination) you're about to fly, then clicking **Check for OFP** on the flight brief's SimBrief OFP panel — you don't need to leave the Fly screen and come back; the button re-checks immediately. If you only just added your Pilot ID, double-check it in Settings, or use the link in the panel if it hasn't picked one up yet. Either way, this never blocks flying — the built-in plan is used automatically and the flight brief still shows complete, usable figures.
+
+## The aircraft scan found nothing, or found less than I expected
+
+**Symptom:** [Settings → Aircraft in your simulator](user-guide.md#aircraft-in-your-simulator) reports far fewer aircraft than you have, or the scan says it could not find your Community folder.
+
+**Cause:** One of four, and the card names which one it hit.
+
+- **"FSOps could not find your Community folder."** FSOps looks for the folder by reading the simulator's own `UserCfg.opt`, then falls back to the default Microsoft Store and Steam locations for MSFS 2024 and MSFS 2020. If none of those exist — most often because the simulator is on a different machine, or installed somewhere unusual — it has nowhere to look.
+- **"That folder is not there any more."** A path you saved by hand that has since moved, or a drive that is not plugged in.
+- **"That folder does not look like a Community folder."** The folder exists but contains no packages. Almost always the simulator's install folder rather than `Packages\Community` inside it.
+- **The scan worked but found only a few aircraft.** This is normal and not a fault. **MSFS 2024 streams most of its built-in aircraft and only keeps on disk what you have actually flown**, so a scan can prove an aircraft is there and can never prove one is missing.
+
+**Solution:** For the first three, put the path to your Community folder into the box on that card and press **Save folder**, then scan again — or press **Find it for me** to go back to automatic. For the last, nothing is wrong: a failed or thin scan **never takes an aircraft away**, so everything your edition includes is still available, and you can tick anything else you have. If you own Deluxe or Premium Deluxe, set that on the same card — FSOps defaults to Standard for everyone who has not said otherwise.
+
+## FSOps says I do not have an aircraft I definitely own
+
+**Symptom:** An aircraft you have installed and flown shows as **Not yours** in [Settings → Aircraft in your simulator](user-guide.md#aircraft-in-your-simulator).
+
+**Cause:** FSOps did not find evidence of it. That happens for good reasons — a built-in aircraft you own but have not flown is not on disk to find; an add-on whose package does not declare an ICAO type code cannot be identified from its folder; and an aircraft FSOps does not have in its catalogue at all cannot be matched to anything.
+
+**Solution:** **Tick it.** Your answer beats the scan and the edition setting both, and it is stored. If the scan report says packages "were not recognised" and names a type code you recognise, that is the third case — the aircraft is installed and FSOps simply does not know that type yet; ticking the closest equivalent, or nothing at all, is up to you.
 
 ## No controllers are showing
 

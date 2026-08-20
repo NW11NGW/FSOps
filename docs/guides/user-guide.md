@@ -13,6 +13,7 @@ This guide covers how to use FSOps, feature by feature. Everything described bel
   - [Display](#display)
   - [Airline](#airline)
   - [SimBrief](#simbrief)
+  - [Aircraft in your simulator](#aircraft-in-your-simulator)
   - [VATSIM](#vatsim)
   - [Data](#data)
   - [Updates](#updates)
@@ -95,7 +96,7 @@ You choose between an Airbus A320 (180 seats, 3,300 nm range) and a Boeing 737-8
 
 ## Settings
 
-Reachable from the main navigation once your airline exists. Settings is six cards, in this order: **Display**, **Airline**, **SimBrief**, **VATSIM**, **Data**, and **Updates**. Most of them apply to your account rather than to a specific airline — the exception is **Airline**, which edits your airline's own identity and strategy.
+Reachable from the main navigation once your airline exists. Settings is seven cards, in this order: **Display**, **Airline**, **SimBrief**, **Aircraft in your simulator**, **VATSIM**, **Data**, and **Updates**. Most of them apply to your account rather than to a specific airline — the exception is **Airline**, which edits your airline's own identity and strategy.
 
 ### Display
 
@@ -122,6 +123,24 @@ Your airline's name, accent colour, strategy, and your own name as its founding 
 Your SimBrief Pilot ID — find it on SimBrief under Account → Pilot ID. Set it and the Fly screen's flight brief pulls your latest OFP's fuel, cruise altitude, block time and filed route instead of FSOps' own estimate, but only when that plan matches the exact route you're about to fly — see [Plan in SimBrief](#plan-in-simbrief) below. Leave it blank (the default) and FSOps always uses its own built-in plan; nothing about your flight is sent anywhere without it, and it's entirely optional.
 
 You can also set this from the setup wizard's "Online flying" step when you first found an airline — this Settings field and the wizard's stay in sync either way, and setting or changing it here works exactly the same after onboarding.
+
+### Aircraft in your simulator
+
+Which aircraft you can actually load in MSFS 2024. Nothing here changes how your airline works today — it is groundwork for contract flying, where a job arrives from another operator with an aircraft attached. A job in an aircraft you do not own is worse than no job at all, so FSOps wants to know what is in your hangar before it starts writing them.
+
+This is a **separate list from the aircraft catalogue you buy and lease from**. That one is airliners only, because the demand, fare and fee models all assume an airliner. This one reaches from a Cessna 152 up to an A380, because a contract supplies the aircraft and you just fly it. Ticking a Cessna here never makes a Cessna purchasable for your airline.
+
+The card works from three things, in this order:
+
+- **Your edition.** MSFS 2024 comes as Standard, Deluxe and Premium Deluxe, and they carry different aircraft. FSOps defaults to **Standard** — the smallest set — because being asked to tick a box for an aircraft you have is a nuisance, while being offered a job in one you do not have is a broken feature. Set this to what you actually bought.
+- **A scan of your simulator folders.** Press **Scan for aircraft** and FSOps reads your Community folder for add-on aircraft, and looks alongside it for the built-in aircraft your simulator has downloaded. It finds the folder by asking the simulator itself where it keeps its packages, so Microsoft Store, Game Pass and Steam installs all work, and so does a sim moved to another drive. If you have moved things somewhere FSOps cannot see, type the path to your Community folder in the box and press **Save folder**; **Find it for me** puts it back to looking automatically. **FSOps only ever reads this folder — it never writes to it.**
+- **Your own ticks.** Every aircraft in the list can be ticked on or off, and your answer beats both of the above. Click a row you have already overridden to clear the override and let FSOps decide again.
+
+**A scan is evidence, not a verdict.** It can prove an aircraft is installed; it can never prove one is not. MSFS 2024 streams most of its base content and only keeps on disk what you have actually flown, so an aircraft you own but have never loaded leaves nothing behind to find. That is why a scan only ever **adds** aircraft, and why a scan that fails — no folder, a moved drive, the wrong folder — takes nothing away and says so.
+
+Each row carries a badge saying where the answer came from: **Found in Community** (an add-on you installed), **Found on disk** (built-in content your simulator has downloaded), **In your edition** (believed, from the edition setting), **You added it** / **You removed it** (your own tick), or **Not yours**.
+
+Some things a scan deliberately ignores. Livery packages are not aircraft — they repaint one you may or may not already have. AI-traffic packages such as FSLTL's traffic base declare themselves as aircraft and ship thousands of models, none of which you can fly. And the low-detail models your simulator carries so AI traffic can render aircraft from editions you did not buy are never counted as yours. Anything FSOps looked at and could not identify is reported as a count rather than quietly dropped, so you can see it looked.
 
 ### VATSIM
 

@@ -99,15 +99,34 @@ public class UpdateChannelColumnMigrationTests : IDisposable
             await migrator.MigrateAsync(MigrationUnderTest);
         }
 
-        await using (var verifyDb = new FsOpsDbContext(options))
+        await using (var connection = new SqliteConnection(connectionString))
         {
-            var populated = await verifyDb.UserSettings.SingleAsync(s => s.Id == populatedId);
-            Assert.Equal(populatedOwner, populated.OwnerUserId);
+            await connection.OpenAsync();
+
+            // Read column by column rather than through verifyDb.UserSettings - see PinnedSchemaRead.
+            // This test pins the database to one migration, but FsOpsDbContext only ever has the
+            // CURRENT model, so an EF read names every column the entity knows about and fails with
+            // "no such column" the moment somebody adds a field to UserSettings. That is exactly what
+            // happened when the sim-aircraft columns landed, and the error names the new column, so it
+            // reads as a fault in the migration somebody just wrote rather than in how this test reads.
+            const string selectById = """
+                SELECT OwnerUserId, CurrencyCode, DistanceUnit, AltitudeUnit, WeightUnit, TimeDisplay,
+                       Use24HourClock, Theme, SimBriefPilotId, VatsimCid, UpdateChannel
+                FROM UserSettings WHERE Id = $id;
+                """;
+
+            var populated = await PinnedSchemaRead.SingleAsync(
+                connection,
+                selectById,
+                c => c.Parameters.AddWithValue("$id", populatedId.ToString().ToUpperInvariant()),
+                ReadSettingsRow);
+
+            Assert.Equal(populatedOwner.ToString().ToUpperInvariant(), populated.OwnerUserId);
             Assert.Equal("JPY", populated.CurrencyCode);
-            Assert.Equal(DistanceUnit.Km, populated.DistanceUnit);
-            Assert.Equal(AltitudeUnit.Metres, populated.AltitudeUnit);
-            Assert.Equal(WeightUnit.Lb, populated.WeightUnit);
-            Assert.Equal(TimeDisplay.Local, populated.TimeDisplay);
+            Assert.Equal("Km", populated.DistanceUnit);
+            Assert.Equal("Metres", populated.AltitudeUnit);
+            Assert.Equal("Lb", populated.WeightUnit);
+            Assert.Equal("Local", populated.TimeDisplay);
             Assert.False(populated.Use24HourClock);
             Assert.Equal("light", populated.Theme);
             Assert.Equal("884422", populated.SimBriefPilotId);
@@ -115,13 +134,18 @@ public class UpdateChannelColumnMigrationTests : IDisposable
 
             // THE assertion. A row written before channels existed belongs to somebody who never
             // asked for anything but released builds.
-            Assert.Equal(UpdateChannel.Stable, populated.UpdateChannel);
+            Assert.Equal(nameof(UpdateChannel.Stable), populated.UpdateChannel);
 
-            var sparse = await verifyDb.UserSettings.SingleAsync(s => s.Id == sparseId);
-            Assert.Equal(sparseOwner, sparse.OwnerUserId);
+            var sparse = await PinnedSchemaRead.SingleAsync(
+                connection,
+                selectById,
+                c => c.Parameters.AddWithValue("$id", sparseId.ToString().ToUpperInvariant()),
+                ReadSettingsRow);
+
+            Assert.Equal(sparseOwner.ToString().ToUpperInvariant(), sparse.OwnerUserId);
             Assert.Equal("GBP", sparse.CurrencyCode);
             Assert.True(sparse.Use24HourClock);
-            Assert.Equal(UpdateChannel.Stable, sparse.UpdateChannel);
+            Assert.Equal(nameof(UpdateChannel.Stable), sparse.UpdateChannel);
 
             // "not set" and "set to nothing" are different facts; a careless rebuild turns the first
             // into the second, and SimBriefPilotId = "" would make the app fetch a plan for pilot
@@ -129,14 +153,9 @@ public class UpdateChannelColumnMigrationTests : IDisposable
             Assert.Null(sparse.SimBriefPilotId);
             Assert.Null(sparse.VatsimCid);
 
-            Assert.Equal(2, await verifyDb.UserSettings.CountAsync());
-        }
+            Assert.Equal(2, await PinnedSchemaRead.CountAsync(connection, "SELECT COUNT(*) FROM UserSettings;"));
 
-        await using (var connection = new SqliteConnection(connectionString))
-        {
-            await connection.OpenAsync();
-
-            var columns = await ReadColumnNamesAsync(connection, "UserSettings");
+            var columns = await PinnedSchemaRead.ColumnNamesAsync(connection, "UserSettings");
             Assert.Contains("UpdateChannel", columns);
             Assert.Contains("SimBriefPilotId", columns);
             Assert.Contains("VatsimCid", columns);
@@ -144,17 +163,46 @@ public class UpdateChannelColumnMigrationTests : IDisposable
             // Read as raw text, not through the enum converter, so this asserts what is physically in
             // the file. An enum round-trip would happily turn a stored "" into member zero and report
             // Stable while the column held nothing a later reader could parse.
-            var stored = await ReadDistinctTextAsync(connection, "SELECT DISTINCT UpdateChannel FROM UserSettings;");
+            var stored = await PinnedSchemaRead.DistinctTextAsync(connection, "SELECT DISTINCT UpdateChannel FROM UserSettings;");
             Assert.Equal(new[] { "Stable" }, stored);
 
             // Adding a column with a default is a real ALTER TABLE on SQLite - no table rebuild - so
             // the unique index is never dropped. Asserted anyway: "it should not have been touched"
             // is the claim, and an index quietly missing is how a second settings row for one user
             // gets written and every lookup expecting exactly one starts throwing.
-            var indexes = await ReadIndexNamesAsync(connection, "UserSettings");
+            var indexes = await PinnedSchemaRead.IndexNamesAsync(connection, "UserSettings");
             Assert.Contains("IX_UserSettings_OwnerUserId", indexes);
         }
     }
+
+    /// <summary>Exactly the columns this test names - see <see cref="PinnedSchemaRead"/> for why it
+    /// is not the entity. UpdateChannel comes back as raw text for the reason given at its assertion.</summary>
+    private sealed record SettingsRow(
+        string OwnerUserId,
+        string CurrencyCode,
+        string DistanceUnit,
+        string AltitudeUnit,
+        string WeightUnit,
+        string TimeDisplay,
+        bool Use24HourClock,
+        string Theme,
+        string? SimBriefPilotId,
+        string? VatsimCid,
+        string? UpdateChannel);
+
+    private static SettingsRow ReadSettingsRow(SqliteDataReader r) =>
+        new(
+            r.GetString(r.GetOrdinal("OwnerUserId")),
+            r.GetString(r.GetOrdinal("CurrencyCode")),
+            r.GetString(r.GetOrdinal("DistanceUnit")),
+            r.GetString(r.GetOrdinal("AltitudeUnit")),
+            r.GetString(r.GetOrdinal("WeightUnit")),
+            r.GetString(r.GetOrdinal("TimeDisplay")),
+            r.GetBoolean(r.GetOrdinal("Use24HourClock")),
+            r.GetString(r.GetOrdinal("Theme")),
+            r.TextOrNull("SimBriefPilotId"),
+            r.TextOrNull("VatsimCid"),
+            r.TextOrNull("UpdateChannel"));
 
     /// <summary>
     /// A settings row created after the migration must also be Stable. The column default covers rows
@@ -182,45 +230,4 @@ public class UpdateChannelColumnMigrationTests : IDisposable
         }
     }
 
-    private static async Task<List<string>> ReadColumnNamesAsync(SqliteConnection connection, string table)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"PRAGMA table_info({table});";
-        var names = new List<string>();
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            names.Add(reader.GetString(reader.GetOrdinal("name")));
-        }
-
-        return names;
-    }
-
-    private static async Task<List<string>> ReadIndexNamesAsync(SqliteConnection connection, string table)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = $table AND name NOT LIKE 'sqlite_%';";
-        command.Parameters.AddWithValue("$table", table);
-        return await ReadTextColumnAsync(command);
-    }
-
-    private static async Task<List<string>> ReadDistinctTextAsync(SqliteConnection connection, string sql)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return await ReadTextColumnAsync(command);
-    }
-
-    private static async Task<List<string>> ReadTextColumnAsync(SqliteCommand command)
-    {
-        var values = new List<string>();
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            values.Add(reader.IsDBNull(0) ? "<null>" : reader.GetString(0));
-        }
-
-        return values;
-    }
 }

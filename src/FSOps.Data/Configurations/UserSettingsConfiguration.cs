@@ -1,4 +1,5 @@
 using FSOps.Core.Entities;
+using FSOps.Core.SimAircraft;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -20,6 +21,12 @@ public class UserSettingsConfiguration : IEntityTypeConfiguration<UserSettings>
         // scaffolded default of "" fails to parse for every row already in the database - a mistake
         // this project has shipped before.
         builder.Property(s => s.UpdateChannel).HasConversion<string>().HasDefaultValue(UpdateChannel.Stable);
+
+        // Same treatment, same reason. Standard is the smallest aircraft set, so a row written
+        // before editions existed lands on the answer that can only ever under-promise: the player
+        // may have to tick a box, but they are never handed a contract for an aircraft they cannot
+        // load. Declaring the default here is what stops EF scaffolding defaultValue: "" for it.
+        builder.Property(s => s.SimEdition).HasConversion<string>().HasDefaultValue(SimEdition.Standard);
 
         builder.HasIndex(s => s.OwnerUserId).IsUnique();
     }
