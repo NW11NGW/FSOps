@@ -112,6 +112,30 @@ public class StatsEndpointsTests
         return flight;
     }
 
+    /// <summary>
+    /// Yesterday at 06:00 UTC - a <b>fixed time of day</b>, deliberately not
+    /// <c>DateTimeOffset.UtcNow.AddDays(-1)</c>.
+    ///
+    /// <para>StatsEndpoints buckets flights by their <b>arrival</b> UTC day
+    /// (<c>DayKey((f.InUtc ?? f.CreatedUtc).UtcDateTime.Date)</c>). Seeding from <c>UtcNow</c> makes
+    /// the seeded arrival times inherit the current time of day, so a test that seeds two flights and
+    /// asserts they land in ONE bucket silently becomes a test of what time it is. The arithmetic is
+    /// exact rather than vague: with arrivals at <c>t+92min</c> and <c>t+210min</c>, midnight falls
+    /// between them whenever <c>t</c> is in <b>[20:30, 22:28) UTC</b> - about two hours a day, and
+    /// otherwise green.</para>
+    ///
+    /// <para>This is not hypothetical. It failed CI at <b>20:38:50 UTC</b> having passed twice locally
+    /// minutes earlier, purely because the local runs landed just before 20:30. That is the worst
+    /// property a test can have: it looks reliable, and it reports the calendar rather than the code.
+    /// Pinning the hour makes the assertion mean what it says at every hour of the day.</para>
+    ///
+    /// <para><b>Not for window-relative tests.</b> Anything asserting against a short trailing window
+    /// (e.g. <c>FleetAsync(1, ...)</c>, whose cutoff is <c>UtcNow - 1 day</c>) must keep seeding
+    /// relative to <c>UtcNow</c>, or a fixed morning anchor would fall out of the window entirely.</para>
+    /// </summary>
+    private static DateTimeOffset YesterdayMorningUtc() =>
+        new DateTimeOffset(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(-1).AddHours(6);
+
     // ---------- Performance (on-time / load factor) ----------
 
     [Fact]
@@ -133,7 +157,7 @@ public class StatsEndpointsTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx, "Player", isPlayer: true);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        var day = YesterdayMorningUtc();
 
         // On-time (2 minutes late, inside the default 5-minute tolerance), 90 of 180 seats = 50%.
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day, plannedBlockMinutes: 90, arrivalDelayMinutes: 2, paxFlown: 90);
@@ -158,7 +182,7 @@ public class StatsEndpointsTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx, "Player", isPlayer: true);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        var day = YesterdayMorningUtc();
 
         // The only flight of the day - and it can't honestly measure on-time, so the day must show
         // a sector but a null (never a fabricated) on-time percent.
@@ -192,7 +216,7 @@ public class StatsEndpointsTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx, "Player", isPlayer: true);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        var day = YesterdayMorningUtc();
 
         // Checked and matched.
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day, plannedBlockMinutes: 60, arrivalDelayMinutes: 0, paxFlown: 100, vatsimOnline: true);
@@ -239,7 +263,9 @@ public class StatsEndpointsTests
         fleetAircraft.HoursSinceCCheck = 100;
         await ctx.Db.SaveChangesAsync();
 
-        // Exactly 3 hours of block time in the window.
+        // Exactly 3 hours of block time in the window. Seeded relative to UtcNow ON PURPOSE - unlike
+        // the day-bucketed tests above, this asserts against a 1-day trailing window whose cutoff is
+        // UtcNow - 1 day, so YesterdayMorningUtc() would fall outside it and the flight would vanish.
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, DateTimeOffset.UtcNow.AddDays(-1), plannedBlockMinutes: 180, arrivalDelayMinutes: 0, paxFlown: 100);
         await ctx.Db.SaveChangesAsync();
 
@@ -265,7 +291,7 @@ public class StatsEndpointsTests
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
         var player = SeedPilot(ctx, "You", isPlayer: true);
         var virtualPilot = SeedPilot(ctx, "Robin Hayes", isPlayer: false);
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        var day = YesterdayMorningUtc();
 
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, player.Id, day, plannedBlockMinutes: 120, arrivalDelayMinutes: 1, paxFlown: 150, landingFpm: -180);
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, virtualPilot.Id, day.AddHours(2), plannedBlockMinutes: 60, arrivalDelayMinutes: 30, paxFlown: 150, landingFpm: -240);
