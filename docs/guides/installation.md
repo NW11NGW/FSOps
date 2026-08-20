@@ -113,10 +113,13 @@ Paste that into the File Explorer address bar to open it. Inside:
 
 - **`fsops.db`** — your airline. Fleet, routes, pilots, flight history, ledger, settings: all of it.
 - **`logs\`** — application logs, which are what to attach if you report a problem.
+- **`backups\`** — copies FSOps takes on your own behalf, most importantly the one it saves automatically before any restore. Nothing in FSOps ever deletes these.
 
-Nothing is ever written next to the installed program, which is why FSOps doesn't need administrator rights and why **uninstalling it doesn't touch your airline**. It also means backing up your save is a matter of copying `fsops.db` somewhere safe. Do that before trying anything drastic; it's the only copy.
+Nothing is ever written next to the installed program, which is why FSOps doesn't need administrator rights and why **uninstalling it doesn't touch your airline**.
 
-See [Where your data lives](user-guide.md#where-your-data-lives) in the User Guide for more, and [where the database lives](troubleshooting.md#where-the-database-lives) if you need to move it.
+**Back it up from inside FSOps, not from Explorer.** Settings → **Backup and restore** writes your whole save to one file wherever you choose, and restores from one. Copying `fsops.db` by hand looks equivalent and isn't: the database runs in write-ahead-log mode, so your most recent flights can still be in `fsops.db-wal` rather than in `fsops.db`, and a copy of the database file alone opens perfectly while quietly missing them. Take a backup before trying anything drastic.
+
+See [Backup and restore](user-guide.md#backup-and-restore) and [Where your data lives](user-guide.md#where-your-data-lives) in the User Guide for more, and [where the database lives](troubleshooting.md#where-the-database-lives) if you need to move it.
 
 ## Running FSOps in your browser instead
 
@@ -144,7 +147,7 @@ You can also just download any newer release manually from the [Releases page](h
 
 Settings → Updates → **Which builds to offer** chooses between two channels. **Stable** is the default and offers finished, released versions only — if you've never touched this setting, that's what you have.
 
-**Development** also offers test builds as they're made. They arrive earlier and they are not tested to release standard: expect bugs, expect some to affect your saved airline, and expect a development build to be able to change your database in ways an older version won't understand. Take a copy of `%LOCALAPPDATA%\FSOps` before you switch if that matters to you. Verification is unchanged either way — a development build is checked against its published checksum exactly as strictly as a stable one.
+**Development** also offers test builds as they're made. They arrive earlier and they are not tested to release standard: expect bugs, expect some to affect your saved airline, and expect a development build to be able to change your database in ways an older version won't understand — a backup taken *on* a development build cannot be restored into an older one, by design. Take a backup from Settings → **Backup and restore** before you switch if that matters to you, and keep it. Verification is unchanged either way — a development build is checked against its published checksum exactly as strictly as a stable one.
 
 Switching back to Stable is always allowed, but you'll then be running something newer than the newest stable release, so FSOps will say you're **ahead of the stable channel** and offer nothing until stable catches up. It won't downgrade you. See [which builds to offer](user-guide.md#which-builds-to-offer).
 

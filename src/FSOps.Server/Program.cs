@@ -9,6 +9,7 @@ using FSOps.Server.Auth;
 using FSOps.Server.Endpoints;
 using FSOps.Server.Hubs;
 using FSOps.Server.Services;
+using FSOps.Server.Services.Backup;
 using FSOps.Sim;
 using FSOps.Sim.Fake;
 using FSOps.Sim.SimConnect;
@@ -167,7 +168,25 @@ builder.Services.AddSingleton<IGitHubReleaseClient, GitHubReleaseClient>();
 builder.Services.AddSingleton<IUpdateChannelStore, DatabaseUpdateChannelStore>();
 builder.Services.AddSingleton<UpdateChecker>();
 
+// Saving the airline to a file and putting one back. A singleton holding the two paths it is
+// allowed to touch, so no request handler builds a path of its own - the same reasoning as
+// IUpdateStorage above, and for a feature where writing to the wrong place is the whole risk.
+builder.Services.AddSingleton(sp => new BackupService(
+    AppPaths.DataDirectory,
+    AppPaths.DatabasePath,
+    sp.GetRequiredService<ILogger<BackupService>>()));
+
 var app = builder.Build();
+
+// MUST run here: before the migration below, and therefore before anything has opened the
+// database. A restore replaces fsops.db wholesale, which cannot be done while the server holds it
+// open - so the request that accepted the file only staged it, and this is where it actually
+// happens. Migrations run immediately afterwards, which is exactly what makes restoring an older
+// backup into a newer build work: the restored schema is simply brought forward. See PendingRestore.
+{
+    var restoreLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DatabaseRestore");
+    PendingRestore.ApplyIfStaged(AppPaths.DataDirectory, AppPaths.DatabasePath, restoreLogger);
+}
 
 // Migrations are fast (schema-only), so this runs synchronously before Kestrel starts
 // listening. The world data import can take longer, so it's kicked off in the background
@@ -261,6 +280,7 @@ apiV1.MapStatsEndpoints();
 apiV1.MapVatsimEndpoints();
 apiV1.MapUpdateEndpoints();
 apiV1.MapOperationsEndpoints();
+apiV1.MapBackupEndpoints();
 
 app.MapHub<LiveHub>("/hubs/live");
 

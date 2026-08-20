@@ -38,6 +38,10 @@ Problems and solutions for running FSOps. If you don't find your issue here, see
 - [FSOps says I'm "ahead of the stable channel"](#fsops-says-im-ahead-of-the-stable-channel)
 - [A downloaded update was rejected, or disappeared](#a-downloaded-update-was-rejected-or-disappeared)
 - [Where a downloaded update goes, and why FSOps won't run it](#where-a-downloaded-update-goes-and-why-fsops-wont-run-it)
+- [My backup file was refused when I tried to restore it](#my-backup-file-was-refused-when-i-tried-to-restore-it)
+- [FSOps says a restore is waiting for it to restart](#fsops-says-a-restore-is-waiting-for-it-to-restart)
+- [I restarted, and the restore did not happen](#i-restarted-and-the-restore-did-not-happen)
+- [I restored the wrong backup](#i-restored-the-wrong-backup)
 - [Where the database lives](#where-the-database-lives)
 - [MSFS won't connect over SimConnect](#msfs-wont-connect-over-simconnect)
 - [Flight tracking stopped mid-flight](#flight-tracking-stopped-mid-flight)
@@ -431,6 +435,50 @@ Never beside the FSOps program files — those live under Program Files, which i
 
 To install an update: select **Show the installer**, close FSOps, then run the installer yourself from the folder that opens. If you'd rather not keep the downloaded file, deleting it is always safe — FSOps simply offers the download again next time, and turning update checks off deletes it for you.
 
+## My backup file was refused when I tried to restore it
+
+**Symptom:** choosing a file in Settings → Backup and restore produces a message instead of a staged restore.
+
+**Why:** every check happens before anything of yours is touched, so a refusal always means your airline is exactly as it was. There are four of them, and the wording tells you which one fired.
+
+- **"That file is not an FSOps backup, or it is damaged."** It isn't one of ours. FSOps backups end in `.fsopsbak` and are made by the **Back up** button on that card.
+- **"That backup file is incomplete."** It *is* one of ours, but the copy didn't finish — an interrupted copy to a USB stick or a cloud folder that was still syncing is the usual cause. Copy it again from wherever you saved it, or use another backup.
+- **"That backup file has been altered or damaged since it was made."** The contents no longer match the checksum recorded inside the file when it was created. Use another copy.
+- **"That backup was made by a newer version of FSOps."** This is deliberate and is not a bug. A newer build can save things this one has never heard of, and restoring it would not fail cleanly — it would half-work. Update FSOps to at least the version named in the message and try again. **The other direction always works:** a backup from an older FSOps restores into a newer one without any trouble.
+
+## FSOps says a restore is waiting for it to restart
+
+**Symptom:** the Backup and restore card shows "A restore is waiting for FSOps to restart" and won't let you choose another file.
+
+**Why:** this is normal, and it's the whole flow. FSOps holds your airline's database file open for as long as it's running, so the swap can't be done underneath it — a restore that half-applied to a live database would be worse than one that waits. The file has been checked and is ready; **nothing has changed yet**.
+
+**Fix:** close FSOps completely and open it again. When it comes back, the same card will tell you what it restored and where your previous airline was saved.
+
+If you've changed your mind, **Cancel the restore** puts everything back to normal and nothing will have happened. The safety copy taken when it was staged is kept either way.
+
+## I restarted, and the restore did not happen
+
+**Symptom:** you closed and reopened FSOps, and the card says the last restore did not finish.
+
+**Why:** the message says which. Two things cause it.
+
+- **Something else had the database open.** Usually a second copy of FSOps still running — the desktop shell will attach to a server that's already going, so it's possible to close one window and leave the server behind. Check Task Manager for `FSOps.Server.exe`, close everything FSOps, and start it once.
+- **The staged file failed its integrity check on the way in.** The restore is re-checked at startup rather than trusted from when it was uploaded, because replacing a working database with a broken one is the one mistake here with no way back.
+
+Either way your airline was left exactly as it was, and your backup file is untouched — you can simply try again.
+
+## I restored the wrong backup
+
+**Symptom:** the restore worked, and it wasn't the file you meant.
+
+**Fix:** the airline that was there before was saved automatically, as a full backup, immediately before the restore was staged. Look in:
+
+```
+%LOCALAPPDATA%\FSOps\backups\
+```
+
+for a file beginning `Before restore - `. Restore that one the same way. FSOps never deletes these files, and the card that reported the restore names the exact path it used.
+
 ## Where the database lives
 
 FSOps stores its SQLite database at:
@@ -439,7 +487,9 @@ FSOps stores its SQLite database at:
 %LOCALAPPDATA%\FSOps\fsops.db
 ```
 
-Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`. This is separate from the repository/install folder, so it survives rebuilding or reinstalling FSOps. **Deleting `fsops.db` resets FSOps completely** — your airline, fleet, routes, pilots, and financial history are all gone, and you'll see the setup wizard again next launch. See [Where your data lives](user-guide.md#where-your-data-lives) for how to back it up first.
+Logs live alongside it in `%LOCALAPPDATA%\FSOps\logs\`, and the copies FSOps takes on your behalf in `%LOCALAPPDATA%\FSOps\backups\`. This is separate from the repository/install folder, so it survives rebuilding or reinstalling FSOps. **Deleting `fsops.db` resets FSOps completely** — your airline, fleet, routes, pilots, and financial history are all gone, and you'll see the setup wizard again next launch.
+
+**Back it up with the button, not with Explorer.** Settings → [Backup and restore](user-guide.md#backup-and-restore) writes the whole save to one file. Copying `fsops.db` by hand does not do the same job: the database runs in write-ahead-log mode, so recent flights can still be in `fsops.db-wal` rather than in `fsops.db`, and a copy of the database file alone opens cleanly while quietly missing them.
 
 ## MSFS won't connect over SimConnect
 

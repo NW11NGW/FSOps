@@ -48,6 +48,10 @@ This document describes how FSOps is put together: the solution layout, how a re
 - [The desktop shell and how FSOps is published](#the-desktop-shell-and-how-fsops-is-published)
 - [The update checker](#the-update-checker)
   - [Release channels](#release-channels)
+- [Backup and restore](#backup-and-restore)
+  - [Why a file copy is not a backup](#why-a-file-copy-is-not-a-backup)
+  - [The archive, and what it has to carry](#the-archive-and-what-it-has-to-carry)
+  - [Restore is staged, and applied at startup](#restore-is-staged-and-applied-at-startup)
 - [Testing](#testing)
   - [Repository hygiene](#repository-hygiene)
 - [Layering diagram](#layering-diagram)
@@ -59,12 +63,12 @@ FSOps is a single .NET solution (`FSOps.sln`) with a React frontend alongside it
 | Project | Responsibility |
 |---|---|
 | `src/FSOps.Core` | Domain model, money handling, route planning, and finance calculations. Airlines, routes, aircraft, flights, pilots, and the entities and pure logic that drive them — see [FSOps.Core areas](#fsopscore-areas). No dependency on ASP.NET Core, EF Core, or SimConnect — this project is plain C# so it can be unit tested in isolation. |
-| `src/FSOps.Data` | Persistence. Entity Framework Core mapping of the domain model onto SQLite, entity configurations, world data import, and the `FsOpsDbContext` used by the server. |
+| `src/FSOps.Data` | Persistence. Entity Framework Core mapping of the domain model onto SQLite, entity configurations, world data import, and the `FsOpsDbContext` used by the server. Also the two places SQLite is handled as a *file* rather than as a database: the pre-migration copy in `ServiceCollectionExtensions`, and `DatabaseSnapshot`, which takes a WAL-safe copy of a live database and answers whether one is intact and which schema it is (see [Backup and restore](#backup-and-restore)). |
 | `src/FSOps.Sim` | The sim abstraction and its two implementations: `SimConnectSource`, which wraps `CTrue.FsConnect` to read live aircraft state from a running copy of MSFS, and `FakeSimSource`, which replays a recorded flight from a JSON script with no simulator needed. Both implement the same `ISimSource` interface (see [Sim abstraction](#sim-abstraction)). |
 | `src/FSOps.Server` | The ASP.NET Core host. Exposes the REST API (see [API endpoint surface](#api-endpoint-surface)) and SignalR hubs, runs the background services that pump sim telemetry and drive flight tracking (see [Simulator connection and the telemetry pipeline](#simulator-connection-and-the-telemetry-pipeline)), post the monthly billing cycle (see [The monthly billing cycle](#the-monthly-billing-cycle-economyclockservice)), and resolve virtual pilots' scheduled flights on the wall clock (see [Virtual pilots and wall-clock resolution](#virtual-pilots-and-wall-clock-resolution-virtualflightresolverservice)); also runs `ReservationReconciler` once on every startup, before those hosted services start, to repair any aircraft left both reserved-for-player and scheduled by a database written before that rule existed (see [Aircraft reservation](#aircraft-reservation-the-two-way-gate-and-reservationreconciler)); wires everything together via dependency injection, and serves the built frontend as static files. |
 | `src/fsops-web` | The React + TypeScript frontend, built with Vite and styled with Tailwind CSS and shadcn/ui, with MapLibre GL for the route-network and live-flight maps. Runs entirely in the browser against the local server. |
 | `tests/FSOps.Core.Tests` | xUnit tests, focused on `FSOps.Core`'s domain, planning, and flight-tracking logic (phase state machine, landing quality, aircraft-type matching, flight numbering). |
-| `tests/FSOps.Server.Tests` | xUnit tests for server-level behaviour that needs a database or a hosted service: endpoint behaviour (routes, fleet, disposal, repositioning, maintenance, finance, planning, stats, pilots, flights, VATSIM, updates), the background services (economy clock, virtual-flight resolver, reservation reconciler), ledger and fuel-billing arithmetic end to end, and the migrations - each column drop is pinned non-destructive against a file-backed database here rather than assumed. |
+| `tests/FSOps.Server.Tests` | xUnit tests for server-level behaviour that needs a database or a hosted service: endpoint behaviour (routes, fleet, disposal, repositioning, maintenance, finance, planning, stats, pilots, flights, VATSIM, updates, backup and restore), the background services (economy clock, virtual-flight resolver, reservation reconciler), ledger and fuel-billing arithmetic end to end, and the migrations - each column drop is pinned non-destructive against a file-backed database here rather than assumed. |
 
 ## FSOps.Core areas
 
@@ -109,6 +113,7 @@ All REST endpoints are versioned under `/api/v1`:
 | `/stats` | `GET /performance`, `GET /trends`, `GET /fleet`, `GET /pilots` | `StatsEndpoints` — the Statistics page's on-time/load-factor series, the day-by-day cash and reputation trends, fleet utilisation and pilot logbook, all derived at request time over a trailing window. `/performance` and `/trends` share one implementation of the per-day on-time/load-factor rules, so the two can never report different numbers for the same day. Revenue and per-route P&L are deliberately **not** here; the page calls `/finance/costs` and `/finance/routes` for those, and the network map is drawn from that same `/finance/routes` response rather than a second calculation. See [The Statistics page](#the-statistics-page). |
 | `/operations/atc`, `/vatsim` | `GET /operations/atc`, `GET /vatsim/traffic`, `GET /vatsim/history` | `VatsimEndpoints` — online controllers with their sector or terminal geometry, other pilots' positions near the airline's network (fetched only when the player switches the layer on), and FSOps' own record of which flights it corroborated online. All three share one cached fetch of VATSIM's public feed. See [The VATSIM ATC layer](#the-vatsim-atc-layer). |
 | `/update` | `GET /status`, `POST /check`, `PUT /preferences`, `PUT /channel`, `POST /dismiss`, `POST /download`, `POST /reveal` | `UpdateEndpoints` — check, notify, download-and-verify, and reveal in Explorer, plus the stable/development release channel (`PUT /channel` — see [Release channels](#release-channels)). Deliberately no endpoint that runs an installer. See [The update checker](#the-update-checker). |
+| `/backup` | `GET /status`, `GET /file`, `POST /restore`, `POST /restore/cancel`, `POST /restore/acknowledge` | `BackupEndpoints` — saving the whole save to one `.fsopsbak` file and putting one back. `GET /file` streams a freshly-taken, verified copy with a `Content-Disposition` naming it for the airline and date; `POST /restore` takes the raw bytes of a candidate file (not a multipart form — one file, and a form body would impose a size ceiling a long-running airline could exceed), checks it completely, takes a safety copy of the current airline and **stages** the swap for the next startup. Deliberately no endpoint that applies a restore in place: the server holds the database open for its whole life. See [Backup and restore](#backup-and-restore). |
 
 ## Request and data flow
 
@@ -189,6 +194,8 @@ FSOps installs into `Program Files`, which is read-only for standard users, so n
 - `AppPaths.DataDirectory` → `%LOCALAPPDATA%\FSOps\`
 - `AppPaths.DatabasePath` → `%LOCALAPPDATA%\FSOps\fsops.db`
 - `AppPaths.LogsDirectory` → `%LOCALAPPDATA%\FSOps\logs\`
+
+The updater and the backup feature each own one further subdirectory beneath `DataDirectory` (`updates\` and `backups\`), resolved through their own single accessor for the same reason — `IUpdateStorage.UpdatesDirectory` and `PendingRestore.BackupsDirectory`, so no code path in either feature constructs a path of its own and a test can point the whole feature at a temporary directory.
 
 No file path is ever hardcoded elsewhere in the codebase — everything goes through `AppPaths`. That's what makes FSOps work correctly wherever it's installed and for whichever Windows account is running it, without an installer needing to set permissions on a shared location.
 
@@ -669,6 +676,42 @@ Expected release shape: a release tagged `v<major>.<minor>.<patch>` (or `v<major
 **Ahead of the channel.** Somebody running a development build who switches back to stable is running something *newer* than the newest stable release. `ApplyRelease` offers strictly-newer releases only, on every channel, so an older build can never be presented as an upgrade — but reporting that as "you are on the latest version" would be false. `AheadOfChannel` and `ChannelNewestVersion` carry the fact, and Settings says it plainly: you are ahead, nothing will be offered until stable catches up, and nothing will be downgraded. It clears itself the moment stable overtakes the build in question; nobody has to do anything to get unstuck.
 
 **Publishing.** `.github/workflows/release.yml` is unchanged and still draft-only — stable releases are published by hand after a real flight. `.github/workflows/beta.yml` handles `v*.*.*-beta*` tags on `develop`: same version gate, same installer smoke test, same checksum sidecar, but it publishes a **pre-release** directly. It can, because a pre-release cannot reach anybody who has not opted in — `/releases/latest` excludes them by definition. `<Version>` in `Directory.Build.props` carries the full `1.1.0-beta.1` for a beta build, and `build-installer.ps1` strips the suffix only for Inno's `VersionInfoVersion`, which must be numeric. The suffix has to survive into the assembly: semver puts `1.1.0-beta.1` *below* `1.1.0`, so a beta reporting itself as `1.1.0` would outrank the beta it came from and its own development channel would go permanently silent.
+
+## Backup and restore
+
+`BackupEndpoints` → `BackupService` → `BackupArchive` / `PendingRestore` / `DatabaseSnapshot`. The whole save goes to one `.fsopsbak` file, and comes back from one.
+
+The rule the design follows throughout: **nothing may destroy anything until a replacement has been proved good and the thing being replaced has been copied.** Every check happens before the current database has been touched, so a refusal costs the player nothing — which is why the refusals are worth as much as the feature.
+
+### Why a file copy is not a backup
+
+FSOps runs SQLite in WAL mode (`WalModeConnectionInterceptor`), so a committed transaction can still be sitting in `fsops.db-wal` rather than in `fsops.db`. Copying the main file on its own therefore produces a database that opens cleanly, passes `PRAGMA integrity_check`, and is silently missing the player's most recent flights. It is the worst failure this feature could have, because it is invisible until the day it is needed.
+
+`DatabaseSnapshot.WriteTo` uses SQLite's own backup API instead (`SqliteConnection.BackupDatabase`), which reads through the engine, sees the WAL contents, and writes a fully checkpointed, self-contained file — while the app is still running and still holds the database open, which is the only way this can work at all. `VACUUM INTO` would give the same guarantee; the backup API is used because it is already what the pre-migration copy uses (`ServiceCollectionExtensions.BackUpBeforeMigrating`), and one proven way of copying this database is better than two. Both open with `Pooling=False`, because Microsoft.Data.Sqlite returns a closed connection to its pool rather than releasing the file handle, and a copy that cannot then be moved or zipped is a copy that appears to work and cannot be used.
+
+`DatabaseSnapshot.Delete` removes a database **with its `-wal` and `-shm` companions**, and every deletion of a database in this feature goes through it. Not tidiness: merely opening a WAL database — even read-only, as the integrity check does — recreates the companions, and a write-ahead log left beside a file it does not belong to is one of the few ways to turn a good database into a corrupt one.
+
+`BackupAndRestoreTests` proves both halves of the WAL case from the same database at the same moment, with the file still open: the naive `File.Copy` losing the last write, and the real backup keeping it.
+
+### The archive, and what it has to carry
+
+A `.fsopsbak` is a zip holding `manifest.json` and `fsops.db`. A bare `.db` would have been simpler and is not enough: it carries nothing about the build that produced it, so nothing on the restore side could tell a save from a newer FSOps apart from one it can safely read. The container also gives truncation detection for free — a file cut short loses its central directory and will not open at all, which is the moment to notice, rather than half-way through overwriting an airline.
+
+`BackupManifest` records the app version, the newest applied EF migration, when it was taken, the airline's name, and the stored database's length and SHA-256. `BackupArchive.Inspect` checks them in a deliberate order — identify the file, verify its bytes, verify the database, then decide whether this build can read the schema — and returns a `BackupInspection` that is either accepted or carries one sentence written for the player.
+
+The compatibility decision is made on the **migration recorded inside the database**, not on the manifest beside it: the manifest describes the file, and the decision has to be made on the file. A migration id absent from `db.Database.GetMigrations()` means the backup was written by a build with migrations this one has never heard of, and it is **refused** — attempting it would not fail cleanly, it would half-work. The message names the version and states which direction is supported, because a refusal that reads as "backups do not work" is worse than no message. The reverse direction is expected to work and is proved by a test: an older backup is restored and then migrated forward, exactly as an existing database would be.
+
+The manifest is written first and uncompressed so that a file which will not open as an archive can still be recognised as a truncated FSOps backup rather than reported as the wrong file entirely — two situations that need different answers, since "your copy did not finish" is actionable and "wrong file" is not.
+
+### Restore is staged, and applied at startup
+
+The server holds the database open for its whole life: six hosted services write to it, EF pools its connections, and SQLite keeps `-wal` and `-shm` alongside. Swapping the file underneath all of that would not be a restore that half-worked; it would be a corrupt database produced by the feature meant to prevent one. **There is deliberately no endpoint that applies a restore in place.**
+
+So `POST /backup/restore` verifies the file, writes a full safety copy of the current airline into `backups\` (named `Before restore - …`, and reported back in the response — a restore that overwrites the wrong airline is the same unrecoverable mistake wearing a different coat), and stages the verified database as `restore-pending.db` with a `restore-pending.json` beside it. Both files must be present for `PendingRestore.Read` to see a staged restore, so a half-written stage is never mistaken for a complete one.
+
+`Program.cs` calls `PendingRestore.ApplyIfStaged` **before `MigrateFsOpsDatabase`**, which is the last moment at which nothing has opened the database. The swap moves the current file aside rather than deleting it, so a failure part-way can put it back, and deletes `fsops.db-wal`/`-shm` with it. The staged file is re-checked with `PRAGMA integrity_check` first rather than trusted from upload time — between staging and the restart a machine can lose power or a disk can go bad, and replacing a working database with a broken one is the one mistake here with no way back. Migrations then run immediately afterwards, which is what makes an older backup work.
+
+The outcome is written to `restore-result.json` and reported by `GET /backup/status` until the player dismisses it. A restore that needs a restart is a restore they cannot watch finish, and leaving them to infer from the numbers whether it worked would be its own failure.
 
 ## Testing
 

@@ -12,20 +12,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { BackupSection } from '@/components/settings/BackupSection'
 import { WorldDataSection } from '@/components/settings/WorldDataSection'
 import { ApiError, del } from '@/lib/api'
 
 /**
- * Everything about the data FSOps holds: the world airport/runway data it ships with, and the one
- * irreversible action that throws the player's own data away. They sit together, in that order,
- * because both are "data" to someone scanning the page — but the world-data card is a separate
- * component so its refresh action can never be mistaken for part of the danger zone. Refreshing
- * world data deletes nothing; deleting an airline deletes everything.
+ * Everything about the data FSOps holds: the world airport/runway data it ships with, the way to
+ * save the player's own data and put it back, and the one irreversible action that throws it away.
+ * They sit together, in that order, because all three are "data" to someone scanning the page — but
+ * each is a separate card so no action can be mistaken for part of another. Refreshing world data
+ * deletes nothing; deleting an airline deletes everything.
+ *
+ * <p>Backup sits immediately above the danger zone on purpose. The one thing worth reading before
+ * pressing "Delete airline" is that there is a way to keep a copy, and the delete confirmation says
+ * so too.</p>
  */
 export function DataSection() {
   return (
     <>
       <WorldDataSection />
+      <BackupSection />
       <DangerZone />
     </>
   )
@@ -59,7 +65,8 @@ function DangerZone() {
           <div>
             <p className="text-sm font-medium">Start over</p>
             <p className="text-xs text-muted-foreground">
-              Permanently deletes your airline, fleet, routes, and finances. This cannot be undone.
+              Permanently deletes your airline, fleet, routes, and finances. This cannot be undone &mdash; take a backup
+              first if there is any chance you will want this airline back.
             </p>
           </div>
           <Button type="button" variant="destructive" onClick={() => setConfirmOpen(true)} className="shrink-0">
@@ -76,8 +83,9 @@ function DangerZone() {
               Delete your airline?
             </DialogTitle>
             <DialogDescription>
-              This permanently removes your airline, fleet, routes, pilots, and financial history. There is no undo.
-              You&rsquo;ll be returned to the setup wizard.
+              This permanently removes your airline, fleet, routes, pilots, and financial history. There is no undo, and
+              a backup taken beforehand is the only way to get any of it back. You&rsquo;ll be returned to the setup
+              wizard.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
