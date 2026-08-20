@@ -283,7 +283,9 @@ Selecting the **+** on a suggestion loads that pair into the route planner at th
 
 ## What to buy next
 
-The Fleet page carries the matching question. **What to buy next** starts by telling you whether buying anything is the right move at all:
+The Fleet page carries the matching question. **What to buy next** sits below your aircraft, folded away by default so the page stays about the fleet you already have. Its header always tells you what it found — "2 aircraft idle", "1 route you can't fly", "4 aircraft suggested" — so you can see at a glance whether it is worth opening. Select the header to open it; it stays however you left it next time.
+
+Opened, it starts by telling you whether buying anything is the right move at all:
 
 - If any aircraft has **nothing scheduled**, that is the headline, and it names them. Rostering an airframe you already pay for earns more than adding another one. An aircraft reserved to you is never counted as idle — it has no schedule because it is being kept free for you to fly, which is the whole point of the reservation.
 - If any of your routes **cannot be flown by anything you own**, that gap is next, with the reason for each.
@@ -557,7 +559,9 @@ On the Fleet page the **Move** button stays visible but disabled when an aircraf
 
 ## Selling an aircraft, ending a lease, and settling a loan early
 
-Acquiring aircraft was always possible; getting rid of one, or clearing debt early, now is too — all three actions live on the Fleet page (loan repayment is also on the [Finances page](#the-finances-page)), and all three follow the same pattern: **you're shown a firm figure before you commit, and if that figure has genuinely moved by the time you confirm, FSOps refuses the action and shows you the new one rather than silently charging something different.** That isn't a bug or an error to work around — it's a safety feature. The figures involved (an aircraft's condition, wall-clock time since your last lease payment, a loan's outstanding balance) can all move in the background while a confirmation dialog is sitting open, most often because a virtual pilot's flight or the monthly billing cycle landed in between, so FSOps re-checks rather than trusting a number that might already be stale. If you see this, just re-open the action — the fresh figure will be right there.
+Acquiring aircraft was always possible; getting rid of one, or clearing debt early, now is too — all three actions live on the Fleet page (loan repayment is also on the [Finances page](#the-finances-page)), and all three follow the same pattern: **you're shown a firm figure before you commit, and if that figure has genuinely moved by the time you confirm, FSOps refuses the action and shows you the new one rather than silently charging something different.** That isn't a bug or an error to work around — it's a safety feature. The figures involved (an aircraft's condition, a loan's outstanding balance, which billing period a lease is in) can all move in the background while a confirmation dialog is sitting open, because a virtual pilot's flight or the monthly billing cycle landed in between, so FSOps re-checks rather than trusting a number that might already be stale. When it happens the dialog says so, tells you nothing has been charged, and shows you the new figure to confirm against.
+
+It should be rare, and it should never cost you a click for no reason: **one deliberate confirmation is meant to be enough.** In particular, an early lease return is quoted to the second, so its figure creeps up for as long as the dialog is open — that is just rent accruing for time you still have the aircraft, not a change worth stopping you for, and you are charged the true figure at the moment you confirm rather than the one frozen on screen a minute earlier. Anything else that refuses the action — not enough cash, the aircraft now on a pilot's standing schedule — is reported as itself, in its own words, so you can tell a genuine re-check apart from a real problem.
 
 ### Selling an owned aircraft
 
@@ -565,7 +569,7 @@ Available for any aircraft you **own** outright (not leased). The sale value is 
 
 ### Ending a lease early
 
-Available for any aircraft you **lease**. Ending it before the end of a billing period charges a **pro-rata amount** for the part of the current 30-day period you've actually had it, plus a separate **early-termination fee** — so timing the return around a payment doesn't dodge anything, and leasing stays a real commitment rather than a free rental you can hand back the moment it stops suiting you. The same blockers apply as selling (not while flying, not while on a standing schedule, loan unaffected), plus FSOps won't let the charge take your cash balance negative.
+Available for any aircraft you **lease**. Ending it before the end of a billing period charges a **pro-rata amount** for the part of the current 30-day period you've actually had it, plus a separate **early-termination fee** — so timing the return around a payment doesn't dodge anything, and leasing stays a real commitment rather than a free rental you can hand back the moment it stops suiting you. The same blockers apply as selling (not while flying, not while on a standing schedule, loan unaffected), plus FSOps won't let the charge take your cash balance negative — and if it can't, it says so in exactly those terms rather than dressing it up as a changed price. The pro-rata part is worked out to the second, so the total ticks up gently while the dialog is open; you're charged what you owe at the moment you confirm, and the toast afterwards tells you the exact figure taken.
 
 ### Settling a loan early, fully or partially
 

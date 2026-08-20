@@ -17,15 +17,24 @@ namespace FSOps.Server.Endpoints;
 /// <see cref="AircraftDepreciationCalculator"/>/<see cref="LeaseTerminationCalculator"/>'s own docs
 /// for how each exploit - selling at cost, returning a lease between billing ticks - is closed).
 /// <para>
-/// <b>Every commit here recomputes its quote from current state and compares it, bit-for-bit,
-/// against the figure the caller confirmed.</b> Both a sale value (depends on airframe hours/
-/// condition, which a virtual pilot's background flight can move) and a lease-termination charge
-/// (depends on wall-clock time) can legitimately drift between a quote being shown and the player
-/// clicking confirm - the world keeps moving even while a confirmation dialog is open (see
-/// billing and virtual flights both resolve against real time, not app-open time). Both actions are irreversible, so a mismatch refuses the
-/// action and returns the new figure rather than silently posting a different number than the one
-/// on screen. All time reads go through <see cref="IClock"/> rather than
-/// <see cref="DateTimeOffset.UtcNow"/> directly, so this is deterministically testable.
+/// <b>Every commit here recomputes its quote from current state and charges what it recomputes</b> -
+/// the figure the caller confirmed is evidence about what they were shown, never the amount that
+/// moves money. The world keeps moving while a confirmation dialog is open (billing and virtual
+/// flights both resolve against real time, not app-open time), and both actions are irreversible, so
+/// each commit also decides whether what the player agreed to has materially changed and refuses
+/// rather than posting a surprise.
+/// </para>
+/// <para>
+/// <b>The two commits ask that question differently, and deliberately.</b> A sale value moves only
+/// when the airframe does - a virtual pilot's background flight adds hours and wears condition - so
+/// <see cref="SellAsync"/> compares the value exactly. A lease-termination charge is pro-rata rent
+/// and therefore grows with the clock every second, so an exact comparison there was unsatisfiable
+/// by a human and refused every click; <see cref="EndLeaseAsync"/> compares the billing period
+/// instead. See that method's own doc - it is the more interesting of the two.
+/// </para>
+/// <para>
+/// All time reads go through <see cref="IClock"/> rather than <see cref="DateTimeOffset.UtcNow"/>
+/// directly, so this is deterministically testable.
 /// </para>
 /// </summary>
 public static class FleetDisposalEndpoints
@@ -243,11 +252,30 @@ public static class FleetDisposalEndpoints
     }
 
     /// <summary>
-    /// Ends the lease early. Requires <see cref="EndLeaseRequest.ExpectedTotalCharge"/> - the exact
-    /// figure the player confirmed on <see cref="LeaseTerminationQuoteAsync"/>. The settlement is
-    /// recomputed here (wall-clock time has necessarily moved since the quote was shown) and
-    /// compared against it; on any mismatch nothing is posted and the new figure is returned - see
-    /// this class's own doc.
+    /// Ends the lease early, charging the settlement recomputed here and now - never the figure the
+    /// caller confirmed. See <see cref="EndLeaseRequest"/> for what the confirmed figures are for.
+    /// <para>
+    /// <b>This commit guards on the billing PERIOD, not on the money.</b> Its siblings
+    /// (<see cref="SellAsync"/>, <c>FinanceEndpoints.SettleLoanAsync</c>) compare their quote
+    /// against discrete state - airframe hours, a loan's remaining balance - which only moves when
+    /// something happens, so an exact comparison there is a question the player can answer. A
+    /// lease-termination charge is not like that: it is pro-rata rent, so it grows continuously with
+    /// the clock (about a cent a second on a mid-size narrowbody). Comparing it exactly asked the
+    /// player to click within the same fraction of a second the quote was priced in, which nobody
+    /// can do - <b>every</b> click was refused, and the "figures changed, confirm again" re-quote
+    /// that followed looked exactly like a button that had swallowed the click. It was reported as
+    /// "you have to click nearly 3 times to end a lease".
+    /// </para>
+    /// <para>
+    /// So the guard asks the question it always meant to ask: <i>is this lease still in the billing
+    /// period it was quoted in?</i> That is a fact rather than a magnitude - no threshold to justify
+    /// and no cliff-edge - and only the one event the guard exists for can change it: a rent payment
+    /// falling due, which <c>EconomyClockService</c> posts by advancing
+    /// <c>EconomyState.LastProcessedUtc</c> a whole <see cref="EconomyClockService.PeriodLength"/>.
+    /// That resets the pro-rata to nearly nothing, a change worth stopping to re-read. Mere clock
+    /// drift inside one period is not: it is rent genuinely accruing for time the aircraft was
+    /// genuinely held, and it is charged, which is the honest answer.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> EndLeaseAsync(
         Guid id, EndLeaseRequest request, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog, IClock clock, CancellationToken ct)
@@ -278,11 +306,15 @@ public static class FleetDisposalEndpoints
 
         var (settlement, periodStart) = await ComputeLeaseSettlementAsync(db, airline, lease, economyConfigCatalog, clock, ct);
 
-        if (settlement.TotalCharge != request.ExpectedTotalCharge)
+        // Exact equality is safe here despite being a timestamp comparison: this value is one the
+        // server itself serialised on the quote and the caller echoes back untouched, never one
+        // reconstructed from a parsed local Date. A caller that omits it gets the same refusal as a
+        // stale one - the failure direction is "re-quote", never "charge something unconfirmed".
+        if (request.ExpectedPeriodStartUtc != periodStart)
         {
             return Results.BadRequest(new
             {
-                error = $"The termination charge has changed since you last checked (was {request.ExpectedTotalCharge:F2}, now {settlement.TotalCharge:F2}) - please confirm the new figure.",
+                error = $"A rent payment fell due while you were deciding, so this lease has moved into a new billing period (the charge was {request.ExpectedTotalCharge:F2}, it is now {settlement.TotalCharge:F2}) - nothing has been charged, please confirm the new figure.",
                 currentTotalCharge = settlement.TotalCharge,
             });
         }
@@ -302,6 +334,10 @@ public static class FleetDisposalEndpoints
         lease.EndUtc = now;
         aircraft.DeletedUtc = now;
 
+        // Both lines come from `settlement`, computed a few statements ago from the current clock -
+        // never from `request.ExpectedTotalCharge`. Charging the confirmed figure would let a player
+        // hold the dialog open to freeze the price while the rent kept accruing, which is a day of
+        // free rent for anyone who notices. What is charged is what is owed, to the second.
         db.LedgerTransactions.Add(new LedgerTransaction
         {
             Id = Guid.NewGuid(),
@@ -421,6 +457,15 @@ public static class FleetDisposalEndpoints
 /// different figure. See the class doc.</summary>
 public record SellAircraftRequest(decimal ExpectedSaleValue);
 
-/// <summary>Body for <see cref="FleetDisposalEndpoints.EndLeaseAsync"/> - carries the total charge
-/// the player confirmed on the quote. See the class doc.</summary>
-public record EndLeaseRequest(decimal ExpectedTotalCharge);
+/// <summary>
+/// Body for <see cref="FleetDisposalEndpoints.EndLeaseAsync"/>.
+/// <para>
+/// <paramref name="ExpectedPeriodStartUtc"/> is the guard: it is <c>currentPeriodStartUtc</c> from
+/// the quote, echoed back untouched, and the commit refuses unless the lease is still in that same
+/// billing period. <paramref name="ExpectedTotalCharge"/> is <b>not</b> a guard and is never
+/// charged - it is carried only so a refusal can tell the player what they were looking at versus
+/// what it is now. See <see cref="FleetDisposalEndpoints.EndLeaseAsync"/> for why the money cannot
+/// be the thing compared.
+/// </para>
+/// </summary>
+public record EndLeaseRequest(decimal ExpectedTotalCharge, DateTimeOffset? ExpectedPeriodStartUtc);
