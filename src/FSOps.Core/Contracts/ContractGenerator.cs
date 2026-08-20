@@ -461,13 +461,19 @@ public static class ContractGenerator
 /// The other businesses. Pure flavour - nothing keys off a name - but a job from "Northgate Freight"
 /// reads as a job and a job from "Operator 4" reads as a placeholder, and the whole feature is about
 /// the flying feeling like something.
+///
+/// <para><b>Every prefix must be invented.</b> An earlier list contained "Loganair", which is a real
+/// airline still trading, so the board generated jobs attributing business to a real company that has
+/// nothing to do with them. Place-like coinages (Northgate, Westbrook, Stonebridge) are the pattern
+/// precisely because they sound like a firm without being one - check any addition against a real
+/// operator before adding it.</para>
 /// </summary>
 internal static class OperatorNames
 {
     private static readonly string[] Prefixes =
     [
         "Northgate", "Meridian", "Kestrel", "Harbour", "Ardent", "Fairwind", "Blackwater", "Summit",
-        "Loganair", "Caledon", "Westbrook", "Pinehurst", "Corvus", "Redpoint", "Stonebridge", "Halcyon",
+        "Lochwood", "Caledon", "Westbrook", "Pinehurst", "Corvus", "Redpoint", "Stonebridge", "Halcyon",
     ];
 
     private static readonly string[] FerrySuffixes =
