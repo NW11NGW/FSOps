@@ -32,6 +32,23 @@ interface EndLeaseDialogProps {
 }
 
 /**
+ * True only for the end-lease endpoint's own stale-quote refusal (FleetDisposalEndpoints.EndLeaseAsync),
+ * which is the single case where re-quoting is the right next step - the figure the player confirmed
+ * has genuinely moved. Every other refusal from that endpoint - not enough cash, the aircraft having
+ * gone onto a virtual pilot's standing schedule, the lease already being ended - is a 400 with a
+ * plain `error` string and no `currentTotalCharge`, so checking for that field (rather than matching
+ * on the message's wording, which is for display and can be reworded without warning) is what
+ * actually tells the two apart.
+ *
+ * Same shape, and the same reason, as LoanRepaymentDialog's own isStaleQuoteError: re-quoting on a
+ * hard refusal replaces the real reason with "this lease's figures changed", which is both untrue
+ * and unactionable - a player short of cash is told to confirm again, does, and is refused again.
+ */
+function isStaleQuoteError(err: ApiError): boolean {
+  return typeof err.body === 'object' && err.body !== null && 'currentTotalCharge' in err.body
+}
+
+/**
  * Ending a lease early moves real money and can't be undone: returning early has to cost something
  * (pro-rata rent for days already used, plus an early-termination fee), or leasing is a free rental
  * and the project rule that a disposal action needs an explicit confirmation naming the aircraft
@@ -39,11 +56,13 @@ interface EndLeaseDialogProps {
  * page's Leases section (per-lease "end lease" action) - both just need a fleet aircraft id and
  * its registration.
  *
- * The server carries the same optimistic-concurrency guard as the sell path
- * (`EndLeaseRequest.ExpectedTotalCharge` in FleetDisposalEndpoints.cs): the total charge the player
- * confirmed travels with the commit, and the server refuses if the real figures moved between quote
- * and confirm. That refusal reads as a re-quote here (see `handleSubmit`'s catch block and the
- * "figures changed" banner below), never a raw error.
+ * The server carries an optimistic-concurrency guard like the sell path's, but asking a different
+ * question (see FleetDisposalEndpoints.EndLeaseAsync). A lease-termination charge grows with the
+ * clock, so "did the number change" was a question no player could ever answer in time - it refused
+ * every click, and the re-quote banner that followed looked exactly like a button that had swallowed
+ * it. The guard now asks whether the lease is still in the billing period it was quoted in, which
+ * only a rent payment falling due can change. That refusal reads as a re-quote here (see
+ * `handleSubmit`'s catch block and the banner below); every other refusal reads as itself.
  */
 export function EndLeaseDialog({ target, onOpenChange, onSuccess }: EndLeaseDialogProps) {
   const { status, quote, refetch } = useLeaseTerminationQuote(target?.id ?? null)
@@ -55,6 +74,11 @@ export function EndLeaseDialog({ target, onOpenChange, onSuccess }: EndLeaseDial
   const [priceChangedFrom, setPriceChangedFrom] = useState<number | null>(null)
   const awaitingRevalidation = useRef(false)
   const submittedCharge = useRef<number | null>(null)
+  // The server's own words for the refusal that triggered the re-quote. Kept so that if the re-quote
+  // comes back and the charge has NOT actually moved, the click still says something rather than
+  // silently redrawing the same dialog - a confirmation that appears to do nothing is the whole
+  // defect this dialog was fixed for.
+  const pendingStaleMessage = useRef<string | null>(null)
 
   // Depend on the primitive id, NOT `target` itself - both call sites (Fleet.tsx, LeasesSection via
   // Finances.tsx) construct `target` as a fresh object literal on every render they make (e.g. from
@@ -66,18 +90,45 @@ export function EndLeaseDialog({ target, onOpenChange, onSuccess }: EndLeaseDial
     setError(null)
     setPriceChangedFrom(null)
     awaitingRevalidation.current = false
+    pendingStaleMessage.current = null
   }, [target?.id])
 
+  // Only reached after a genuine stale-quote refusal (see handleSubmit). Once the re-quote resolves,
+  // say what changed - and if it somehow did not change, or could not be re-priced, still say
+  // something. Every branch here ends with the player able to tell what their click did.
   useEffect(() => {
-    if (!awaitingRevalidation.current || status !== 'ready') return
+    if (!awaitingRevalidation.current) return
+    if (status === 'error') {
+      awaitingRevalidation.current = false
+      setError(pendingStaleMessage.current ?? 'Could not end this lease. Check your connection and try again.')
+      pendingStaleMessage.current = null
+      return
+    }
+    if (status !== 'ready') return
     awaitingRevalidation.current = false
     if (quote && quote.canEndLease && submittedCharge.current !== null && quote.totalCharge !== submittedCharge.current) {
       setPriceChangedFrom(submittedCharge.current)
       setError(null)
+    } else if (quote && quote.canEndLease) {
+      // Refused as stale, yet the fresh quote reads the same. Nothing to re-confirm against, so the
+      // server's own reason is the only honest thing to show - never an unchanged, unexplained dialog.
+      setError(pendingStaleMessage.current)
     }
+    // The remaining case - the re-quote came back blocked - is already covered by the blockReason
+    // banner, which replaces this whole section of the dialog.
+    pendingStaleMessage.current = null
   }, [status, quote])
 
-  const registration = target?.registration ?? ''
+  // Radix keeps the content mounted while it plays the close animation, and by then `target` is
+  // already null - so the last frame of a SUCCESSFUL end-lease read "End lease on ?" over an empty
+  // body. A degraded frame at the exact moment the action worked is the last thing this dialog
+  // should show, so remember what it was about and let the exit still name the aircraft. Display
+  // only: `canSubmit` below stays keyed off the live `target`/`quote`.
+  const lastTarget = useRef<EndLeaseTarget | null>(null)
+  if (target) lastTarget.current = target
+  const shown = target ?? lastTarget.current
+
+  const registration = shown?.registration ?? ''
   const confirmed = confirmText.trim().toUpperCase() === registration.toUpperCase() && registration.length > 0
   const canSubmit = status === 'ready' && quote !== null && quote.canEndLease && confirmed && !submitting
 
@@ -88,14 +139,31 @@ export function EndLeaseDialog({ target, onOpenChange, onSuccess }: EndLeaseDial
     setPriceChangedFrom(null)
     submittedCharge.current = quote.totalCharge
     try {
-      const result = await post<LeaseTerminationResult>(`/fleet/${target.id}/end-lease`, { expectedTotalCharge: quote.totalCharge })
+      // Both the figure and the billing period it was priced in travel with the commit. The server
+      // charges what it recomputes, and uses the period only to answer "is this still the same
+      // period you were quoted in" - see FleetDisposalEndpoints.EndLeaseAsync.
+      const result = await post<LeaseTerminationResult>(`/fleet/${target.id}/end-lease`, {
+        expectedTotalCharge: quote.totalCharge,
+        expectedPeriodStartUtc: quote.currentPeriodStartUtc,
+      })
       toast.success(`Ended the lease on ${target.registration} - charged ${fmt.money(result.totalCharge)}. Cash balance now ${fmt.money(result.cashBalance)}.`)
       onOpenChange(false)
       onSuccess()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not end this lease. Check your connection and try again.')
-      awaitingRevalidation.current = true
-      refetch()
+      if (err instanceof ApiError && isStaleQuoteError(err)) {
+        // The guard working as intended, not a failure: a billing tick landed between the quote and
+        // this click. Re-quote and let the player decide again against the current figure.
+        pendingStaleMessage.current = err.message
+        awaitingRevalidation.current = true
+        refetch()
+      } else if (err instanceof ApiError) {
+        // Any other refusal - not enough cash, the aircraft now on a pilot's standing schedule, the
+        // lease already ended. Nothing about the quote changed, so this must never claim otherwise:
+        // shown as itself, and the quote is left alone rather than re-fetched.
+        setError(err.message)
+      } else {
+        setError('Could not end this lease. Check your connection and try again.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -105,7 +173,7 @@ export function EndLeaseDialog({ target, onOpenChange, onSuccess }: EndLeaseDial
     <Dialog open={target !== null} onOpenChange={(next) => !submitting && onOpenChange(next)}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>End lease on {target?.registration}?</DialogTitle>
+          <DialogTitle>End lease on {registration}?</DialogTitle>
           <DialogDescription>{quote?.aircraftTypeName ?? 'This'} lease returns early - it moves real money and can't be undone.</DialogDescription>
         </DialogHeader>
 
@@ -131,8 +199,9 @@ export function EndLeaseDialog({ target, onOpenChange, onSuccess }: EndLeaseDial
               <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
                 <RefreshCw className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  This lease's figures changed since you opened this dialog - the charge was {fmt.money(priceChangedFrom)}, it's now{' '}
-                  {fmt.money(quote.totalCharge)}. Review below and confirm again.
+                  A rent payment fell due while this dialog was open, so this lease has moved into a new billing period - the
+                  charge was {fmt.money(priceChangedFrom)}, it's now {fmt.money(quote.totalCharge)}. Nothing has been charged.
+                  Review the new figures below and confirm again.
                 </span>
               </div>
             )}

@@ -10,7 +10,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
   return { ...actual, get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() }
 })
 
-import { get, post } from '@/lib/api'
+import { ApiError, get, post } from '@/lib/api'
 
 const aircraft: FleetAircraftSummary = {
   id: 'ac-1',
@@ -67,9 +67,29 @@ function mockGetDefault(quoteOverride: SaleQuote = quote) {
 }
 
 beforeEach(() => {
+  vi.mocked(get).mockReset()
   mockGetDefault()
   vi.mocked(post).mockReset()
 })
+
+function quoteFetchCount(): number {
+  return vi.mocked(get).mock.calls.filter(([path]) => String(path).includes('/sale-quote')).length
+}
+
+async function mountConfirmed(onSuccess = vi.fn(), onOpenChange = vi.fn()) {
+  const mounted = await mount(
+    <SettingsProvider>
+      <SellAircraftDialog aircraft={aircraft} onOpenChange={onOpenChange} onSuccess={onSuccess} />
+    </SettingsProvider>,
+  )
+  await flush()
+
+  const confirmInput = document.body.querySelector<HTMLInputElement>('#sell-confirm')
+  if (!confirmInput) throw new Error('sell-confirm input not found')
+  typeInto(confirmInput, 'g-abcd')
+
+  return mounted
+}
 
 describe('SellAircraftDialog - request body', () => {
   it('sends the confirmed sale value the player was shown, not an empty body', async () => {
@@ -108,6 +128,50 @@ describe('SellAircraftDialog - request body', () => {
 
     const sellButton = findButton(document.body, 'Sell for')
     expect(sellButton.hasAttribute('disabled')).toBe(true)
+
+    mounted.unmount()
+  })
+})
+
+/**
+ * The same discrimination EndLeaseDialog and LoanRepaymentDialog carry. A sale quote is priced off
+ * discrete state (airframe hours, condition) rather than the clock, so this dialog never swallowed
+ * clicks the way the end-lease one did - but it lumped every refusal into "the figures changed",
+ * which is misleading regardless of whether it also costs the player a click.
+ */
+describe('SellAircraftDialog - a refusal must read as itself', () => {
+  it('reports a hard refusal as itself and does NOT re-quote', async () => {
+    const message = 'G-ABCD is on Jo Bloggs’ standing schedule (4 leg(s)/week) - remove it from their schedule first.'
+    vi.mocked(post).mockRejectedValue(new ApiError(400, message, { error: message }))
+
+    const mounted = await mountConfirmed()
+    const quotesBefore = quoteFetchCount()
+
+    click(findButton(document.body, 'Sell for'))
+    await flush()
+
+    const dialogText = document.body.textContent ?? ''
+    expect(dialogText).toContain('standing schedule')
+    expect(dialogText).not.toContain("figures changed")
+    expect(quoteFetchCount()).toBe(quotesBefore)
+
+    mounted.unmount()
+  })
+
+  it('treats a genuine stale-quote refusal as a re-quote, and says what changed', async () => {
+    const message = 'The sale value has changed since you last checked (was 24000000.00, now 23880000.00) - please confirm the new figure.'
+    vi.mocked(post).mockRejectedValue(new ApiError(400, message, { error: message, currentSaleValue: 23880000 }))
+
+    const mounted = await mountConfirmed()
+    const quotesBefore = quoteFetchCount()
+
+    mockGetDefault({ ...quote, saleValue: 23880000, airframeHours: 12400 })
+
+    click(findButton(document.body, 'Sell for'))
+    await flush()
+
+    expect(quoteFetchCount()).toBe(quotesBefore + 1)
+    expect(document.body.textContent ?? '').toContain("figures changed")
 
     mounted.unmount()
   })

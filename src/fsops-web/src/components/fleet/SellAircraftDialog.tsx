@@ -28,6 +28,21 @@ interface SellAircraftDialogProps {
 }
 
 /**
+ * True only for the sell endpoint's own stale-quote refusal (FleetDisposalEndpoints.SellAsync),
+ * which is the single case where re-quoting is the right next step - the airframe genuinely moved
+ * between the quote and the click. Every other refusal - the aircraft now in flight, or on a virtual
+ * pilot's standing schedule, or already sold - is a 400 with a plain `error` string and no
+ * `currentSaleValue`, so checking for that field (rather than matching on the message's wording,
+ * which is for display and can be reworded without warning) is what tells the two apart.
+ *
+ * Same shape as LoanRepaymentDialog's and EndLeaseDialog's. Re-quoting on a hard refusal replaces
+ * the real reason with "this aircraft's figures changed", which is untrue and unactionable.
+ */
+function isStaleQuoteError(err: ApiError): boolean {
+  return typeof err.body === 'object' && err.body !== null && 'currentSaleValue' in err.body
+}
+
+/**
  * Selling an owned aircraft moves real money and can't be undone, so the actual figure is shown
  * before confirming and posted as an itemised ledger line afterwards - plus the FSOps
  * project instruction that a disposal action needs an explicit confirmation naming the aircraft by
@@ -52,6 +67,9 @@ export function SellAircraftDialog({ aircraft, onOpenChange, onSuccess }: SellAi
   const [priceChangedFrom, setPriceChangedFrom] = useState<number | null>(null)
   const awaitingRevalidation = useRef(false)
   const submittedValue = useRef<number | null>(null)
+  // The server's own words for the refusal that triggered the re-quote, so that a re-quote which
+  // comes back unchanged still explains itself rather than silently redrawing the same dialog.
+  const pendingStaleMessage = useRef<string | null>(null)
 
   // Depend on the primitive id, NOT `aircraft` itself - callers (Fleet.tsx) construct `aircraft`
   // as a fresh object literal on every render they make (e.g. from a live cash-balance heartbeat
@@ -63,21 +81,41 @@ export function SellAircraftDialog({ aircraft, onOpenChange, onSuccess }: SellAi
     setError(null)
     setPriceChangedFrom(null)
     awaitingRevalidation.current = false
+    pendingStaleMessage.current = null
   }, [aircraft?.id])
 
   // Once a re-fetch triggered by a refused sell resolves, decide whether the figures actually
   // moved (show a re-quote banner) or the sale is simply blocked now for another reason (the
-  // block-reason banner below already covers that from `quote.canSell`).
+  // block-reason banner below already covers that from `quote.canSell`). Every branch ends with
+  // the player able to tell what their click did - none of them leaves the dialog silent.
   useEffect(() => {
-    if (!awaitingRevalidation.current || status !== 'ready') return
+    if (!awaitingRevalidation.current) return
+    if (status === 'error') {
+      awaitingRevalidation.current = false
+      setError(pendingStaleMessage.current ?? 'Could not sell this aircraft. Check your connection and try again.')
+      pendingStaleMessage.current = null
+      return
+    }
+    if (status !== 'ready') return
     awaitingRevalidation.current = false
     if (quote && quote.canSell && submittedValue.current !== null && quote.saleValue !== submittedValue.current) {
       setPriceChangedFrom(submittedValue.current)
       setError(null)
+    } else if (quote && quote.canSell) {
+      setError(pendingStaleMessage.current)
     }
+    pendingStaleMessage.current = null
   }, [status, quote])
 
-  const registration = aircraft?.registration ?? ''
+  // Radix keeps the content mounted while it plays the close animation, by which time `aircraft` is
+  // already null - so the last frame of a successful sale would read "Sell ?" over an empty body.
+  // Display only; `canSubmit` below stays keyed off the live `aircraft`/`quote`. Same fix as
+  // EndLeaseDialog's.
+  const lastAircraft = useRef<FleetAircraftSummary | null>(null)
+  if (aircraft) lastAircraft.current = aircraft
+  const shown = aircraft ?? lastAircraft.current
+
+  const registration = shown?.registration ?? ''
   const confirmed = confirmText.trim().toUpperCase() === registration.toUpperCase() && registration.length > 0
   const canSubmit = status === 'ready' && quote !== null && quote.canSell && confirmed && !submitting
 
@@ -93,12 +131,19 @@ export function SellAircraftDialog({ aircraft, onOpenChange, onSuccess }: SellAi
       onOpenChange(false)
       onSuccess()
     } catch (err) {
-      // A refusal here can legitimately mean "the figures moved since you looked" (background
-      // flying between quote and confirm) rather than a hard failure - re-quote instead of just
-      // reporting the error text.
-      setError(err instanceof ApiError ? err.message : 'Could not sell this aircraft. Check your connection and try again.')
-      awaitingRevalidation.current = true
-      refetch()
+      if (err instanceof ApiError && isStaleQuoteError(err)) {
+        // "The figures moved since you looked" - background flying between quote and confirm. The
+        // guard working as intended, so re-quote rather than reporting it as a failure.
+        pendingStaleMessage.current = err.message
+        awaitingRevalidation.current = true
+        refetch()
+      } else if (err instanceof ApiError) {
+        // A hard refusal - in flight, on a pilot's standing schedule, already sold. Nothing about
+        // the quote changed, so this must read as itself rather than as a price change.
+        setError(err.message)
+      } else {
+        setError('Could not sell this aircraft. Check your connection and try again.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -114,8 +159,8 @@ export function SellAircraftDialog({ aircraft, onOpenChange, onSuccess }: SellAi
     <Dialog open={aircraft !== null} onOpenChange={(next) => !submitting && onOpenChange(next)}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Sell {aircraft?.registration}?</DialogTitle>
-          <DialogDescription>{aircraft?.aircraftTypeName} &middot; this moves real money and can't be undone.</DialogDescription>
+          <DialogTitle>Sell {registration}?</DialogTitle>
+          <DialogDescription>{shown?.aircraftTypeName} &middot; this moves real money and can't be undone.</DialogDescription>
         </DialogHeader>
 
         {status === 'loading' && (

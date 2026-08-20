@@ -2,6 +2,7 @@ using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Finance;
 using FSOps.Server.Endpoints;
+using FSOps.Server.Services;
 using FSOps.Server.Tests.Fakes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -11,8 +12,9 @@ namespace FSOps.Server.Tests;
 /// <summary>
 /// Getting rid of an aircraft - returning a lease and selling. The stated verification for this feature is the two exploit tests
 /// (<see cref="BuyThenSellImmediately_IsANetLoss"/>, <see cref="LeaseThenReturnImmediately_LeavesTheAirlineWorseOff_ThanNeverLeasing"/>)
-/// plus the disposal-blocking rules and the quote-drift guard
-/// (<see cref="LeaseTermination_ClockAdvancesBetweenQuoteAndCommit_RefusesTheStaleFigure"/>). Drives
+/// plus the disposal-blocking rules and both halves of the end-lease guard - it accepts the first
+/// click when only the clock has moved (<see cref="LeaseTermination_ClockAdvancesWithinTheSamePeriod_IsAcceptedOnTheFirstCommit"/>)
+/// and still refuses when a rent payment has fallen due (<see cref="LeaseTermination_BillingTickBetweenQuoteAndCommit_IsRefused"/>). Drives
 /// FleetDisposalEndpoints' handlers directly against an isolated in-memory RouteTestContext, same
 /// convention as FleetEndpointsTests, with a <see cref="FakeClock"/> so time-dependent drift is
 /// deterministic rather than a real-wall-clock race.
@@ -216,8 +218,9 @@ public class FleetDisposalEndpointsTests
         // as the period anchor.
         var quote = await FleetDisposalEndpoints.LeaseTerminationQuoteAsync(leased.Id, ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
         var totalCharge = Prop<decimal>(BodyOf(quote), "totalCharge");
+        var periodStart = Prop<DateTimeOffset>(BodyOf(quote), "currentPeriodStartUtc");
 
-        var endLeaseResult = await FleetDisposalEndpoints.EndLeaseAsync(leased.Id, new EndLeaseRequest(totalCharge), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+        var endLeaseResult = await FleetDisposalEndpoints.EndLeaseAsync(leased.Id, new EndLeaseRequest(totalCharge, periodStart), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(endLeaseResult));
 
         var cashAfterReturn = await CashBalanceAsync(ctx);
@@ -263,8 +266,9 @@ public class FleetDisposalEndpointsTests
         var cashBeforeEnd = await CashBalanceAsync(ctx);
         var quote = await FleetDisposalEndpoints.LeaseTerminationQuoteAsync(leased.Id, ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
         var totalCharge = Prop<decimal>(BodyOf(quote), "totalCharge");
+        var quotedPeriodStart = Prop<DateTimeOffset>(BodyOf(quote), "currentPeriodStartUtc");
 
-        var endLeaseResult = await FleetDisposalEndpoints.EndLeaseAsync(leased.Id, new EndLeaseRequest(totalCharge), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+        var endLeaseResult = await FleetDisposalEndpoints.EndLeaseAsync(leased.Id, new EndLeaseRequest(totalCharge, quotedPeriodStart), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(endLeaseResult));
         var cashAfterEnd = await CashBalanceAsync(ctx);
 
@@ -276,8 +280,117 @@ public class FleetDisposalEndpointsTests
         Assert.Equal(cashBeforeEnd - (expectedProRata + expectedFee), cashAfterEnd);
     }
 
+    /// <summary>
+    /// The regression test for "you have to click nearly 3 times to end a lease". The pro-rata rent
+    /// in a termination charge grows with the clock, so the commit used to compare the confirmed
+    /// figure exactly and refuse the moment a second had passed - which is every real click, because
+    /// a player has to read the dialog and type a registration first. The refusal re-quoted, the
+    /// re-quote had already drifted too, and the loop never terminated.
+    /// <para>
+    /// So this asserts what ONE click does, not what three do: a single commit, five days after the
+    /// quote it confirmed, and it goes through. If a future change reinstates a money comparison
+    /// here, this test fails rather than the user discovering it again.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task LeaseTermination_ClockAdvancesBetweenQuoteAndCommit_RefusesTheStaleFigure()
+    public async Task LeaseTermination_ClockAdvancesWithinTheSamePeriod_IsAcceptedOnTheFirstCommit()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedStartingCashAsync(ctx, 10_000_000m);
+        var catalog = EconomyConfigCatalog.Default();
+        var clock = new FakeClock(Base);
+
+        await FleetEndpoints.LeaseAsync(new LeaseAircraftRequest(ctx.AircraftType.Id), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var leased = await ctx.Db.FleetAircraft.SingleAsync(f => f.AirlineId == ctx.Airline.Id && f.Ownership == AircraftOwnership.Leased);
+        var lease = await ctx.Db.Leases.SingleAsync(l => l.FleetAircraftId == leased.Id);
+
+        ctx.Db.EconomyStates.Add(new EconomyState { Id = Guid.NewGuid(), LastProcessedUtc = Base, WorldSeed = 1, FuelPricePerKg = 0.85m });
+        await ctx.Db.SaveChangesAsync();
+
+        // Player fetches the quote at Base...
+        var quote = await FleetDisposalEndpoints.LeaseTerminationQuoteAsync(leased.Id, ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+        var quotedCharge = Prop<decimal>(BodyOf(quote), "totalCharge");
+        var quotedPeriodStart = Prop<DateTimeOffset>(BodyOf(quote), "currentPeriodStartUtc");
+
+        // ...and doesn't confirm until five days later. No rent has fallen due in that window - the
+        // period is still the one they were quoted in - so the charge has drifted but nothing has
+        // materially changed.
+        clock.UtcNow = Base.AddDays(5);
+        var cashBefore = await CashBalanceAsync(ctx);
+
+        var commit = await FleetDisposalEndpoints.EndLeaseAsync(
+            leased.Id, new EndLeaseRequest(quotedCharge, quotedPeriodStart), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(commit));
+
+        // And it charged the RECOMPUTED settlement - five days of rent - not the stale figure the
+        // player confirmed. Charging the confirmed one would let anybody freeze the price by leaving
+        // the dialog open while the rent kept accruing.
+        var economyConfig = catalog.Get(ctx.Airline.Playstyle);
+        var expectedProRata = Math.Round(lease.MonthlyRate * 5m / 30m, 2, MidpointRounding.AwayFromZero);
+        var expectedFee = Math.Round(lease.MonthlyRate * (decimal)economyConfig.LeaseEarlyTermination.FeeMonths, 2, MidpointRounding.AwayFromZero);
+
+        Assert.Equal(expectedProRata + expectedFee, Prop<decimal>(BodyOf(commit), "totalCharge"));
+        Assert.True(expectedProRata + expectedFee > quotedCharge, "the five-day charge must exceed the figure quoted on day zero, or this test proves nothing");
+        Assert.Equal(cashBefore - (expectedProRata + expectedFee), await CashBalanceAsync(ctx));
+    }
+
+    /// <summary>
+    /// The other half of the guard: it still fires for the one thing it exists to catch. A rent
+    /// payment falling due moves the lease into a new billing period and resets the pro-rata to
+    /// nearly nothing - a change large enough that the player should re-read it rather than have it
+    /// applied silently.
+    /// </summary>
+    [Fact]
+    public async Task LeaseTermination_BillingTickBetweenQuoteAndCommit_IsRefused()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedStartingCashAsync(ctx, 10_000_000m);
+        var catalog = EconomyConfigCatalog.Default();
+        var clock = new FakeClock(Base.AddDays(20));
+
+        await FleetEndpoints.LeaseAsync(new LeaseAircraftRequest(ctx.AircraftType.Id), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        var leased = await ctx.Db.FleetAircraft.SingleAsync(f => f.AirlineId == ctx.Airline.Id && f.Ownership == AircraftOwnership.Leased);
+
+        var economyState = new EconomyState { Id = Guid.NewGuid(), LastProcessedUtc = Base, WorldSeed = 1, FuelPricePerKg = 0.85m };
+        ctx.Db.EconomyStates.Add(economyState);
+        await ctx.Db.SaveChangesAsync();
+
+        // Quoted 20 days into the period, so the pro-rata portion is substantial.
+        var quote = await FleetDisposalEndpoints.LeaseTerminationQuoteAsync(leased.Id, ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+        var quotedCharge = Prop<decimal>(BodyOf(quote), "totalCharge");
+        var quotedPeriodStart = Prop<DateTimeOffset>(BodyOf(quote), "currentPeriodStartUtc");
+
+        // EconomyClockService posts the due period and advances its watermark by exactly one whole
+        // PeriodLength - the lease has now been billed for that month and a fresh period has begun.
+        clock.UtcNow = Base + EconomyClockService.PeriodLength + TimeSpan.FromDays(1);
+        economyState.LastProcessedUtc = Base + EconomyClockService.PeriodLength;
+        await ctx.Db.SaveChangesAsync();
+
+        var staleCommit = await FleetDisposalEndpoints.EndLeaseAsync(
+            leased.Id, new EndLeaseRequest(quotedCharge, quotedPeriodStart), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(staleCommit));
+        var currentTotalCharge = Prop<decimal>(BodyOf(staleCommit), "currentTotalCharge");
+        Assert.NotEqual(quotedCharge, currentTotalCharge);
+
+        // Nothing was posted and the lease is still active - a refusal must never be a partial commit.
+        Assert.True((await ctx.Db.Leases.SingleAsync(l => l.FleetAircraftId == leased.Id)).IsActive);
+
+        // Re-confirming against the NEW period succeeds - the guard blocks stale data, not the action.
+        var freshQuote = await FleetDisposalEndpoints.LeaseTerminationQuoteAsync(leased.Id, ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+        var freshCommit = await FleetDisposalEndpoints.EndLeaseAsync(
+            leased.Id,
+            new EndLeaseRequest(Prop<decimal>(BodyOf(freshQuote), "totalCharge"), Prop<DateTimeOffset>(BodyOf(freshQuote), "currentPeriodStartUtc")),
+            ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(freshCommit));
+    }
+
+    /// <summary>A caller that sends no period at all must be refused, not quietly allowed through -
+    /// the failure direction of a missing guard has to be "re-quote", never "charge something the
+    /// player never confirmed".</summary>
+    [Fact]
+    public async Task LeaseTermination_CommitWithoutAPeriod_IsRefused()
     {
         using var ctx = await RouteTestContext.CreateAsync();
         await SeedStartingCashAsync(ctx, 10_000_000m);
@@ -290,26 +403,13 @@ public class FleetDisposalEndpointsTests
         ctx.Db.EconomyStates.Add(new EconomyState { Id = Guid.NewGuid(), LastProcessedUtc = Base, WorldSeed = 1, FuelPricePerKg = 0.85m });
         await ctx.Db.SaveChangesAsync();
 
-        // Player fetches the quote at Base...
         var quote = await FleetDisposalEndpoints.LeaseTerminationQuoteAsync(leased.Id, ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
-        var quotedCharge = Prop<decimal>(BodyOf(quote), "totalCharge");
 
-        // ...but doesn't confirm until 5 days later - the pro-rata portion has genuinely moved.
-        clock.UtcNow = Base.AddDays(5);
+        var commit = await FleetDisposalEndpoints.EndLeaseAsync(
+            leased.Id, new EndLeaseRequest(Prop<decimal>(BodyOf(quote), "totalCharge"), null), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
 
-        var staleCommit = await FleetDisposalEndpoints.EndLeaseAsync(leased.Id, new EndLeaseRequest(quotedCharge), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
-        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(staleCommit));
-        var refusalBody = BodyOf(staleCommit);
-        var currentTotalCharge = Prop<decimal>(refusalBody, "currentTotalCharge");
-        Assert.NotEqual(quotedCharge, currentTotalCharge);
-
-        // Nothing was posted and the lease is still active - a refusal must never be a partial commit.
-        var leaseStillActive = await ctx.Db.Leases.SingleAsync(l => l.FleetAircraftId == leased.Id);
-        Assert.True(leaseStillActive.IsActive);
-
-        // Re-confirming with the NEW figure succeeds - the guard blocks stale data, not the action itself.
-        var freshCommit = await FleetDisposalEndpoints.EndLeaseAsync(leased.Id, new EndLeaseRequest(currentTotalCharge), ctx.Db, ctx.CurrentUser, catalog, clock, CancellationToken.None);
-        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(freshCommit));
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(commit));
+        Assert.True((await ctx.Db.Leases.SingleAsync(l => l.FleetAircraftId == leased.Id)).IsActive);
     }
 
     [Fact]

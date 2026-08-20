@@ -1,4 +1,5 @@
-import { Lightbulb, TriangleAlert, Users } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import { ChevronDown, Lightbulb, TriangleAlert, Users } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,72 @@ import type { PlanningStatus } from '@/hooks/usePlanning'
 import { useSettings } from '@/hooks/useSettings'
 import { cn } from '@/lib/utils'
 import type { FleetAdviceResponse } from '@/types/planning'
+
+const STORAGE_KEY = 'fsops-fleet-advice-expanded'
+
+/**
+ * Whether the fleet planner is open. **Collapsed by default**, including for a brand-new player
+ * with nothing stored yet - the Fleet page is about the aircraft you have, and a full-height
+ * shopping list underneath it was drowning that out.
+ *
+ * Note which way round this is stored, and why. Its siblings on the live map
+ * (`fsops-liveops-empty-collapsed`, `fsops-liveops-legend-collapsed`) default to OPEN, so they
+ * store the collapse. This one defaults to CLOSED, so it stores the expansion - the same shape as
+ * `vatsimAtcVisibility`'s default-off toggle. Storing it this way round means "nothing stored"
+ * falls out as collapsed on its own, rather than depending on an inverted read that a later change
+ * could quietly get backwards. A missing key, a malformed value, or `localStorage` throwing (a
+ * locked-down embed, a privacy-restricted browser, the MSFS in-game panel) all resolve to
+ * collapsed.
+ */
+function readExpanded(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.localStorage.getItem(STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeExpanded(value: boolean): void {
+  try {
+    if (typeof window === 'undefined') return
+    if (value) {
+      window.localStorage.setItem(STORAGE_KEY, 'true')
+    } else {
+      window.localStorage.removeItem(STORAGE_KEY)
+    }
+  } catch {
+    // Best-effort only - never let a locked-down storage break the Fleet page.
+  }
+}
+
+/**
+ * The one line the collapsed header carries, so it is worth its space rather than being an inert
+ * title. Ordered by what should actually change the player's mind, not by what the card renders
+ * first: "you already have aircraft doing nothing" is a reason NOT to spend, and it outranks any
+ * number of suggestions to spend.
+ */
+function summarise(data: FleetAdviceResponse | null, status: PlanningStatus): string {
+  if (!data) {
+    if (status === 'loading') return 'Working it out…'
+    if (status === 'error') return 'Advice unavailable'
+    return 'Nothing to add yet'
+  }
+  if (data.idleAircraftCount > 0) {
+    return data.idleAircraftCount === 1 ? '1 aircraft idle' : `${data.idleAircraftCount} aircraft idle`
+  }
+  if (data.unflyableRoutes.length > 0) {
+    return data.unflyableRoutes.length === 1 ? '1 route you can’t fly' : `${data.unflyableRoutes.length} routes you can’t fly`
+  }
+  if (data.seatCappedRoutes.length > 0) {
+    return data.seatCappedRoutes.length === 1
+      ? '1 route turning passengers away'
+      : `${data.seatCappedRoutes.length} routes turning passengers away`
+  }
+  if (data.suggestions.length > 0) {
+    return data.suggestions.length === 1 ? '1 aircraft suggested' : `${data.suggestions.length} aircraft suggested`
+  }
+  return 'Nothing to add right now'
+}
 
 interface FleetAdviceCardProps {
   data: FleetAdviceResponse | null
@@ -25,17 +92,48 @@ interface FleetAdviceCardProps {
  *
  * Prices come from the economy config's own sanctioned paths (purchase multiplier and the per-type
  * lease rate table), never from the catalogue row's raw columns - see EconomyConfig.LeaseRates.
+ *
+ * Collapsible, and collapsed by default: expanded it is the tallest thing on the Fleet page, and
+ * the page is meant to be about the aircraft you already have. Collapsing it to nothing but a title
+ * would have made it inert, and a feature nobody ever opens is a feature nobody has - so the
+ * collapsed header still names itself, carries the single most useful fact it knows (see
+ * `summarise`), and is one obvious click from opening.
  */
 export function FleetAdviceCard({ data, status, isRefreshing, onAcquire }: FleetAdviceCardProps) {
   const { fmt } = useSettings()
+  const [expanded, setExpanded] = useState(readExpanded)
+  const contentId = useId()
+
+  useEffect(() => {
+    writeExpanded(expanded)
+  }, [expanded])
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base">What to buy next</CardTitle>
-        {data && <p className="text-sm text-muted-foreground">{data.headline}</p>}
+      <CardHeader className="p-0">
+        <button
+          type="button"
+          onClick={() => setExpanded((open) => !open)}
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          className="flex w-full items-start gap-3 rounded-lg p-6 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <CardTitle className="text-base">What to buy next</CardTitle>
+            {/* Expanded, the server's full headline sentence; collapsed, the short summary - the
+             *  header should never be the only thing on screen with nothing to say. */}
+            <p className="text-sm text-muted-foreground">{expanded && data ? data.headline : summarise(data, status)}</p>
+          </div>
+          <span className="shrink-0 pt-0.5 text-muted-foreground">
+            <ChevronDown className={cn('size-4 transition-transform duration-200', expanded && 'rotate-180')} aria-hidden="true" />
+          </span>
+        </button>
       </CardHeader>
-      <CardContent className={cn('space-y-4 transition-opacity duration-200', isRefreshing && 'opacity-60')}>
+      <CardContent
+        id={contentId}
+        hidden={!expanded}
+        className={cn('space-y-4 transition-opacity duration-200', isRefreshing && 'opacity-60')}
+      >
         {status === 'loading' && !data && (
           <div className="space-y-2">
             <Skeleton className="h-10 w-full" />
