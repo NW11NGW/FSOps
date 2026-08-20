@@ -1,3 +1,5 @@
+using FSOps.Core.SimAircraft;
+
 namespace FSOps.Core.Entities;
 
 /// <summary>
@@ -44,4 +46,38 @@ public class UserSettings
     /// Null disables online detection entirely, and no request is made on its behalf.
     /// </summary>
     public string? VatsimCid { get; set; }
+
+    /// <summary>
+    /// Where the player's MSFS Community folder is, when they have told FSOps or FSOps found it.
+    /// Null means "look for it" - <c>SimInstallLocator</c> asks the simulator's own UserCfg.opt
+    /// rather than guessing, and a null here is never a claim that there is no folder.
+    ///
+    /// <para>This column existed once before, for installing the in-game toolbar panel, and was
+    /// dropped when the panel was cut from the product. It is back for an unrelated reason: FSOps
+    /// reads the folder to find out which aircraft the player can actually load, so a contract is
+    /// never written for something that is not in their hangar. FSOps only ever READS this folder.</para>
+    /// </summary>
+    public string? CommunityFolderPath { get; set; }
+
+    /// <summary>
+    /// Which edition of MSFS 2024 the player has, used to work out which base aircraft they can
+    /// load. Defaults to <see cref="SimAircraft.SimEdition.Standard"/> - the smallest set - because
+    /// guessing low costs somebody a tick box and guessing high costs them a contract they cannot fly.
+    /// </summary>
+    public SimEdition SimEdition { get; set; } = SimEdition.Standard;
+
+    /// <summary>
+    /// The last scan of the player's simulator folders, as JSON (see <c>AircraftScanResult</c>).
+    /// Null means no scan has been run, which is different from a scan that found nothing. Cached
+    /// rather than re-run because walking somebody's whole package folder is not something to do on
+    /// every request, and because the answer only changes when they install something.
+    /// </summary>
+    public string? SimAircraftScanJson { get; set; }
+
+    /// <summary>
+    /// The aircraft the player ticked or unticked by hand, as JSON: <c>{"on":[...],"off":[...]}</c>.
+    /// Null means they have not overridden anything. These beat both the scan and the edition,
+    /// because the player is the only one here who actually knows what is in their simulator.
+    /// </summary>
+    public string? SimAircraftOverridesJson { get; set; }
 }

@@ -14,6 +14,7 @@ This guide walks through installing the prerequisites, building FSOps from sourc
 - [5. Run FSOps](#5-run-fsops)
 - [6. Found your airline](#6-found-your-airline)
 - [7. Connect to MSFS](#7-connect-to-msfs)
+- [8. Tell FSOps which aircraft you have](#8-tell-fsops-which-aircraft-you-have)
 - [Where things stand](#where-things-stand)
 - [Next steps](#next-steps)
 
@@ -137,6 +138,14 @@ FSOps talks to Microsoft Flight Simulator through SimConnect, Microsoft's offici
 You can see the connection state at a glance from two indicator pills in the top-right of FSOps' top bar, next to your cash balance: one shows whether FSOps' own live-update connection to its backend is up, the other shows whether the simulator itself is connected ("Sim connected" in green once MSFS is reachable, "Sim offline" otherwise). You can also check `GET /api/v1/sim/status` directly, or watch it via the readiness checks on the Fly screen once you're ready to fly (see the [User Guide](user-guide.md#planning-and-flying-a-tracked-flight)).
 
 If FSOps can't reach the simulator, see [troubleshooting](troubleshooting.md#msfs-wont-connect-over-simconnect).
+
+## 8. Tell FSOps which aircraft you have
+
+Optional, and it changes nothing about flying today — but it takes a few seconds and it is what future contract flying will be built on. Open **Settings → Aircraft in your simulator**, set which edition of MSFS 2024 you bought (it assumes **Standard** until you say otherwise, deliberately: the smallest set is the safe wrong answer), and press **Scan for aircraft**.
+
+FSOps finds your Community folder by reading the simulator's own `UserCfg.opt`, so Microsoft Store, Game Pass and Steam installs all work without configuration, and so does a simulator moved to another drive. If it cannot find yours, put the path in the box on that card — it is the folder called `Community` inside the simulator's `Packages` folder. **FSOps only ever reads it.**
+
+The scan reports what it found rather than claiming to be complete: MSFS 2024 streams most of its aircraft and only keeps on disk what you have actually flown, so anything it missed is a tick box on the same card, and a scan that fails never takes an aircraft away. See [Aircraft in your simulator](user-guide.md#aircraft-in-your-simulator) for the full picture, and [troubleshooting](troubleshooting.md#the-aircraft-scan-found-nothing-or-found-less-than-i-expected) if the scan comes up empty.
 
 ## Where things stand
 

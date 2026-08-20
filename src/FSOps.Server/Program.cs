@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using FSOps.Core;
 using FSOps.Core.Economy;
 using FSOps.Core.Entities;
+using FSOps.Core.SimAircraft;
 using FSOps.Core.Time;
 using FSOps.Data;
 using FSOps.Server.Auth;
@@ -128,6 +129,12 @@ builder.Services.AddHostedService<VirtualFlightResolverService>();
 
 // Populated during startup, below - nothing can be added to the service collection after Build().
 builder.Services.AddSingleton<StartupReconciliationState>();
+
+// Which aircraft the player can actually load in the simulator. The scanner is stateless and holds
+// no handles, so a singleton is enough; the service around it is scoped because it reads and writes
+// the settings row through the request's DbContext.
+builder.Services.AddSingleton<InstalledAircraftScanner>();
+builder.Services.AddScoped<SimAircraftService>();
 
 // VATSIM's public data feed, fetched server-side only - the SPA never calls it directly, because
 // the UI has no business making third-party requests of its own. A singleton so one cached fetch
@@ -269,6 +276,7 @@ apiV1.MapRouteEndpoints();
 apiV1.MapPlanningEndpoints();
 apiV1.MapSettingsEndpoints();
 apiV1.MapSimEndpoints();
+apiV1.MapSimAircraftEndpoints();
 apiV1.MapFlightEndpoints();
 apiV1.MapFleetEndpoints();
 apiV1.MapFleetDisposalEndpoints();

@@ -1,6 +1,7 @@
 import { AirlineSection } from '@/components/settings/AirlineSection'
 import { DataSection } from '@/components/settings/DataSection'
 import { DisplaySection } from '@/components/settings/DisplaySection'
+import { SimAircraftSection } from '@/components/settings/SimAircraftSection'
 import { SimBriefSection } from '@/components/settings/SimBriefSection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { VatsimSection } from '@/components/settings/VatsimSection'
@@ -14,6 +15,7 @@ export function Settings() {
         <DisplaySection />
         <AirlineSection />
         <SimBriefSection />
+        <SimAircraftSection />
         <VatsimSection />
         <DataSection />
         <UpdatesSection />

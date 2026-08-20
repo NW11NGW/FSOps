@@ -44,6 +44,7 @@ This document describes how FSOps is put together: the solution layout, how a re
 - [World data: refreshing without destroying history](#world-data-refreshing-without-destroying-history)
 - [Background work in FlightLifecycleService is gated on the sample, never the wall clock](#background-work-in-flightlifecycleservice-is-gated-on-the-sample-never-the-wall-clock)
 - [Range: one question, asked about the airline](#range-one-question-asked-about-the-airline)
+- [Contract-eligible aircraft and what the simulator actually has](#contract-eligible-aircraft-and-what-the-simulator-actually-has)
 - [Sector projection: one answer, many surfaces](#sector-projection-one-answer-many-surfaces)
 - [The desktop shell and how FSOps is published](#the-desktop-shell-and-how-fsops-is-published)
 - [The update checker](#the-update-checker)
@@ -87,6 +88,7 @@ FSOps is a single .NET solution (`FSOps.sln`) with a React frontend alongside it
 | `Fleet/` | `AircraftRepositionEvaluator` — which airports a stranded aircraft may be moved to (derived from the airline's own active routes, both directions), every refusal rule for the move, and the fee arithmetic. Pure and clock-free, so the rules are unit-testable with exact values; see [Repositioning a stranded aircraft](#repositioning-a-stranded-aircraft). |
 | `Airlines/` | `AircraftRegistrationGenerator` (country-appropriate tail number generation for a newly leased aircraft). Starting capital, lease deposit and starting pilot salary used to live here as `AirlineCreationDefaults`; they now live in `Economy/EconomyConfig.AirlineStartup` instead, alongside every other tunable economy figure, so airline-creation balance can be retuned the same way as everything else - see the `Economy/` row above. |
 | `Airports/` | `AirportSearchRanking` and `AirportSizeCategoryMapper`, used by airport search and by the home-base-suitability check in airline creation. |
+| `SimAircraft/` | Which aircraft the player can load in the simulator, kept strictly apart from the fleet catalogue. `ContractAircraftCatalogue` (every aircraft a contract may be written for, from a Cessna 152 up, each tagged with the MSFS 2024 edition that ships it or `AddOn`), `InstalledAircraftScanner` and `AircraftConfigReader` (reading Community-folder packages and their `aircraft.cfg` files), `SimInstallLocator` (finding the Community folder via the simulator's own `UserCfg.opt`, with Microsoft Store and Steam fallbacks for both MSFS versions), and `ContractAircraftAvailabilityResolver` (the precedence rules that turn edition + scan + the player's ticks into one answer). Pure apart from the file reads, and every failure path returns a result rather than throwing. See [Contract-eligible aircraft and what the simulator actually has](#contract-eligible-aircraft-and-what-the-simulator-actually-has). |
 | `AppPaths.cs` | Runtime resolution of every path FSOps writes to. See [App paths](#app-paths-no-hardcoded-filesystem-paths). |
 
 ## API endpoint surface
@@ -97,6 +99,7 @@ All REST endpoints are versioned under `/api/v1`:
 |---|---|---|
 | `/airline` | `POST`, `GET`, `PUT`, `GET /summary`, `GET /reputation`, `GET /strategy-profiles`, `GET /playstyles`, `GET /ledger`, `DELETE` | Founding an airline (creates the airline, leases the starter fleet aircraft, hires the first pilot, and posts opening ledger entries in one transaction, resolved against the chosen `AirlinePlaystyle` — see [Playstyles and EconomyConfigCatalog](#playstyles-and-economyconfigcatalog)), fetching/updating its identity, accent colour and strategy profile (a strategy change is going-forward only — it never touches completed flights or existing routes' fares; playstyle has no update path at all, by design), a summary including derived cash balance and counts, the live per-profile fares/sensitivity/load-factor/cost figures and per-playstyle starting-capital/lease/insurance/loan-cap figures read straight from `economy-config.json` (backs the profile and playstyle pickers in onboarding and Settings), the reputation summary backing the Dashboard's reputation card (see [Reputation and pilot skill](#reputation-and-pilot-skill)), the itemised ledger newest-first (a backend view; the Finances page reads `/finance/ledger` instead), and the "start over" soft-delete. |
 | `/settings` | `GET`, `PUT`, `GET /currencies` | Per-user settings — currency, distance/altitude/weight units, time display and clock format, theme, and the two optional external identifiers (`SimBriefPilotId`, `VatsimCid`) — created lazily on first access, plus the supported-currency catalogue. Accent colour and strategy profile live on the airline itself (`/airline`), not here, since they're airline-specific rather than account-wide. |
+| `/sim-aircraft` | `GET`, `POST /scan`, `PUT`, `PUT /{typeDesignator}`, `GET /community-folders` | `SimAircraftEndpoints` — which aircraft the player can actually load in MSFS 2024, so contract flying can never write a job for an aircraft that is not in their hangar. `GET` returns the whole picture (edition, the Community folder in use, the last scan, and every catalogue aircraft with whether a contract may name it and why); `POST /scan` walks the player's simulator folders and stores what it found; `PUT` stores the edition and an explicit Community folder path (a separate `clearCommunityFolderPath` flag, because "leave this alone" and "forget this" are different requests and a null cannot mean both); `PUT /{typeDesignator}` ticks one aircraft on, off, or back to FSOps' own answer; `GET /community-folders` lists every Community folder found on this machine. See [Contract-eligible aircraft and what the simulator actually has](#contract-eligible-aircraft-and-what-the-simulator-actually-has). |
 | `/routes` | `POST`, `GET`, `PUT /{id}`, `GET /{id}`, `DELETE /{id}`, `POST /preview` | Route creation, which always creates both directions of a round trip in one call (see [Round trips and where your aircraft actually is](guides/user-guide.md#round-trips-and-where-your-aircraft-actually-is)); listing (self-healing — backfills a missing return leg or flight number for legacy single-leg routes); updating a route's flight number, fare, or active flag; fetching or soft-deleting a route pair together; and the live, throw-free preview used while picking airports. There is deliberately **no** manual repair endpoint for an unpaired route: one existed and was removed, because `GET /routes` already backfills a missing return leg or flight number itself and does so on every listing, which is both more reliable than a button somebody has to know to press and impossible to forget. |
 | `/routes` (pricing) / `/planning` | `GET /routes/{id}/pricing`, `GET /planning/opportunities`, `GET /planning/fleet-advice` | `PlanningEndpoints` — the three decision surfaces, all read-only: what a fare change would do to a saved route (the fare workbench: the projection at a candidate fare, at the current fare and at the reference fare, plus a sampled fare curve and the band the save enforces), ranked unserved city pairs worth opening (with the pairs the fleet cannot reach reported rather than hidden), and what acquiring an aircraft would change. Nothing here writes a row or moves money — setting a fare is still `PUT /routes/{id}`, acquiring an aircraft is still `/fleet`. Every figure comes from `SectorProjector`, never from arithmetic of its own. See [Sector projection: one answer, many surfaces](#sector-projection-one-answer-many-surfaces). |
 | `/airports` | search / lookup endpoints | Backing the airport pickers in route building and airline creation, using the imported world airport/runway data. |
@@ -607,6 +610,51 @@ Aircraft selection within a case is deterministically ordered, so the same fleet
 
 The 0.85 operational-range factor is unchanged and now defined once rather than repeated. A test asserts that no possessive aircraft-type name can come back from route validation, so the old framing cannot quietly return.
 
+## Contract-eligible aircraft and what the simulator actually has
+
+Contract flying — jobs from other operators, flown personally in an aircraft the contract supplies — only works if FSOps knows which aircraft the player can load. A contract naming an aircraft they do not own is worse than no contract. This is the machinery that answers that question. It ships nothing player-visible except a Settings card.
+
+### Two catalogues, kept apart on purpose
+
+`AircraftTypeSeeder` (`FSOps.Data.Import`) is the **fleet** catalogue: what an airline may buy or lease. It is airliners only, and stays that way — the demand model, the seat-based fare model and the weight-based airport fees all assume an airliner, and a fleet full of light singles would quietly corrupt every one of them.
+
+`ContractAircraftCatalogue` (`FSOps.Core.SimAircraft`) is the **contract** catalogue: what a job may be written for. It reaches from a Cessna 152 to an A380, because a contract supplies the aircraft and the player just flies it. Before it existed, the user's own example of a contract — *"transatlantic in a Cessna"* — was not expressible at all, because there was no general aviation anywhere in the app.
+
+The two overlap (an ATR ferry is a perfectly reasonable contract) but are never the same list, and nothing reads the contract catalogue to decide what an airline may own. `FleetAndContractCatalogueSeparationTests` pins that: it asserts the fleet catalogue holds nothing under 40 seats, names the light types that must never become purchasable, and checks that where the two lists overlap they agree on what a designator means.
+
+### Edition tagging, and why it is biased downwards
+
+Each contract aircraft carries the MSFS 2024 edition that ships it — Standard, Deluxe, Premium Deluxe — or `AddOn` for anything the player installed themselves. A curated list assembled from memory is wrong by construction here: the editions carry different aircraft and no two published write-ups of the split agree. So the tags are anchored on two checkable things: the published Deluxe and Premium Deluxe aircraft lists, and what is physically on the disk of a known-Standard install. Those two agree exactly — every aircraft named as Deluxe or Premium Deluxe is absent from a Standard install as a flyable package and present only as a `passiveaircraft-` AI model. Anything the two did not agree on is tagged `AddOn`.
+
+The bias is always downwards, and `SimEdition.Standard` is the default for anybody who has not said otherwise. An aircraft wrongly tagged Standard hands somebody a contract they cannot fly; one wrongly tagged `AddOn` costs them a tick box.
+
+### The scan, strongest evidence first
+
+`InstalledAircraftScanner` reads the player's simulator folders:
+
+1. **The Community folder.** Each package's `manifest.json` gives its `content_type` and title; `AIRCRAFT` packages are then walked for `aircraft.cfg` files, from which `AircraftConfigReader` pulls `icao_type_designator`, `atc_model` and the `[FLTSIM.n]` titles. A designator matches the catalogue exactly; failing that, the freeform title is matched through the same `AircraftTypeMatcher` regex machinery the fleet catalogue uses.
+2. **The base-content folders alongside it** (`StreamedPackages`, the `OneStore` folders). MSFS 2024 keeps streamed content in opaque `.fsarchive` files with nothing to parse, so these are matched by **folder name** against each catalogue entry's known base package ids.
+3. **The edition setting**, for everything else.
+4. **The player's own ticks**, over the top of all of it.
+
+`SimInstallLocator` finds the Community folder by reading `InstalledPackagesPath` out of the simulator's own `UserCfg.opt` — authoritative in a way a hardcoded path is not, since a sim moved to a second drive is normal — with the default Microsoft Store and Steam paths for MSFS 2024 and MSFS 2020 as fallbacks.
+
+Three exclusions are load-bearing rather than tidy:
+
+- **Liveries are not aircraft.** A `LIVERY` package repaints something the player may not own.
+- **AI traffic is not flyable.** FSLTL's traffic base declares `content_type: "AIRCRAFT"` and ships 2,551 aircraft configurations, every one flagged `isAirTraffic = 1` / `isUserSelectable = 0`. `AircraftConfigReader` reports a config as AI-only when it has `[FLTSIM.n]` variations and none of them is selectable — and deliberately *not* when it has no variations at all, because MSFS 2024's modular format splits an aircraft across fragments and the Fenix A320 declares its type in an attachment config with no `[FLTSIM]` section.
+- **`passiveaircraft-` packages are never evidence of ownership.** The simulator ships low-detail models of aircraft the player has not bought so AI traffic can render them; a Standard install physically contains `fs24-microsoft-passiveaircraft-s340` and `...-passiveaircraft-c408` while the flyable Saab 340 and SkyCourier are Premium Deluxe and Deluxe content.
+
+### A scan is evidence, never a verdict
+
+**MSFS 2024 streams most of its base content and only keeps on disk what has been used.** A scan can prove an aircraft is present; it can never prove one is absent. So `ContractAircraftAvailabilityResolver` only ever *adds* on the strength of a scan, and a scan that found nothing — or that could not run at all — subtracts nothing. Letting a scan miss remove an aircraft would take the Cessna 172 away from every player who has not yet flown one.
+
+Precedence, top down: the player's own tick, then the Community folder, then base content on disk, then the edition. Every answer carries its `AircraftAvailabilityEvidence` through to the UI, so the Settings card can say *where* a claim came from rather than presenting all of them as equally certain. An override that agrees with what FSOps already worked out is not stored, so a tick made before installing an add-on cannot outrank the scan for ever.
+
+### Storage
+
+Four additive columns on `UserSettings` (`AddSimAircraftSettings`): `CommunityFolderPath` and `SimEdition`, plus `SimAircraftScanJson` and `SimAircraftOverridesJson`. The three nullable ones are nullable on purpose — NULL means "never scanned" and "no folder configured", where `""` would mean "configured, to nothing". `SimEdition` is a string-converted enum with its default declared on the property, for the reason given under [Testing](#testing): the scaffolder emits `defaultValue: ""` otherwise, and this project has shipped that bug before. The scan is cached rather than re-run per request, because walking somebody's whole package folder is not something to do on every read and the answer only changes when they install something.
+
 ## Sector projection: one answer, many surfaces
 
 `SectorProjector` (`FSOps.Core.Planning`) answers exactly one question — *what would this sector, flown by this aircraft, at this fare, on this day, be worth?* — and it exists because that question was being answered in several places at once.
@@ -716,6 +764,8 @@ The outcome is written to `restore-result.json` and reported by `GET /backup/sta
 ## Testing
 
 **Backend:** `tests/FSOps.Core.Tests` and `tests/FSOps.Server.Tests` are xUnit, run with `dotnet test` from the repository root — see [Solution layout](#solution-layout) for what each covers.
+
+**Migrations are proved, not assumed.** Every schema change is pinned against a **file-backed** SQLite database rather than `:memory:`, because the claim being made is about somebody's real save: migrate to the *previous* migration, seed every column to a deliberately **non-default** value (seeding the defaults would let a migration that silently reset the table still pass), apply exactly the migration under test — never to the head, so a later migration cannot quietly join the claim — then read every field back, check the raw stored text rather than trusting an enum round-trip, and check the indexes are still there. `UpdateChannelColumnMigrationTests`, `UserSettingsColumnDropMigrationTests`, `PilotStatusColumnDropMigrationTests` and `SimAircraftColumnsMigrationTests` all follow that shape. The recurring bug they exist to catch is a scaffolded default: this project has twice shipped one that was wrong (`defaultValue: ""` for a string-converted enum, which parses as no member at all, and `0.0` for a sim rate, which would have read as a frozen clock for every historical flight).
 
 **Node version:** the frontend tests need **Node 22 or newer** — jsdom's bundled `undici` calls `webidl.util.markAsUncloneable`, which does not exist on Node 20, and the failure is not a failing test but the whole Vitest run dying at import with zero tests executed. Worth knowing because the symptom looks nothing like the cause.
 

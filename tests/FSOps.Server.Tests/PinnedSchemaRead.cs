@@ -22,6 +22,21 @@ namespace FSOps.Server.Tests;
 /// <para>So these tests read with something that knows only about the columns they name. If you are
 /// tempted to tidy this back into <c>db.Whatever.SingleAsync(...)</c> because it would be shorter:
 /// that re-arms the trap, and the next person to add a column pays for it.</para>
+///
+/// <para><b>The rule, stated rather than left to be inferred: EVERY test that migrates a database to
+/// a pinned migration and then reads it back must read through this class, and no other. Not just
+/// the ones that are currently failing.</b> That distinction is the whole lesson. When this class
+/// was written, two tests were converted and a third - <c>UpdateChannelColumnMigrationTests</c> - was
+/// left alone because it happened to be green: at the time it was pinned to the newest migration, so
+/// the current model and the pinned schema agreed by coincidence. The coincidence expired the day
+/// somebody added four columns to UserSettings, and they walked into precisely the trap documented
+/// two paragraphs above, which by then had been written down for six days. A fix applied only to the
+/// instances that are failing is a fix that schedules its own recurrence.</para>
+///
+/// <para>A test that pins only to <i>seed</i> and then migrates forward to the head before reading -
+/// <c>MigrationNonDestructiveTests</c>, <c>DatabaseStartupFailureTests</c> - is not covered by this
+/// rule and may read through EF, because by the time it reads, the schema really is the current one.
+/// The rule is about reading a database that is still pinned.</para>
 /// </summary>
 internal static class PinnedSchemaRead
 {
@@ -69,6 +84,27 @@ internal static class PinnedSchemaRead
         }
 
         return names;
+    }
+
+    /// <summary>
+    /// The distinct values of a text column, with NULL reported as the literal <c>&lt;null&gt;</c>
+    /// rather than dropped. For asserting what is <b>physically</b> in the file: an enum read back
+    /// through EF's converter would happily turn a stored <c>""</c> into member zero and report a
+    /// perfectly sensible value while the column held something no later reader could parse.
+    /// </summary>
+    public static async Task<List<string>> DistinctTextAsync(SqliteConnection connection, string sql)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+
+        var values = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            values.Add(reader.IsDBNull(0) ? "<null>" : reader.GetString(0));
+        }
+
+        return values;
     }
 
     /// <summary>The non-internal indexes on a table. A rebuild that forgot to recreate one is
