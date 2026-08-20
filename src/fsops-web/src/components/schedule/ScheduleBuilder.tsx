@@ -23,7 +23,7 @@ import { LegDialog } from './LegDialog'
 import { MaintenanceSuspendToggle } from './MaintenanceSuspendToggle'
 import { OrphanedLegsDialog, type PendingRemoval } from './OrphanedLegsDialog'
 import { ScheduleGrid } from './ScheduleGrid'
-import { buildStarterSchedule, type StarterScheduleIssue, type StarterScheduleReason } from './starterSchedule'
+import { buildStarterSchedule, type StarterScheduleIssue, type StarterScheduleReason, type StarterScheduleStop } from './starterSchedule'
 import { WeeklySummary } from './WeeklySummary'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Button } from '@/components/ui/button'
@@ -110,6 +110,38 @@ function describeStarterScheduleReason(reason: StarterScheduleReason, money: (va
   return `${leg} is the most profitable leg ${reason.registration} can fly from ${reason.departureIcao} - about ${money(reason.profitPerSector)} a sector.${shared}`
 }
 
+/**
+ * What actually ended the fullest generated day - see starterSchedule.ts's `StarterScheduleStop`.
+ *
+ * The player asked for this in as many words: the old generator stopped at four legs a day while
+ * they were hand-building eight through the picker, and it never said why. A suggestion that fills
+ * the day and stays silent is only marginally better - they still cannot tell "this is everything
+ * the rules allow" from "this is all it looked for". So the binding constraint is quoted, in the
+ * backend's own words where it has any (same convention as `IllegalLegOption.reason`: render it
+ * verbatim, never re-word it).
+ */
+function describeStarterScheduleStop(stop: StarterScheduleStop): string {
+  const day = DAY_LABELS[stop.day]
+  const fullest = `${day} is the fullest day at ${stop.legs} leg${stop.legs === 1 ? '' : 's'}`
+  switch (stop.kind) {
+    // Deliberately "came back refused" rather than "would break a rule": the sentence that follows
+    // is just as often "the aircraft is already flying this for another pilot" as it is a duty-hour
+    // limit, and a generated week uses one airframe throughout, so a contended aircraft is an
+    // ordinary reason a day stops short rather than an edge case worth its own wording.
+    case 'rule':
+      return `${fullest}, and it stops there because the next leg came back refused: ${stop.reason}`
+    case 'week-closure':
+      return `${fullest}. There was room for one more, but it would have left the aircraft away from base with no day left to bring it home - and a weekly pattern has to end where it starts.`
+    case 'calendar-day':
+      return `${fullest}, which is as many as fit between the first departure and midnight.`
+    case 'network':
+      return `${fullest}. The check for what could follow it did not come back, so the day may be shorter than the rules allow - try again to fill it out.`
+    case 'nowhere-to-go':
+    default:
+      return `${fullest}, and it stops there because nothing on offer could carry on from where that leg lands.`
+  }
+}
+
 /** The full weekly schedule builder for one pilot: loads their saved schedule and the airline's
  *  fleet/routes, holds an editable draft (aircraft-per-duty-day), and drives the grid, the
  *  aircraft/leg picker dialog, and save. */
@@ -136,6 +168,9 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
    *  same reason the failure banner is (see `updateWeek`): it is a verdict on ONE draft, and a
    *  stale explanation of a week that no longer exists is worse than none. */
   const [suggestionReason, setSuggestionReason] = useState<StarterScheduleReason | null>(null)
+  /** Which rule ended the fullest day of the last suggestion - cleared alongside the reason, and
+   *  for the same reason: it describes ONE draft, and a stale verdict is worse than none. */
+  const [suggestionStop, setSuggestionStop] = useState<StarterScheduleStop | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null)
   /** The day whose "copy to other days" dialog is open, or null. */
   const [copyingDay, setCopyingDay] = useState<DayOfWeek | null>(null)
@@ -176,6 +211,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setSaveFailure(null)
     setSuggestionIssue(null)
     setSuggestionReason(null)
+    setSuggestionStop(null)
     setSaveAdvisories([])
   }
 
@@ -295,6 +331,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
     setSuggesting(true)
     setSuggestionIssue(null)
     setSuggestionReason(null)
+    setSuggestionStop(null)
     try {
       const outcome = await buildStarterSchedule(routesQuery.routes, {
         fetchAircraftOptions: (day) => fetchAircraftOptions(pilot.id, day),
@@ -306,9 +343,14 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
       }
       setWeek(outcome.result.week)
       setSuggestionReason(outcome.result.reason)
-      const { legsAdded, daysUsed } = outcome.result
+      setSuggestionStop(outcome.result.stop)
+      const { legsAdded, daysUsed, blockMinutes } = outcome.result
+      // Block hours, not just a leg count: "hours of flying" is the unit the player measures this
+      // feature in, and it is the number that makes two suggestions comparable when one is short
+      // sectors and the other is long ones.
+      const hours = (blockMinutes / 60).toFixed(1)
       toast.success(
-        `Added ${legsAdded} leg${legsAdded === 1 ? '' : 's'} across ${daysUsed} day${daysUsed === 1 ? '' : 's'} - review and save when ready.`,
+        `Added ${legsAdded} leg${legsAdded === 1 ? '' : 's'} across ${daysUsed} day${daysUsed === 1 ? '' : 's'}, ${hours} hours in the air - review and save when ready.`,
       )
     } catch {
       setSuggestionIssue({ kind: 'check-failed' })
@@ -398,7 +440,24 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
           className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
         >
           <Sparkles className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 break-words">{describeStarterScheduleReason(suggestionReason, fmt.money)}</span>
+          <span className="min-w-0 break-words">
+            {describeStarterScheduleReason(suggestionReason, fmt.money)}
+            {suggestionStop && <> {describeStarterScheduleStop(suggestionStop)}</>}
+          </span>
+        </div>
+      )}
+
+      {/* The same notice when there is no profit figure to explain the ROUTE with, but there is
+          still an honest answer to "why does the week stop here". Without this, an airline whose
+          world data cannot be priced gets a filled week and complete silence about its limits -
+          which is the state that produced the original complaint. */}
+      {!suggestionReason && suggestionStop && (
+        <div
+          data-testid="starter-schedule-stop"
+          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+        >
+          <Sparkles className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 break-words">{describeStarterScheduleStop(suggestionStop)}</span>
         </div>
       )}
 

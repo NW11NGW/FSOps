@@ -777,8 +777,8 @@ public static class PilotEndpoints
             var groundingReason = fleetAircraft.GroundedUntilUtc is { } until
                 ? $"{fleetAircraft.Registration} is in maintenance until {until:yyyy-MM-dd HH:mm} UTC."
                 : $"{fleetAircraft.Registration} is in maintenance.";
-            var groundedIllegal = routes.Select(r => (object)new { routeId = r.Id, reason = groundingReason }).ToList();
-            return Results.Ok(new { legal = Array.Empty<object>(), illegal = groundedIllegal });
+            var groundedIllegal = routes.Select(r => (object)new { routeId = r.Id, r.DepartureIcao, r.ArrivalIcao, reason = groundingReason }).ToList();
+            return Results.Ok(new { legal = Array.Empty<object>(), illegal = groundedIllegal, scheduling = SchedulingLimitsOf(economyConfig) });
         }
 
         if (fleetAircraft.ReservedForPlayer)
@@ -787,10 +787,12 @@ public static class PilotEndpoints
                 .Select(r => (object)new
                 {
                     routeId = r.Id,
+                    r.DepartureIcao,
+                    r.ArrivalIcao,
                     reason = $"{fleetAircraft.Registration} is reserved for the player - release it on the Fleet page to schedule it here.",
                 })
                 .ToList();
-            return Results.Ok(new { legal = Array.Empty<object>(), illegal = reservedIllegal });
+            return Results.Ok(new { legal = Array.Empty<object>(), illegal = reservedIllegal, scheduling = SchedulingLimitsOf(economyConfig) });
         }
 
         var otherEntries = await LoadOtherPilotsEntriesAsync(db, airline.Id, excludingPilotId: pilot.Id, ct);
@@ -942,7 +944,14 @@ public static class PilotEndpoints
 
             if (disqualifying.Count > 0)
             {
-                illegal.Add(new { routeId = candidate.RouteId, reason = disqualifying[0] });
+                // The airports ride along with the reason (2026-08-20). A caller that asked for a
+                // specific sector and did not get it needs to find ITS refusal among a list covering
+                // every route the airline has, and matching on route id alone cannot do that for a
+                // sector it has never successfully flown - which is exactly the case that matters,
+                // since "why did this day stop here" is asked about the leg that was refused, not
+                // about one that worked. Guessing from the list order instead would quote a range or
+                // runway refusal for some unrelated city pair as the reason a duty day ended.
+                illegal.Add(new { routeId = candidate.RouteId, route.DepartureIcao, route.ArrivalIcao, reason = disqualifying[0] });
                 continue;
             }
 
@@ -1006,8 +1015,29 @@ public static class PilotEndpoints
             });
         }
 
-        return Results.Ok(new { legal, illegal, aircraftPosition });
+        return Results.Ok(new { legal, illegal, aircraftPosition, scheduling = SchedulingLimitsOf(economyConfig) });
     }
+
+    /// <summary>
+    /// The duty/rest/turnaround limits this airline is actually validated against, sent alongside
+    /// every leg-options answer.
+    /// <para>
+    /// Purely so a client never has to keep a second copy of them. The "Suggest a starter schedule"
+    /// generator fills a duty day until the backend refuses the next leg, so these numbers decide
+    /// nothing about what it proposes - but it does have to space departures and rank routes by how
+    /// much of a day a sector would fill, and doing that against a hard-coded 13 hours would be a
+    /// duplicate of a configured value, free to drift the moment
+    /// <see cref="SchedulingConfig"/> or a playstyle's economy file changes. The floor a generated
+    /// turnaround is varied ABOVE is the same story: a client inventing "30" would silently propose
+    /// illegal turns if the configured minimum ever rose.
+    /// </para>
+    /// </summary>
+    private static object SchedulingLimitsOf(EconomyConfig economyConfig) => new
+    {
+        maxDutyHoursPerDay = economyConfig.Scheduling.MaxDutyHoursPerDay,
+        minRestHoursBetweenDutyDays = economyConfig.Scheduling.MinRestHoursBetweenDutyDays,
+        minTurnaroundMinutes = economyConfig.Scheduling.MinTurnaroundMinutes,
+    };
 
     /// <summary>
     /// Phrases a <see cref="ContinuityGap"/> for the leg-options picker specifically - a

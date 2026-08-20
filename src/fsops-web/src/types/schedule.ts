@@ -176,12 +176,30 @@ export interface LegalLegOption {
  *  with something already committed BEFORE it) - nothing the player does with a later leg changes it. */
 export interface IllegalLegOption {
   routeId: string
+  /** Which sector this refusal is about. Optional only because an older server did not send it -
+   *  every current response does. It exists so a caller that asked for a specific sector can find
+   *  ITS refusal in a list covering every route the airline has, rather than guessing from list
+   *  order: see PilotEndpoints.GetLegOptionsAsync, and starterSchedule.ts's `describeRefusal` for
+   *  the caller that needs it. */
+  departureIcao?: string
+  arrivalIcao?: string
   reason: string
+}
+
+/** The duty, rest and turnaround limits the backend actually validates this airline against, so a
+ *  client never keeps a second copy of them (see PilotEndpoints.SchedulingLimitsOf). Optional on the
+ *  wire only for an older server; callers fall back to the shipped defaults rather than failing. */
+export interface SchedulingLimits {
+  maxDutyHoursPerDay: number
+  minRestHoursBetweenDutyDays: number
+  minTurnaroundMinutes: number
 }
 
 export interface LegOptionsResponse {
   legal: LegalLegOption[]
   illegal: IllegalLegOption[]
+  /** See {@link SchedulingLimits}. */
+  scheduling?: SchedulingLimits
   /** Where the aircraft actually is once this slot comes around, resolved from whatever's already
    *  committed before it (or its recorded location, if nothing precedes it this week yet) -
    *  informational only, never used to filter which routes are tested (see the backend's own
