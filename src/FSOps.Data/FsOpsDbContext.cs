@@ -49,6 +49,13 @@ public class FsOpsDbContext : DbContext
 
     public DbSet<UserSettings> UserSettings => Set<UserSettings>();
 
+    /// <summary>Jobs offered by other operators - see <see cref="Contract"/>. Deliberately separate
+    /// from <see cref="Routes"/>: a contract is somebody else's aeroplane, not a service the player's
+    /// airline sells.</summary>
+    public DbSet<Contract> Contracts => Set<Contract>();
+
+    public DbSet<ContractLeg> ContractLegs => Set<ContractLeg>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(FsOpsDbContext).Assembly);

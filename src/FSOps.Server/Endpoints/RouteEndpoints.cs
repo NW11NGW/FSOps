@@ -769,8 +769,12 @@ public static class RouteEndpoints
         var affectedRouteIds = reverse is not null
             ? new List<Guid> { route.Id, reverse.Id }
             : new List<Guid> { route.Id };
+        // f.RouteId != null keeps a contract sector out of this check, which is correct in both
+        // directions: a contract flight has no route, so deleting a route can never strand one, and
+        // refusing a route deletion because an unrelated contract leg happened to be in the air would
+        // be a refusal the player could not act on.
         var flightInProgress = await db.Flights
-            .Where(f => affectedRouteIds.Contains(f.RouteId) && f.Status == FlightStatus.InProgress)
+            .Where(f => f.RouteId != null && affectedRouteIds.Contains(f.RouteId.Value) && f.Status == FlightStatus.InProgress)
             .Select(f => new { f.RouteId })
             .FirstOrDefaultAsync(ct);
 

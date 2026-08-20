@@ -4,6 +4,7 @@ using FSOps.Core.Economy;
 using FSOps.Core.Entities;
 using FSOps.Core.Flights;
 using FSOps.Core.Planning;
+using FSOps.Core.SimAircraft;
 using FSOps.Data;
 using FSOps.Server.Hubs;
 using FSOps.Sim;
@@ -143,15 +144,24 @@ public sealed class FlightLifecycleService : IHostedService
     /// opening fix from a real teleport instead of having to fail open on both. See
     /// <see cref="FlightIntegrityMonitor"/>.
     /// </param>
+    /// <param name="fleetAircraftId">
+    /// The airline's own aircraft, or <b>null for a contract flight</b>, where the aeroplane belongs
+    /// to the operator who offered the job. Tracking itself does not care which - phase detection,
+    /// landing capture and the integrity monitor are about the sector being flown in the simulator,
+    /// not about who owns the aircraft, and they run identically either way. The distinction only
+    /// matters at finalisation, and only there.
+    /// </param>
+    /// <param name="contractLegId">The contract leg being flown, for a contract flight. Null otherwise.</param>
     public void BeginTracking(
-        Guid flightId, Guid airlineId, Guid fleetAircraftId, string arrivalIcao, int plannedBlockMinutes,
-        (double Lat, double Lon)? departurePosition = null)
+        Guid flightId, Guid airlineId, Guid? fleetAircraftId, string arrivalIcao, int plannedBlockMinutes,
+        (double Lat, double Lon)? departurePosition = null, Guid? contractLegId = null)
     {
         var tracker = new ActiveFlightTracker
         {
             FlightId = flightId,
             AirlineId = airlineId,
             FleetAircraftId = fleetAircraftId,
+            ContractLegId = contractLegId,
             ArrivalIcao = arrivalIcao,
             PlannedBlockMinutes = plannedBlockMinutes,
             Machine = new FlightPhaseStateMachine(),
@@ -192,10 +202,15 @@ public sealed class FlightLifecycleService : IHostedService
 
         var flight = await db.Flights.FirstOrDefaultAsync(f => f.Id == tracker.FlightId);
         var route = flight is not null ? await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId) : null;
+        var leg = flight?.ContractLegId is { } legId
+            ? await db.ContractLegs.FirstOrDefaultAsync(l => l.Id == legId)
+            : null;
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == tracker.AirlineId);
         var settings = airline is not null ? await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == airline.OwnerUserId) : null;
 
-        tracker.DepartureIcao = route?.DepartureIcao;
+        // A contract sector is flown online exactly like any other and deserves the same
+        // corroboration, so its departure comes from the leg when there is no route.
+        tracker.DepartureIcao = route?.DepartureIcao ?? leg?.DepartureIcao;
         // A blank/non-numeric CID (never set, or a typo) simply disables corroboration for this
         // flight - the same "opt-in, fail soft" rule as an unreachable feed, never a validation
         // error surfaced mid-flight.
@@ -575,6 +590,16 @@ public sealed class FlightLifecycleService : IHostedService
         var machine = FlightPhaseStateMachine.RestoreFrom(events);
 
         var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
+
+        // A contract sector has no route, so its arrival and departure come from the contract leg
+        // instead. Rehydration has to work for a contract flight exactly as it does for any other:
+        // the sim crashing halfway across the Atlantic is precisely the case this feature is most
+        // likely to meet, and losing the sector because the route lookup came back empty would be a
+        // silent loss of the player's flying.
+        var leg = flight.ContractLegId is { } legId
+            ? await db.ContractLegs.FirstOrDefaultAsync(l => l.Id == legId, ct)
+            : null;
+
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
         var settings = airline is not null ? await db.UserSettings.FirstOrDefaultAsync(s => s.OwnerUserId == airline.OwnerUserId, ct) : null;
         var lastKnown = events
@@ -588,7 +613,8 @@ public sealed class FlightLifecycleService : IHostedService
             FlightId = flight.Id,
             AirlineId = flight.AirlineId,
             FleetAircraftId = flight.FleetAircraftId,
-            ArrivalIcao = route?.ArrivalIcao ?? string.Empty,
+            ContractLegId = flight.ContractLegId,
+            ArrivalIcao = route?.ArrivalIcao ?? leg?.ArrivalIcao ?? string.Empty,
             PlannedBlockMinutes = flight.PlannedBlockMinutes,
             Machine = machine,
             PendingReconnect = true,
@@ -597,7 +623,7 @@ public sealed class FlightLifecycleService : IHostedService
             // departure airport for a rehydrated flight - it may already be halfway to its
             // destination - and it is exactly what the reconnect check below compares against too.
             IntegrityMonitor = new FlightIntegrityMonitor(lastKnown),
-            DepartureIcao = route?.DepartureIcao,
+            DepartureIcao = route?.DepartureIcao ?? leg?.DepartureIcao,
             VatsimCid = int.TryParse(settings?.VatsimCid, out var rehydratedCid) && rehydratedCid > 0 ? rehydratedCid : null,
             VatsimContextResolved = true,
         };
@@ -721,21 +747,45 @@ public sealed class FlightLifecycleService : IHostedService
         // is now refused outright (see RouteEndpoints.DeleteAsync), so this is the second line rather
         // than the first, and it covers the whole class: the airline, the aircraft type and the
         // arrival airport can all fail to resolve the same way.
-        var routeForPay = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId);
         var airlineForPay = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId);
-        if (routeForPay is null || airlineForPay is null)
+
+        // A contract sector's pay depends on its LEG, not on a route it does not have - so the same
+        // rule is applied to a different record. This is the one place the two kinds of flight part
+        // company, and everything above it (OOOI, touchdown, centreline, sim rate, slew, position
+        // jump, VATSIM tallies) has already been recorded identically for both.
+        var contractLeg = flight.ContractLegId is { } payLegId
+            ? await db.ContractLegs.FirstOrDefaultAsync(l => l.Id == payLegId)
+            : null;
+        var routeForPay = flight.ContractLegId is null
+            ? await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId)
+            : null;
+
+        var payRecordMissing = flight.ContractLegId is not null ? contractLeg is null : routeForPay is null;
+        if (payRecordMissing || airlineForPay is null)
         {
             _logger.LogError(
                 "Flight {FlightId} finished but its {Missing} could not be resolved, so it cannot be paid. Leaving it in progress rather than completing it unpaid - it can be completed manually once the missing record is restored.",
                 flight.Id,
-                routeForPay is null ? "route" : "airline");
+                airlineForPay is null ? "airline" : flight.ContractLegId is not null ? "contract leg" : "route");
             await db.SaveChangesAsync();
             return;
         }
 
         flight.Status = FlightStatus.Completed;
 
-        var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == tracker.FleetAircraftId);
+        if (contractLeg is not null)
+        {
+            await FinalizeContractLegAsync(db, flight, contractLeg, tracker, completionUtc);
+            await db.SaveChangesAsync();
+
+            await _hub.Clients.All.SendAsync("flightCompleted", new { flightId = flight.Id, status = flight.Status.ToString() });
+            _logger.LogInformation("Contract flight {FlightId} completed.", flight.Id);
+            return;
+        }
+
+        var fleetAircraft = tracker.FleetAircraftId is { } trackedAircraftId
+            ? await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == trackedAircraftId)
+            : null;
         if (fleetAircraft is not null)
         {
             // The last position telemetry ever reported for this flight - where it actually ended
@@ -913,6 +963,69 @@ public sealed class FlightLifecycleService : IHostedService
         _logger.LogInformation("Flight {FlightId} completed.", flight.Id);
     }
 
+    /// <summary>
+    /// Completes a contract sector: pay the leg's fee, advance the contract, and stop.
+    ///
+    /// <para><b>Read what this method does NOT do, because that is the point of it.</b> It does not
+    /// touch a <see cref="FleetAircraft"/> - not its hours, not its condition, not its location, not
+    /// its status, not its fuel. It does not call <see cref="MaintenancePoster"/>. It does not call
+    /// <see cref="ReputationPoster"/>. It does not post fuel, landing, handling, parking, passenger,
+    /// turnaround, maintenance or crew lines. Every one of those belongs to the business that owns
+    /// the aeroplane, which is the entire reason a player takes a contract.</para>
+    ///
+    /// <para>None of that is achieved by remembering to leave things out. All of it lives in the
+    /// airline branch this method sits beside, and a contract flight has no fleet aircraft to hand it
+    /// even if it got there - so "a contract flight never touches the player's fleet" is a property
+    /// of the shape of the code rather than of anyone's care.</para>
+    ///
+    /// <para><b>Reputation deliberately does not move.</b> Reputation models the player's own
+    /// airline's passengers and their experience of its service. Flying somebody else's aeroplane on
+    /// somebody else's business says nothing at all about that, in either direction - so a superb
+    /// contract landing does not flatter the airline and a rough one does not damage it.</para>
+    ///
+    /// <para>Landing quality, block time and the sector itself were all recorded before this was
+    /// called, and they count toward the player's own flying record exactly as any other sector does.
+    /// The player flew a real sector in the simulator and gets the same landing report for it.</para>
+    /// </summary>
+    private async Task FinalizeContractLegAsync(
+        FsOpsDbContext db, Flight flight, ContractLeg leg, ActiveFlightTracker tracker, DateTimeOffset completionUtc)
+    {
+        var contract = await db.Contracts.FirstOrDefaultAsync(c => c.Id == leg.ContractId);
+        if (contract is null)
+        {
+            // Should be unreachable - the leg was resolved a moment ago and a contract's legs cascade
+            // with it - but a leg with no contract cannot be paid, and completing it unpaid is the
+            // one outcome with no way back. Same reasoning as the route branch's own guard.
+            flight.Status = FlightStatus.InProgress;
+            _logger.LogError(
+                "Contract flight {FlightId} finished but contract {ContractId} could not be resolved, so it cannot be paid. Leaving it in progress.",
+                flight.Id, leg.ContractId);
+            return;
+        }
+
+        // Backfill the aircraft the sim actually reported, exactly as the airline path does, and for
+        // exactly the same reason: FSOps normally connects while MSFS is still in the menu, so the
+        // identity is very often not available when the flight starts. Informational only - a
+        // wrong-family aircraft is flagged for the player's information and NEVER penalised, which
+        // holds here as much as anywhere. A contract names a specific aeroplane and the player may
+        // well fly a different variant of it; that is a note on the report card, never money.
+        if (flight.TitleFlown.Length == 0 && tracker.LastAircraftTitle is { Length: > 0 } observedTitle)
+        {
+            flight.TitleFlown = observedTitle;
+            var contractAircraft = ContractAircraftCatalogue.Find(contract.AircraftTypeDesignator);
+            flight.TypeMismatch = contractAircraft is not null && AircraftTypeMatcher.HasAircraftData(observedTitle, tracker.LastAtcModel)
+                ? !AircraftTypeMatcher.IsMatch(contractAircraft.MatchPatterns, observedTitle, tracker.LastAtcModel)
+                : null;
+        }
+
+        var result = await ContractEconomicsPoster.PostLegCompletionAsync(
+            db, flight, contract, leg, completionUtc, CancellationToken.None);
+
+        _logger.LogInformation(
+            "Contract flight {FlightId} flew leg {Sequence} of contract {ContractId} ({Departure}-{Arrival}) for {Fee}. Contract completed: {Completed}.",
+            flight.Id, leg.Sequence, contract.Id, leg.DepartureIcao, leg.ArrivalIcao, result.FeePosted, result.ContractCompleted);
+    }
+
     private void Enqueue(Guid flightId, DateTimeOffset utc, FlightEventType type, string payloadJson)
     {
         var evt = new FlightEvent { Id = Guid.NewGuid(), FlightId = flightId, Utc = utc, Type = type, PayloadJson = payloadJson };
@@ -1020,7 +1133,13 @@ public sealed class FlightLifecycleService : IHostedService
 
         public required Guid AirlineId { get; init; }
 
-        public required Guid FleetAircraftId { get; init; }
+        /// <summary>Null for a contract flight - see <see cref="BeginTracking"/>.</summary>
+        public required Guid? FleetAircraftId { get; init; }
+
+        /// <summary>Set for a contract flight, null otherwise. Not <c>required</c> so the many
+        /// hand-built test trackers keep compiling unchanged - a tracker with no contract leg is an
+        /// ordinary airline sector, which is what they all are.</summary>
+        public Guid? ContractLegId { get; init; }
 
         public required string ArrivalIcao { get; init; }
 

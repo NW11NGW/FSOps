@@ -21,6 +21,7 @@ export const LEDGER_CATEGORIES = [
   'TurnaroundFees',
   'CancellationFee',
   'AircraftRepositioning',
+  'ContractFee',
   'VatsimOnlineBonus',
   'LeasePayment',
   'LoanPayment',
@@ -43,6 +44,10 @@ const LABELS: Record<string, string> = {
   TurnaroundFees: 'Turnaround fees',
   CancellationFee: 'Cancellation fee',
   AircraftRepositioning: 'Aircraft repositioning',
+  // Both directions of contract flying share this one category: a leg's fee is positive, an abandon
+  // charge negative. The label has to work for both, so it names the arrangement rather than the
+  // direction - "Contract fee earned" would read very oddly against a charge.
+  ContractFee: 'Contract flying',
   VatsimOnlineBonus: 'Online flying bonus',
   LeasePayment: 'Lease payment',
   LoanPayment: 'Loan payment',

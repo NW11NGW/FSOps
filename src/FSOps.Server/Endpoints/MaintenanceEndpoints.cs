@@ -328,15 +328,22 @@ public static class MaintenanceEndpoints
                 m.Cost))
             .ToList();
 
-        var routeIds = flights.Select(f => f.RouteId).Distinct().ToList();
+        var routeIds = flights.Where(f => f.RouteId is not null).Select(f => f.RouteId!.Value).Distinct().ToList();
         var routesById = await db.Routes.Where(r => routeIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
+
+        // No contract sector can appear here: these three statuses are virtual-pilot occurrences that
+        // never flew, and a contract is always flown by the player in person. So a null route on this
+        // list would be a genuine anomaly rather than a contract, and "Unknown route" is still the
+        // right thing to say about it.
         var unresolved = flights
             .Where(f => f.Status is FlightStatus.Skipped or FlightStatus.Cancelled or FlightStatus.Suspended)
             .OrderBy(f => f.PlannedDepartureUtc)
             .Select(f => new UnflyableOccurrenceSummary(
                 f.Id,
                 f.Status.ToString(),
-                routesById.TryGetValue(f.RouteId, out var r) ? $"{r.DepartureIcao}-{r.ArrivalIcao}" : "Unknown route",
+                f.RouteId is { } occurrenceRouteId && routesById.TryGetValue(occurrenceRouteId, out var r)
+                    ? $"{r.DepartureIcao}-{r.ArrivalIcao}"
+                    : "Unknown route",
                 f.PlannedDepartureUtc,
                 f.UnflyableReason))
             .ToList();

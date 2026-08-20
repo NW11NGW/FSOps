@@ -418,6 +418,18 @@ public static class FinanceEndpoints
         LedgerCategory.TicketRevenue => FinanceBucket.OperatingRevenue,
         LedgerCategory.VatsimOnlineBonus => FinanceBucket.OperatingRevenue,
 
+        // Contract flying is operating revenue, and the choice is deliberate rather than the obvious
+        // default. The money is earned by flying - the airline's own pilot, in the airline's own
+        // working week, at the cost of the time they could have spent flying their own network - so
+        // it belongs in the same total as the fares. It is emphatically NOT capital and financing:
+        // that bucket is money that moves without anything being operated, and this is the opposite.
+        //
+        // The abandon charge shares the category and therefore shares the bucket, which is right:
+        // it is negative operating revenue on a job that was operated and then stopped, not a cost
+        // of operating something else. Netting inside one category keeps "what did contract flying
+        // do to my balance" a single figure.
+        LedgerCategory.ContractFee => FinanceBucket.OperatingRevenue,
+
         LedgerCategory.StartingCapital => FinanceBucket.CapitalAndFinancing,
         LedgerCategory.LoanProceeds => FinanceBucket.CapitalAndFinancing,
         LedgerCategory.AircraftPurchase => FinanceBucket.CapitalAndFinancing,
@@ -613,6 +625,12 @@ public static class FinanceEndpoints
                 // nothing else, so an online flyer's bonus was money the ledger held, the cash
                 // balance counted, and this page reported nowhere at all.
                 onlineFlyingBonus = Sum(LedgerCategory.VatsimOnlineBonus),
+                // "What has contract flying earned me" is the obvious question this feature invites,
+                // and it is answerable here because the fee has its own ledger category. Netted:
+                // every leg flown adds, every abandon charge subtracts, so this one figure is the
+                // honest bottom line for contracts rather than a gross number with the losses hidden
+                // in another row.
+                contractFees = Sum(LedgerCategory.ContractFee),
                 aircraftSaleProceeds,
                 total = TotalOf(FinanceBucket.OperatingRevenue) + aircraftSaleProceeds,
             },
@@ -676,8 +694,21 @@ public static class FinanceEndpoints
         }
 
         var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromDays(periodDays);
+
+        // RouteId != null excludes contract sectors, and it is doing real work rather than tidying.
+        // This endpoint groups by RouteId, so without it every contract sector in the period would
+        // collapse into a single phantom group with no departure, no arrival and no flight number -
+        // on the one page whose entire job is being accurate. It would have looked plausible too: the
+        // group would have reported a sector count and zero revenue, because ContractFee is
+        // deliberately not one of FlightRevenueCategories, so the page would have shown the player a
+        // route they have never flown, apparently losing money.
+        //
+        // Contract earnings are not missing from the Finances page as a result - they are in the
+        // ledger under their own category and in the operating-revenue total. They are simply not a
+        // ROUTE, which is what this particular breakdown is about.
         var flights = (await db.Flights
-                .Where(f => f.AirlineId == airline.Id && f.Status == FlightStatus.Completed && f.RevenuePosted && f.DeletedUtc == null)
+                .Where(f => f.AirlineId == airline.Id && f.Status == FlightStatus.Completed && f.RevenuePosted &&
+                            f.DeletedUtc == null && f.RouteId != null)
                 .ToListAsync(ct))
             .Where(f => (f.InUtc ?? f.CreatedUtc) >= cutoff)
             .ToList();
@@ -687,7 +718,7 @@ public static class FinanceEndpoints
             return Results.Ok(new { periodDays, routes = Array.Empty<object>() });
         }
 
-        var routeIds = flights.Select(f => f.RouteId).Distinct().ToList();
+        var routeIds = flights.Select(f => f.RouteId!.Value).Distinct().ToList();
         var routes = await db.Routes.Where(r => routeIds.Contains(r.Id)).ToListAsync(ct);
         var routeById = routes.ToDictionary(r => r.Id);
 
@@ -700,18 +731,24 @@ public static class FinanceEndpoints
 
         // Seats offered per sector, for the load factor below. Two lookups for the whole page, not
         // one per flight - the same shape StatsEndpoints.PerformanceAsync already uses.
-        var fleetAircraftIds = flights.Select(f => f.FleetAircraftId).Distinct().ToList();
+        var fleetAircraftIds = flights
+            .Where(f => f.FleetAircraftId is not null)
+            .Select(f => f.FleetAircraftId!.Value)
+            .Distinct()
+            .ToList();
         var fleet = await db.FleetAircraft.Where(f => fleetAircraftIds.Contains(f.Id)).ToListAsync(ct);
         var typeIdByAircraft = fleet.ToDictionary(f => f.Id, f => f.AircraftTypeId);
         var typeIdsForSeats = fleet.Select(f => f.AircraftTypeId).Distinct().ToList();
         var seatsByType = await db.AircraftTypes.Where(t => typeIdsForSeats.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.PaxCapacity, ct);
 
         int SeatsFor(Flight flight) =>
-            typeIdByAircraft.TryGetValue(flight.FleetAircraftId, out var typeId) && seatsByType.TryGetValue(typeId, out var seats)
+            flight.FleetAircraftId is { } aircraftId &&
+            typeIdByAircraft.TryGetValue(aircraftId, out var typeId) &&
+            seatsByType.TryGetValue(typeId, out var seats)
                 ? seats
                 : 0;
 
-        var result = flights.GroupBy(f => f.RouteId).Select(g =>
+        var result = flights.GroupBy(f => f.RouteId!.Value).Select(g =>
         {
             var route = routeById.GetValueOrDefault(g.Key);
             var revenue = g.Sum(f => revenueByFlight.GetValueOrDefault(f.Id));

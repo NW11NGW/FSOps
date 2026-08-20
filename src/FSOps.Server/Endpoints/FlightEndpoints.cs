@@ -275,6 +275,12 @@ public static class FlightEndpoints
             CreatedUtc = now,
         };
 
+        // Exactly one of (route AND fleet aircraft) or (contract leg) - see FlightWriteInvariant for
+        // what each malformed shape would actually do downstream. Checked here, at the boundary that
+        // writes flights, because a Flight row is permanent history the moment it is saved and this
+        // app has no way to un-write one.
+        FlightWriteInvariant.Validate(flight);
+
         db.Flights.Add(flight);
         fleetAircraft.Status = FleetAircraftStatus.InFlight;
 
@@ -393,7 +399,18 @@ public static class FlightEndpoints
             // as a substitute for a real reputation cost - without this, a flight running badly
             // (late, heading for a hard landing) could always be abandoned instead of finished or
             // even manually completed, taking zero reputation damage regardless of what it cost.
-            ReputationPoster.PostCancelledOrSkipped(airline, economyConfig);
+            //
+            // NOT for a contract sector, and this is a real distinction rather than tidiness. A
+            // contract carries no passengers of the airline's - the whole premise is that it is
+            // somebody else's aeroplane on somebody else's business - so there is nobody whose
+            // opinion of THIS airline could have changed. Giving up half-way through a ferry has a
+            // consequence, and it is a financial one raised against the contract itself (see
+            // ContractEndpoints.AbandonContractAsync); it is not a mark against an airline whose
+            // customers were never involved.
+            if (flight.ContractLegId is null)
+            {
+                ReputationPoster.PostCancelledOrSkipped(airline, economyConfig);
+            }
         }
 
         await db.SaveChangesAsync(ct);
@@ -461,6 +478,16 @@ public static class FlightEndpoints
         // below) because MaintenancePoster needs it too - see the matching comment in
         // FlightLifecycleService's telemetry completion path, which this manual path mirrors.
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.Id == flight.AirlineId, ct);
+
+        // A contract sector parts company here, exactly as it does in the telemetry path. Everything
+        // below this point is about a fleet aircraft, a route and an airline's own economics, and a
+        // contract has none of the three.
+        if (flight.ContractLegId is { } manualLegId)
+        {
+            await CompleteContractLegManuallyAsync(db, flight, manualLegId, now, ct);
+            await db.SaveChangesAsync(ct);
+            return Results.Ok(ToFlightDto(flight));
+        }
 
         // Resolved regardless of whether airline lookup succeeds below - see the matching comment
         // in FlightLifecycleService.FinalizeFlightAsync, which this manual path mirrors.
@@ -549,6 +576,68 @@ public static class FlightEndpoints
         return Results.Ok(ToFlightDto(flight));
     }
 
+    /// <summary>
+    /// Manual completion of a contract leg: the leg counts as flown, the contract moves on, and
+    /// <b>no fee is paid</b>.
+    ///
+    /// <para><b>Why nothing is paid, since this is the one genuinely awkward decision in the
+    /// feature.</b> Manual completion exists for sectors the state machine could not finish - a sim
+    /// crash, a stop part-way - which means FSOps has no telemetry proving the sector was flown at
+    /// all. For an ordinary airline sector that is survivable, because the path still bills the
+    /// sector's full planned fuel, its landing and handling fees and its crew cost, and takes a
+    /// reputation hit on top: completing manually costs real money, so it is not a shortcut to any.
+    /// A contract sector has <i>no</i> cost side by design and no reputation lever either, so paying
+    /// out here would make "start a leg, complete it manually, repeat" a button that prints money -
+    /// squarely against the project's own rule that you must not be able to cheat your way to it,
+    /// and against "revenue never comes from the clock".</para>
+    ///
+    /// <para>So this reuses the gate the app already has for exactly this fact. A slew or
+    /// position-jump sector is unpayable because FSOps cannot vouch for it (see
+    /// <see cref="ContractEconomicsPoster.PostLegCompletionAsync"/>); an unverified manual completion
+    /// is the same claim and gets the same answer.</para>
+    ///
+    /// <para><b>The player is not punished for a crash, though.</b> The leg is marked flown, so the
+    /// contract continues, the next leg unlocks, and - because the abandon charge is computed from
+    /// the legs still OUTSTANDING - this leg no longer counts against them if they later stop. They
+    /// lose this leg's fee and nothing else.</para>
+    /// </summary>
+    private static async Task CompleteContractLegManuallyAsync(
+        FsOpsDbContext db, Flight flight, Guid contractLegId, DateTimeOffset now, CancellationToken ct)
+    {
+        var leg = await db.ContractLegs.FirstOrDefaultAsync(l => l.Id == contractLegId, ct);
+        if (leg is null)
+        {
+            return;
+        }
+
+        leg.FlightId = flight.Id;
+        leg.FlownUtc = now;
+
+        // No fuel was billed and none should be: the operator pays for the fuel. FuelUsedKg was
+        // defaulted to the planned figure by the shared code above purely so the report card has
+        // something to show, and it carries no money either way - but a contract flight should not
+        // claim to have consumed the player's fuel, so it is cleared rather than left reading as a
+        // cost that was silently absorbed.
+        flight.FuelUsedKg = 0;
+        flight.TotalCost = 0m;
+        flight.PaxFlown = flight.PaxBooked;
+        flight.RevenuePosted = true;
+
+        var outstanding = await db.ContractLegs
+            .Where(l => l.ContractId == leg.ContractId && l.FlightId == null && l.Id != leg.Id)
+            .CountAsync(ct);
+
+        if (outstanding == 0)
+        {
+            var contract = await db.Contracts.FirstOrDefaultAsync(c => c.Id == leg.ContractId, ct);
+            if (contract is not null)
+            {
+                contract.Status = ContractStatus.Completed;
+                contract.ClosedUtc = now;
+            }
+        }
+    }
+
     private static async Task<IResult> GetActiveAsync(FsOpsDbContext db, ICurrentUser currentUser, FlightLifecycleService lifecycle, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
@@ -597,12 +686,44 @@ public static class FlightEndpoints
         // when it's the aircraft's most recent one (the common case: viewing the report card right
         // after landing), but drifts once a later flight has flown. Null if the aircraft record is
         // gone (sold/removed) rather than guessing at a figure the app can no longer verify.
-        var aircraftFuelOnBoardKg = await db.FleetAircraft
-            .Where(f => f.Id == flight.FleetAircraftId)
-            .Select(f => (double?)f.FuelOnBoardKg)
-            .FirstOrDefaultAsync(ct);
+        // Null for a contract sector, and correctly so: the fuel on board belongs to the operator's
+        // aeroplane, FSOps never tracked it as an asset, and inventing a figure would be worse than
+        // showing none.
+        var aircraftFuelOnBoardKg = flight.FleetAircraftId is { } reportAircraftId
+            ? await db.FleetAircraft
+                .Where(f => f.Id == reportAircraftId)
+                .Select(f => (double?)f.FuelOnBoardKg)
+                .FirstOrDefaultAsync(ct)
+            : null;
 
-        return Results.Ok(new { flight = ToFlightDto(flight), events, ledgerTransactions, aircraftFuelOnBoardKg });
+        // The report card for a contract sector needs to say which job it was and which leg - a
+        // sector with no route and no registration would otherwise render as a blank card.
+        var contractSectors = await ContractSectorLookup.ByLegIdAsync(db, ContractSectorLookup.LegIdsOf([flight]), ct);
+        var contract = flight.ContractLegId is { } reportLegId ? contractSectors.GetValueOrDefault(reportLegId) : null;
+
+        return Results.Ok(new
+        {
+            flight = ToFlightDto(flight),
+            events,
+            ledgerTransactions,
+            aircraftFuelOnBoardKg,
+            contract = contract is null
+                ? null
+                : new
+                {
+                    contractId = contract.ContractId,
+                    kind = contract.Kind.ToString(),
+                    status = contract.ContractStatus.ToString(),
+                    operatorName = contract.OperatorName,
+                    aircraftTypeDesignator = contract.AircraftTypeDesignator,
+                    aircraftName = contract.AircraftName,
+                    legSequence = contract.Sequence,
+                    legCount = contract.LegCount,
+                    departureIcao = contract.DepartureIcao,
+                    arrivalIcao = contract.ArrivalIcao,
+                    feeShare = contract.FeeShare,
+                },
+        });
     }
 
     private static async Task<IResult> ListAsync(FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
@@ -737,10 +858,17 @@ public static class FlightEndpoints
                 .ToListAsync(ct))
             .ToDictionary(x => x.FlightId, x => x.Count);
 
+        // Contract sectors have no route and no fleet aircraft (see Flight.RouteId), so their
+        // airports and their aeroplane come from the contract leg instead. The logbook is a record of
+        // flying done, and a job flown for another operator is flying done - it belongs here, clearly
+        // marked as what it was rather than quietly omitted or shown as a blank pair of airports.
+        var contractSectors = await ContractSectorLookup.ByLegIdAsync(db, ContractSectorLookup.LegIdsOf(flights), ct);
+
         var sectors = flights.Select(f =>
         {
-            var route = routesById.GetValueOrDefault(f.RouteId);
-            var aircraft = fleetById.GetValueOrDefault(f.FleetAircraftId);
+            var route = f.RouteId is { } routeId ? routesById.GetValueOrDefault(routeId) : null;
+            var aircraft = f.FleetAircraftId is { } aircraftId ? fleetById.GetValueOrDefault(aircraftId) : null;
+            var contract = f.ContractLegId is { } legId ? contractSectors.GetValueOrDefault(legId) : null;
             var type = aircraft is not null ? typesById.GetValueOrDefault(aircraft.AircraftTypeId) : null;
             var pilot = pilotsById.GetValueOrDefault(f.PilotId);
             var lines = ledgerByFlight.GetValueOrDefault(f.Id) ?? new List<LedgerTransaction>();
@@ -763,14 +891,31 @@ public static class FlightEndpoints
                 flightId = f.Id,
                 status = f.Status.ToString(),
                 routeId = f.RouteId,
-                departureIcao = route?.DepartureIcao ?? string.Empty,
-                arrivalIcao = route?.ArrivalIcao ?? string.Empty,
+                departureIcao = route?.DepartureIcao ?? contract?.DepartureIcao ?? string.Empty,
+                arrivalIcao = route?.ArrivalIcao ?? contract?.ArrivalIcao ?? string.Empty,
                 flightNumber = route?.FlightNumber,
                 registration = aircraft?.Registration,
-                aircraftTypeName = type?.Name,
-                aircraftIcaoType = type?.IcaoType,
+                aircraftTypeName = type?.Name ?? contract?.AircraftName,
+                aircraftIcaoType = type?.IcaoType ?? contract?.AircraftTypeDesignator,
                 pilotName = pilot?.Name,
-                isPlayerFlight = pilot?.IsPlayer ?? false,
+                // A contract is always flown by the player in person - never a virtual pilot - so
+                // this is true for every contract sector by construction, not by the pilot lookup
+                // happening to agree.
+                isPlayerFlight = contract is not null || (pilot?.IsPlayer ?? false),
+
+                // The contract marker. Null for an ordinary airline sector, so a consumer can tell
+                // the two apart without inferring it from a missing routeId.
+                contract = contract is null
+                    ? null
+                    : new
+                    {
+                        contractId = contract.ContractId,
+                        kind = contract.Kind.ToString(),
+                        operatorName = contract.OperatorName,
+                        legSequence = contract.Sequence,
+                        legCount = contract.LegCount,
+                        feeShare = contract.FeeShare,
+                    },
                 // The sector's own timeline. `dateUtc` is what the logbook sorts and groups by: the
                 // moment it finished if it did, otherwise when it left, otherwise when it was
                 // planned for - never a fabricated stand-in.
@@ -869,13 +1014,20 @@ public static class FlightEndpoints
     /// </summary>
     private static async Task<TrackAnchor?> DepartureAnchorAsync(FsOpsDbContext db, Flight flight, CancellationToken ct)
     {
-        var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct);
-        if (route is null)
+        // A contract sector departs from its leg rather than from a route. Resolving it matters as
+        // much here as anywhere: without an anchor the track builder falls back to its weaker
+        // opening-fix rule, so a contract flight would get a slightly worse map than an identical
+        // airline flight for no reason the player could see.
+        var departureIcao = flight.ContractLegId is { } legId
+            ? (await db.ContractLegs.FirstOrDefaultAsync(l => l.Id == legId, ct))?.DepartureIcao
+            : (await db.Routes.FirstOrDefaultAsync(r => r.Id == flight.RouteId, ct))?.DepartureIcao;
+
+        if (departureIcao is null)
         {
             return null;
         }
 
-        var airport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == route.DepartureIcao, ct);
+        var airport = await db.Airports.FirstOrDefaultAsync(a => a.Icao == departureIcao, ct);
         return airport is null ? null : new TrackAnchor(airport.Latitude, airport.Longitude);
     }
 
@@ -1189,7 +1341,16 @@ public static class FlightEndpoints
 
     internal static async Task RevertFleetAircraftAsync(FsOpsDbContext db, Flight flight, LiveFlightSnapshot? lastSnapshot, CancellationToken ct)
     {
-        var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == flight.FleetAircraftId, ct);
+        // A contract flight has no fleet aircraft, so there is nothing of the player's to revert -
+        // stated as an early return rather than left to the lookup below coming back empty, because
+        // "the query happened to miss" and "there was deliberately nothing to find" read identically
+        // in code and only one of them is the intent.
+        if (flight.FleetAircraftId is not { } fleetAircraftId)
+        {
+            return;
+        }
+
+        var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == fleetAircraftId, ct);
         if (fleetAircraft is null)
         {
             return;
@@ -1243,6 +1404,7 @@ public static class FlightEndpoints
         f.AirlineId,
         f.RouteId,
         f.FleetAircraftId,
+        f.ContractLegId,
         f.PilotId,
         Status = f.Status.ToString(),
         f.PlannedDepartureUtc,

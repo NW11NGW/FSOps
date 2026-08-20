@@ -34,6 +34,36 @@ public class StatsTrendsEndpointTests
 
     private static string DayKey(DateTimeOffset moment) => moment.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// A day to seed a flight on: <paramref name="daysAgo"/> days back, <b>pinned to 06:00 UTC</b>
+    /// rather than to whatever time of day the test happens to run at.
+    ///
+    /// <para><b>Why this exists.</b> These tests bucket a flight by its <c>InUtc</c>, which is the
+    /// planned departure plus block time plus any delay - up to five and a half hours after the
+    /// moment they seed. Seeding at <c>DateTimeOffset.UtcNow</c> therefore pushed that arrival past
+    /// midnight, into the <i>next</i> UTC day, whenever the suite ran after roughly 18:30 UTC. The
+    /// day the test staged and the day the endpoint bucketed into were then different days, and
+    /// <c>OnTimeAgreesWithThePerformanceEndpointForTheSameDay</c> failed every evening while passing
+    /// all morning.</para>
+    ///
+    /// <para>06:00 leaves the whole working day of headroom before midnight, so the arrival always
+    /// lands on the day the test intended, whatever time it is run. Nothing about what these tests
+    /// <i>claim</i> changes - this only fixes how they stage the conditions, the same distinction the
+    /// pinned-schema conversions drew (see <see cref="PinnedSchemaRead"/>).</para>
+    ///
+    /// <para>Applied to <b>every</b> flight-seeding site in this file, not only the one that was
+    /// failing. Two of the others straddle midnight in a one-minute window rather than a five-hour
+    /// one, so they would have gone on passing almost always - and a fix applied only to the instance
+    /// that happens to be red is a fix that schedules its own recurrence. Ledger-based tests are left
+    /// alone: a ledger row is bucketed by its own timestamp, with nothing added to it, so they were
+    /// never exposed to this.</para>
+    /// </summary>
+    private static DateTimeOffset FlightDayUtc(int daysAgo)
+    {
+        var date = DateTimeOffset.UtcNow.AddDays(-daysAgo).UtcDateTime.Date;
+        return new DateTimeOffset(date.AddHours(6), TimeSpan.Zero);
+    }
+
     private static void AddLedger(RouteTestContext ctx, DateTimeOffset utc, decimal amount, LedgerCategory category = LedgerCategory.TicketRevenue)
     {
         ctx.Db.LedgerTransactions.Add(new LedgerTransaction
@@ -178,7 +208,7 @@ public class StatsTrendsEndpointTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var flightDay = DateTimeOffset.UtcNow.AddDays(-2);
+        var flightDay = FlightDayUtc(2);
 
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, flightDay, plannedBlockMinutes: 90, arrivalDelayMinutes: 1, paxFlown: 90);
         await ctx.Db.SaveChangesAsync();
@@ -208,7 +238,9 @@ public class StatsTrendsEndpointTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        // Both sectors must land on the same UTC day for this comparison to mean anything - the
+        // second arrives five and a half hours after the first departs. See FlightDayUtc.
+        var day = FlightDayUtc(1);
 
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day, plannedBlockMinutes: 90, arrivalDelayMinutes: 2, paxFlown: 90);
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day.AddHours(3), plannedBlockMinutes: 90, arrivalDelayMinutes: 60, paxFlown: 180);
@@ -294,7 +326,7 @@ public class StatsTrendsEndpointTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        var day = FlightDayUtc(1);
         var catalog = EconomyConfigCatalog.Default();
         var config = catalog.Get(ctx.Airline.Playstyle);
 
@@ -319,7 +351,7 @@ public class StatsTrendsEndpointTests
         var route = SeedRoute(ctx);
         var pilot = SeedPilot(ctx);
         var fleetAircraft = await ctx.Db.FleetAircraft.FirstAsync();
-        var day = DateTimeOffset.UtcNow.AddDays(-1);
+        var day = FlightDayUtc(1);
 
         SeedCompletedFlight(ctx, route, fleetAircraft.Id, pilot.Id, day, plannedBlockMinutes: 90, arrivalDelayMinutes: 0, paxFlown: 120, landingFpm: null, simRateElevated: true);
         await ctx.Db.SaveChangesAsync();

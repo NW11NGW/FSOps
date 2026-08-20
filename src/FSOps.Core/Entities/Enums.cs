@@ -117,6 +117,70 @@ public enum FlightEventType
 }
 
 /// <summary>
+/// What kind of job another operator is offering. Stored as text (see ContractConfiguration), so
+/// member order carries no meaning and adding one needs no migration.
+/// <para>
+/// The three exist because <b>variety of flying is the whole point of contracts</b>, not the money -
+/// so they have to feel genuinely different rather than being one job type wearing three labels.
+/// Nothing in the generator branches on this value to decide whether a job MAY be multi-leg; leg
+/// count falls out of distance against the named aircraft's range (see
+/// <see cref="FSOps.Core.Contracts.ContractLegChainBuilder"/>). What the kind actually changes is
+/// which scale bands are plausible and what the load is - which is why a ferry usually ends up long
+/// and a charter usually does not, without either being forced.
+/// </para>
+/// </summary>
+public enum ContractKind
+{
+    /// <summary>
+    /// Move somebody else's aircraft from A to a distant B. The most distinctive thing in the app:
+    /// several sectors over several sessions, the aircraft sitting where it was left in between, and
+    /// the whole chain of stops named up front. There is no payload - the aeroplane IS the cargo.
+    /// </summary>
+    Ferry,
+
+    /// <summary>Freight between two points, where the load is what decides which airframe can take it.</summary>
+    Cargo,
+
+    /// <summary>A one-off passenger job, often somewhere the player's own network does not reach.</summary>
+    Charter,
+}
+
+/// <summary>
+/// Where a contract is in its life. Stored as text (see ContractConfiguration), so member order
+/// carries no meaning and adding one needs no migration.
+/// <para>
+/// <see cref="Offered"/> is first deliberately, so <c>default(ContractStatus)</c> is the harmless
+/// answer - a row that somehow lost its status reads as "on the board", never as one the player is
+/// on the hook for.
+/// </para>
+/// </summary>
+public enum ContractStatus
+{
+    /// <summary>On the board, not yet accepted. Disappears when the board refreshes past it.</summary>
+    Offered,
+
+    /// <summary>The player took it. Legs are flown in order; the deadline is now running.</summary>
+    Accepted,
+
+    /// <summary>Every leg flown. Terminal.</summary>
+    Completed,
+
+    /// <summary>
+    /// The player gave up part-way, or the deadline passed with legs outstanding. Terminal. They
+    /// keep what the flown legs earned and are charged for the rest - see
+    /// <see cref="FSOps.Core.Contracts.ContractPayCalculator"/>.
+    /// </summary>
+    Abandoned,
+
+    /// <summary>
+    /// Offered, never accepted, and the board has moved on. Terminal, and deliberately distinct from
+    /// <see cref="Abandoned"/>: an offer nobody took is not a job somebody walked out of, and it
+    /// costs nothing. Conflating the two would put a charge on ignoring the board.
+    /// </summary>
+    Expired,
+}
+
+/// <summary>
 /// Stored as text (see LedgerTransactionConfiguration), so member ORDER carries no meaning and
 /// adding one needs no migration.
 /// <para>
@@ -132,7 +196,7 @@ public enum FlightEventType
 /// variable", which is the only question that page asks. A category that cannot be classified does
 /// not belong on a page that classifies, so it is gone rather than papered over. Anything genuinely
 /// new gets its own member and its own decision, exactly as
-/// <see cref="AircraftRepositioning"/> did.
+/// <see cref="AircraftRepositioning"/> did - and as <see cref="ContractFee"/> has now.
 /// </para>
 /// </summary>
 public enum LedgerCategory
@@ -205,6 +269,32 @@ public enum LedgerCategory
     /// value needs no migration.
     /// </summary>
     AircraftRepositioning,
+
+    /// <summary>
+    /// Money moving because of contract flying - a job flown personally for another operator, in an
+    /// aircraft that operator supplies. Positive for a leg actually flown; negative for the single
+    /// charge raised when an accepted contract is abandoned with legs outstanding. See
+    /// <see cref="FSOps.Core.Contracts.ContractPayCalculator"/> and ContractEconomicsPoster.
+    /// <para>
+    /// <b>Its own category, and the ONLY category a contract sector ever posts.</b> The whole
+    /// arrangement is that the player bears no operating costs - fuel, landing, handling,
+    /// maintenance and crew all belong to the other business - so a contract flight writes exactly
+    /// one line and nothing else. That is not a rule the poster remembers to follow: the contract
+    /// completion path never reaches the code that would post the others (see
+    /// FlightLifecycleService.FinalizeFlightAsync). Filing the fee under
+    /// <see cref="TicketRevenue"/> instead would have been wrong twice over - it would claim the
+    /// player's own airline sold those seats, and it would make "what has contract flying earned me"
+    /// unanswerable from the ledger, which is the one question this feature most obviously invites.
+    /// </para>
+    /// <para>
+    /// Both signs live in one category on purpose. An abandon charge is not a different kind of money
+    /// from the fee it is deducted from - it is the same job going the other way - and splitting them
+    /// would make the honest total ("what did contracts do to my balance") require knowing to add two
+    /// categories together. Stored as text (see LedgerTransactionConfiguration), so adding this value
+    /// needs no migration.
+    /// </para>
+    /// </summary>
+    ContractFee,
 }
 
 public enum MaintenanceEventType

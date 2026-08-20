@@ -396,6 +396,69 @@
     "reputationAlphaMultiplier": 0.15,
     "minimumOnlineFraction": 0.5
   },
+  // Contract flying - jobs offered by other operators, flown personally in an aircraft the operator
+  // supplies. Shared across playstyles: a contract is somebody else's aeroplane and somebody else's
+  // costs, so how realistically the player chose to have their OWN airline billed says nothing about
+  // what a third party would pay them.
+  //
+  // The two figures worth understanding before retuning anything:
+  //
+  //   feePerLeg exists so that five 300 nm sectors pay more than one 1,500 nm sector. They ARE more
+  //   work - five departures, five approaches, five sessions - and a fee driven by distance alone
+  //   would say they are identical. It is also what stops a light single's ocean crossing, which is
+  //   the most distinctive thing in the app, being the worst-paid job on the board.
+  //
+  //   abandonChargeFraction is 1.0 because that is the figure the user stated: "if someone does 3
+  //   legs when there are 2 legs remaining they would get charged for the remaining 2 legs." The
+  //   fraction being described IS the unflown share, so scaling it down again would be a second
+  //   fraction nobody asked for. It reads harsher than it plays: earn three legs, pay for two, and
+  //   abandoning most of the way through lands near break-even - "you gained nothing for the
+  //   evening" rather than a trap. Stopping at leg one costs real money, and it should, because that
+  //   is where the aeroplane ends up in the worst possible place.
+  //
+  //   The safety valve is not this number. Nothing at all is charged if no leg was ever flown,
+  //   because the justification the charge rests on - somebody has to recover the aircraft - is
+  //   simply false when the aircraft never left. Handing an untouched job back is free at any
+  //   fraction, so accepting a contract is never a decision the player cannot undo.
+  //
+  // scaleBands is the setting that decides whether the board is worth browsing at all. The weights
+  // are relative, and the spread is the point: a forty-minute domestic hop should sit next to a
+  // multi-leg ocean crossing. Making them equal, or narrowing the distances, produces a board where
+  // every job is the same size - which is the same failure as a generator that always offers four
+  // legs.
+  "contracts": {
+    "boardSize": 8,
+    "boardRefreshHours": 24,
+    "deadlineDays": 28,
+    "abandonChargeFraction": 1.0,
+    "baseFee": 900,
+    "feePerNm": 3.10,
+    "feePerLeg": 850,
+    "feePerPayloadKg": 0.55,
+    "feePerPassenger": 90,
+    "minimumFee": 750,
+    "destinationDistanceTolerance": 0.35,
+    "categoryMultipliers": {
+      "LightSingle": 0.55,
+      "LightTwin": 0.75,
+      "UtilityTurboprop": 1.00,
+      "BusinessJet": 1.35,
+      "RegionalAirliner": 1.55,
+      "Narrowbody": 2.10,
+      "Widebody": 3.20
+    },
+    "kindMultipliers": {
+      "Ferry": 1.10,
+      "Cargo": 1.00,
+      "Charter": 1.05
+    },
+    "scaleBands": [
+      { "name": "Local", "minDistanceNm": 60, "maxDistanceNm": 260, "weight": 3.0 },
+      { "name": "Regional", "minDistanceNm": 260, "maxDistanceNm": 850, "weight": 3.0 },
+      { "name": "Long", "minDistanceNm": 850, "maxDistanceNm": 2400, "weight": 2.0 },
+      { "name": "Epic", "minDistanceNm": 2400, "maxDistanceNm": 6500, "weight": 1.0 }
+    ]
+  },
   "strategyProfiles": [
     { "profile": "LowCost", "referenceFareMultiplier": 0.75, "baselineLoadFactor": 0.76, "elasticity": 1.60, "costMultiplier": 0.85 },
     { "profile": "Domestic", "referenceFareMultiplier": 1.00, "baselineLoadFactor": 0.78, "elasticity": 1.30, "costMultiplier": 1.00 },

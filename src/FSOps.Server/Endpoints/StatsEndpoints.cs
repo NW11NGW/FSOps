@@ -201,18 +201,31 @@ public static class StatsEndpoints
     private static async Task<Dictionary<string, DailyFlightMetrics>> BuildDailyFlightMetrics(
         FsOpsDbContext db, IReadOnlyList<Flight> flights, EconomyConfig economyConfig, CancellationToken ct)
     {
-        if (flights.Count == 0)
+        // Contract sectors are excluded, and this is the one place that decides it, so both callers
+        // are guaranteed to agree. They are the player flying somebody else's aeroplane on somebody
+        // else's business: they carry no passengers of the airline's, so a load factor computed from
+        // them is meaningless, and their punctuality says nothing about the airline's own service -
+        // which is exactly why a contract does not move reputation either. This method's contract is
+        // that it mirrors AirlineEndpoints.GetReputationAsync's rule EXACTLY, so counting a sector
+        // here that reputation ignores would put the performance chart and the reputation card into
+        // permanent disagreement.
+        var airlineFlights = flights.Where(f => f.ContractLegId is null).ToList();
+        if (airlineFlights.Count == 0)
         {
             return new Dictionary<string, DailyFlightMetrics>();
         }
 
-        var fleetAircraftIds = flights.Select(f => f.FleetAircraftId).Distinct().ToList();
+        var fleetAircraftIds = airlineFlights
+            .Where(f => f.FleetAircraftId is not null)
+            .Select(f => f.FleetAircraftId!.Value)
+            .Distinct()
+            .ToList();
         var fleet = await db.FleetAircraft.Where(f => fleetAircraftIds.Contains(f.Id)).ToListAsync(ct);
         var typeIdByAircraft = fleet.ToDictionary(f => f.Id, f => f.AircraftTypeId);
         var typeIds = fleet.Select(f => f.AircraftTypeId).Distinct().ToList();
         var capacityByType = await db.AircraftTypes.Where(t => typeIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.PaxCapacity, ct);
 
-        return flights
+        return airlineFlights
             .GroupBy(f => DayKey((f.InUtc ?? f.CreatedUtc).UtcDateTime.Date))
             .ToDictionary(g => g.Key, g =>
             {
@@ -227,7 +240,9 @@ public static class StatsEndpoints
                 var loadFactors = g
                     .Select(f =>
                     {
-                        var capacity = typeIdByAircraft.TryGetValue(f.FleetAircraftId, out var typeId) && capacityByType.TryGetValue(typeId, out var cap)
+                        var capacity = f.FleetAircraftId is { } aircraftId &&
+                                       typeIdByAircraft.TryGetValue(aircraftId, out var typeId) &&
+                                       capacityByType.TryGetValue(typeId, out var cap)
                             ? cap
                             : 0;
                         return capacity > 0 ? (double?)(100.0 * f.PaxFlown / capacity) : null;
@@ -344,12 +359,16 @@ public static class StatsEndpoints
 
         var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromDays(periodDays);
         var fleetIds = fleet.Select(f => f.Id).ToList();
+        // A contract sector has no fleet aircraft at all, so it can never match here and never
+        // contributes to a player-owned airframe's utilisation or hours - which is the correct
+        // answer, and one this filter now states rather than relying on a join happening to miss.
         var flights = (await db.Flights
-                .Where(f => fleetIds.Contains(f.FleetAircraftId) && f.Status == FlightStatus.Completed && f.DeletedUtc == null)
+                .Where(f => f.FleetAircraftId != null && fleetIds.Contains(f.FleetAircraftId.Value) &&
+                            f.Status == FlightStatus.Completed && f.DeletedUtc == null)
                 .ToListAsync(ct))
             .Where(f => (f.InUtc ?? f.CreatedUtc) >= cutoff)
             .ToList();
-        var flightsByAircraft = flights.GroupBy(f => f.FleetAircraftId).ToDictionary(g => g.Key, g => g.ToList());
+        var flightsByAircraft = flights.GroupBy(f => f.FleetAircraftId!.Value).ToDictionary(g => g.Key, g => g.ToList());
 
         var periodHours = periodDays * 24.0;
 

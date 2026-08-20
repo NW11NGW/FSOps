@@ -233,6 +233,14 @@ public sealed class EconomyConfig
     /// </summary>
     public VatsimOnlineBonusConfig VatsimOnlineBonus { get; init; } = new();
 
+    /// <summary>
+    /// Contract flying - jobs offered by other operators, flown personally in an aircraft the
+    /// operator supplies. Shared across playstyles: see <see cref="ContractConfig"/> for why what a
+    /// third party pays does not depend on how realistically the player chose to have their own
+    /// airline billed.
+    /// </summary>
+    public ContractConfig Contracts { get; init; } = new();
+
     public IReadOnlyList<StrategyProfileConfig> StrategyProfiles { get; init; } = Array.Empty<StrategyProfileConfig>();
 
     [JsonIgnore]
