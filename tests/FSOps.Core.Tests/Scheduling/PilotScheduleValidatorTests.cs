@@ -254,10 +254,17 @@ public class PilotScheduleValidatorTests
     /// <para>
     /// Deliberately distinct from <see cref="Validate_SingleWeeklyLegWithNoReturn_ReportsConflict_BecauseTheWeekMustCloseTheLoop"/>
     /// above: that test's lone leg (RouteOut) departs EGGD, which already matches the aircraft's
-    /// default location, so only the wrap/closure check ever fires there. Here the lone leg
-    /// (RouteBack) departs EGPH - nowhere near the aircraft's recorded location - so this is the one
-    /// that actually proves <see cref="ValidateAircraftChains"/>'s first-leg-location anchor (not just
-    /// closure) is what catches the real reported shape.
+    /// default location; here the lone leg (RouteBack) departs EGPH, nowhere near where the aircraft
+    /// is recorded, which is the real reported shape.
+    /// </para>
+    /// <para>
+    /// <b>What actually produces the refusal is the wrap/closure check, not the first-leg anchor.</b>
+    /// A comment here used to say otherwise, and had been wrong since 2026-08-13, when the anchor
+    /// became an advisory under <c>requireWeekClosure: true</c> - it just happened to keep passing
+    /// because the closure conflict's wording contained the same words. Corrected 2026-08-20. The
+    /// assertion below is on the FACTS the refusal has to carry (the aircraft is named, both airports
+    /// are named) rather than on the sentence that carries them, which is the stronger check against
+    /// this project's "a refusal names the specific obstacle" rule anyway.
     /// </para>
     /// </summary>
     [Fact]
@@ -271,10 +278,7 @@ public class PilotScheduleValidatorTests
         var result = PilotScheduleValidator.Validate(entries, Routes(), Fleet(), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
-        // The first-leg-location anchor is what actually explains the problem to the player - it has
-        // to name where the aircraft is (EGGD) against where this pattern's first (and only) leg
-        // departs (EGPH), not just report a generic broken chain.
-        Assert.Contains(result.Conflicts, c => c.Contains("EGGD") && c.Contains("EGPH") && c.Contains("first leg"));
+        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("EGGD") && c.Contains("EGPH"));
     }
 
     [Fact]
@@ -803,7 +807,11 @@ public class PilotScheduleValidatorTests
         var result = PilotScheduleValidator.Validate(outboundOnly, Routes(), Fleet(locationIcao: "EGGD"), AircraftTypes(), BlockMinutes(), AirportsByIcao(), Config, ExistingRoutePairs());
 
         Assert.False(result.IsValid);
-        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("next week"));
+        // Asserted on the facts the refusal carries - the aircraft and both airports - rather than on
+        // its prose. The closing pair used to be described as "its first leg next week"; once the
+        // week is ordered from where the aircraft enters its cycle that pair is often not a Monday,
+        // so the sentence changed (2026-08-20). The guarantee this test exists for did not.
+        Assert.Contains(result.Conflicts, c => c.Contains("G-ONEX") && c.Contains("EGGD") && c.Contains("EGPH"));
     }
 
     [Fact]

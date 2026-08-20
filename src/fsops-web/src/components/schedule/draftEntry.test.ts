@@ -260,6 +260,41 @@ describe('findLegsOrphanedByRemoval', () => {
     expect(findLegsOrphanedByRemoval(week, 2, 'd', 'EGLL')).toEqual([])
   })
 
+  it('walks the week from where the aircraft joins the cycle, not from Sunday', () => {
+    // The client half of the 2026-08-20 defect. A rolling week with legs on Sunday AND on weekdays
+    // used to be walked from Sunday, whatever the airframe was doing - so with the aircraft standing
+    // at EGKK (which the week departs from on Monday), Sunday's EGLL departure was checked first,
+    // did not match, and every leg from there on read as stranded. Ordering from the leg the
+    // aircraft can actually take reports only what the removal genuinely breaks.
+    const week: DraftWeek = {
+      0: {
+        dayOfWeek: 0,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'sun-out', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGKK' }),
+        ],
+      },
+      1: {
+        dayOfWeek: 1,
+        fleetAircraftId: 'ac-1',
+        registration: 'G-ABCD',
+        legs: [
+          leg({ id: 'mon-back', departureTimeUtc: '08:00:00', blockMinutes: 60, departureIcao: 'EGKK', arrivalIcao: 'EGLL' }),
+          leg({ id: 'mon-spare', departureTimeUtc: '12:00:00', blockMinutes: 60, departureIcao: 'EGLL', arrivalIcao: 'EGPH' }),
+          leg({ id: 'mon-home', departureTimeUtc: '15:00:00', blockMinutes: 60, departureIcao: 'EGPH', arrivalIcao: 'EGLL' }),
+        ],
+      },
+    }
+
+    // The aircraft is at EGKK, which is exactly where Monday's first leg departs from - so the loop
+    // is entered there and everything after it connects. Removing Monday's spare round trip strands
+    // only its own return.
+    const orphaned = findLegsOrphanedByRemoval(week, 1, 'mon-spare', 'EGKK')
+    expect(orphaned.map((o) => o.leg.id)).toEqual(['mon-home'])
+    expect(orphaned[0]?.aircraftActuallyAt).toBe('EGLL')
+  })
+
   it('reports nothing when the aircraft is already recorded at the remaining leg\'s departure', () => {
     // Same shape as the simple out-and-back case above, but this time the aircraft's real recorded
     // location IS the away airport (e.g. it genuinely ended an earlier week there) - the return is

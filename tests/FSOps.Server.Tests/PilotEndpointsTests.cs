@@ -868,6 +868,153 @@ public class PilotEndpointsTests
     }
 
     /// <summary>
+    /// Real-use defect, 2026-08-20, reported in the player's own words: "there is an issue with
+    /// Flight planning on Sundays? Its not letting me book return flights. My pilot Michael Scott is
+    /// at Bristol Saturday night but then the only option for a flight Sunday morning is from
+    /// Edinburgh."
+    /// <para>
+    /// A saved schedule is a rolling weekly CYCLE, so there is no true first day - Saturday is
+    /// followed by Sunday, and Sunday by Monday, and the aircraft's own chain is what decides where
+    /// it stands at any point in that loop. The week used to be ordered from Sunday 00:00 (.NET's
+    /// <see cref="DayOfWeek"/> numbering, where Sunday is 0), which made a Sunday leg the
+    /// chronologically FIRST leg of the pattern - so it got anchored to the airframe's live position
+    /// instead of to Saturday's arrival, and the only legs offered on Sunday morning were the ones
+    /// departing wherever the aircraft happened to be standing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task LegOptions_SundayAfterAMondayToSaturdayWeek_FollowsSaturdaysChain_NotTheAircraftsLivePosition()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx); // EGGD->EGPH, EGPH->EGGD
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        // Monday to Saturday, one out-and-back a day: every day departs EGGD and lands back at
+        // EGGD, so Saturday night leaves the aircraft at EGGD - the player's "at Bristol Saturday
+        // night".
+        var draft = Enumerable.Range(1, 6)
+            .Select(day => new DutyDayRequest(day, aircraftId, new[]
+            {
+                new DutyLegRequest("08:00:00", outbound.Id),
+                new DutyLegRequest("12:00:00", inbound.Id),
+            }))
+            .ToArray();
+
+        // ...while the airframe is standing at EGPH this minute. That is not a broken pattern: the
+        // week departs EGPH every day at 12:00, so the aircraft simply picks the cycle up there.
+        var aircraft = await ctx.Db.FleetAircraft.SingleAsync(f => f.Id == aircraftId);
+        aircraft.LocationIcao = "EGPH";
+        await ctx.Db.SaveChangesAsync();
+
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(0, "08:00", aircraftId, draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<LegOptionsDto>(result);
+
+        // Sunday morning follows SATURDAY, so it departs EGGD.
+        Assert.Contains(value.Legal, l => l.RouteId == outbound.Id);
+        // ...and never from EGPH, which is only where the airframe happens to be standing today.
+        Assert.DoesNotContain(value.Legal, l => l.RouteId == inbound.Id);
+        Assert.Contains(value.Illegal, i => i.RouteId == inbound.Id);
+    }
+
+    /// <summary>
+    /// The other face of the same 2026-08-20 defect, and the one a pilot who already flies all seven
+    /// days runs into. With the week ordered from Sunday, the pair that a week under construction
+    /// leaves open was always Saturday -> Sunday - so nothing a player did on SATURDAY was ever
+    /// checked against Sunday. A Saturday leg that strands the aircraft away from Sunday morning's
+    /// departure came back legal and completely silent, and the player found out only when Save
+    /// refused the week: the failure moved away from the action that caused it. Ordering from where
+    /// the aircraft joins the cycle - and asking the closure question when working out what a leg
+    /// COMMITS you to, rather than only what it needs before it - puts the consequence back next to
+    /// the choice.
+    /// </summary>
+    [Fact]
+    public async Task LegOptions_ALegOnTheLastDayOfTheWeek_WarnsWhatItDoesToSunday_RatherThanSayingNothingUntilSave()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx); // EGGD->EGPH, EGPH->EGGD
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        // All seven days, one out-and-back each, every day out of EGGD - a complete, closed,
+        // perfectly legal rolling week with the aircraft standing where it starts.
+        var draft = Enumerable.Range(0, 7)
+            .Select(day => new DutyDayRequest(day, aircraftId, new[]
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("10:00:00", inbound.Id),
+            }))
+            .ToArray();
+
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(6, "14:00", aircraftId, draft), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<LegOptionsDto>(result);
+
+        // Still offered - it departs from where Saturday's own chain leaves the aircraft, and the
+        // return that resolves this is the player's very next action.
+        var option = Assert.Single(value.Legal, l => l.RouteId == outbound.Id);
+        // ...but no longer silent about what it does to Sunday morning.
+        Assert.Contains(option.Warnings, w => w.Message.Contains("Sunday") && w.Message.Contains("EGPH") && w.Severity == "info");
+    }
+
+    /// <summary>
+    /// The same Saturday-into-Sunday blind spot, in the rule where it costs a refusal rather than a
+    /// warning. Rest between duty days was measured round the cycle, but the ONE pair a week under
+    /// construction exempted was whichever closed the Sunday-first ordering - so for a pilot flying
+    /// all seven days, the rest between Saturday's duty and Sunday's was the one gap in the week the
+    /// picker never checked. The exemption now goes to the longest rest instead, which is the join
+    /// most plausibly still unbuilt and the only choice that cannot hide a genuine problem.
+    /// </summary>
+    [Fact]
+    public async Task LegOptions_ALateSaturdayLegThatWouldEatSundaysRest_IsRefusedThere_NotDeferredToSave()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        // Sunday is an early duty (06:00 - 09:05); every other day runs 12:00 - 19:05. Saturday's
+        // duty therefore ends 19:05 and Sunday's begins 06:00, which is 10.9 hours' rest - legal, but
+        // with very little room.
+        var draft = new List<DutyDayRequest>
+        {
+            new(0, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id), new DutyLegRequest("08:00:00", inbound.Id) }),
+        };
+        for (var day = 1; day <= 6; day++)
+        {
+            draft.Add(new DutyDayRequest(day, aircraftId, new[]
+            {
+                new DutyLegRequest("12:00:00", outbound.Id),
+                new DutyLegRequest("18:00:00", inbound.Id),
+            }));
+        }
+
+        // A 22:00 Saturday departure lands 23:05 and leaves under 7 hours before Sunday's 06:00 duty
+        // - well inside the 10-hour minimum, and nothing the player does later can make that untrue.
+        var result = await PilotEndpoints.GetLegOptionsAsync(
+            pilot.Id, new LegOptionsRequest(6, "22:00", aircraftId, draft.ToArray()), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<LegOptionsDto>(result);
+        Assert.DoesNotContain(value.Legal, l => l.RouteId == outbound.Id);
+        var refusal = Assert.Single(value.Illegal, i => i.RouteId == outbound.Id);
+        Assert.Contains("rest", refusal.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Saturday", refusal.Reason);
+        Assert.Contains("Sunday", refusal.Reason);
+    }
+
+    /// <summary>
     /// EGGD-EGPH (275.2 nm) block time on <see cref="RouteTestContext"/>'s founding A320neo
     /// (450 kt cruise - see RouteTestContext.cs). Pinned and asserted explicitly in
     /// <see cref="BuildRoundTripsOneLegAtATimeAsync"/> rather than trusting whatever the fixture
@@ -1393,6 +1540,138 @@ public class PilotEndpointsTests
         Assert.Contains(value.Advisories, a => a.Contains("G-TEST") && a.Contains("EGPF") && a.Contains("EGGD"));
     }
 
+    /// <summary>
+    /// "Copy this day onto those days" has to be able to ask what a paste WOULD do before it does it
+    /// - the player is spared the hand-building, not the rules. This is the clean case: three
+    /// identical out-and-back days out of the airline's own base, which hold together perfectly.
+    /// The other half of what this test protects is that asking cost nothing: not one row is written.
+    /// </summary>
+    [Fact]
+    public async Task PreviewSchedule_ACopiedDayThatFitsTheWeek_ComesBackValid_AndWritesNothing()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var week = Enumerable.Range(1, 3)
+            .Select(day => new DutyDayRequest(day, aircraftId, new[]
+            {
+                new DutyLegRequest("06:00:00", outbound.Id),
+                new DutyLegRequest("10:00:00", inbound.Id),
+            }))
+            .ToArray();
+
+        var result = await PilotEndpoints.PreviewScheduleAsync(
+            pilot.Id, new SaveScheduleRequest(week), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
+
+        var value = OkValueOf<SchedulePreviewDto>(result);
+        Assert.True(value.IsValid);
+        Assert.Empty(value.Conflicts);
+
+        // A preview is a question, not a change.
+        Assert.Empty(await ctx.Db.PilotScheduleEntries.ToListAsync());
+        Assert.Empty(await ctx.Db.PilotSchedules.ToListAsync());
+    }
+
+    /// <summary>
+    /// The case that makes this feature worth building carefully rather than at all: real weeks chain
+    /// across airports (the player's own Monday ends at EGPH and his Tuesday starts there), so a
+    /// pasted day breaking the chain is the ordinary outcome, not the edge one. The refusal has to
+    /// name the specific obstacle - where the aircraft actually ends up against where the copied day
+    /// needs it - never a generic "that would not work".
+    /// </summary>
+    [Fact]
+    public async Task PreviewSchedule_ACopiedDayThatBreaksTheChain_NamesBothAirports_NotAGenericRefusal()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        // Monday flies out and stays away; Tuesday brings it home. Copying Monday onto Wednesday
+        // leaves the aircraft at EGPH with nothing to bring it back before the week repeats.
+        var week = new[]
+        {
+            new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }),
+            new DutyDayRequest(2, aircraftId, new[] { new DutyLegRequest("08:00:00", inbound.Id) }),
+            new DutyDayRequest(3, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }),
+        };
+
+        var result = await PilotEndpoints.PreviewScheduleAsync(
+            pilot.Id, new SaveScheduleRequest(week), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var value = OkValueOf<SchedulePreviewDto>(result);
+        Assert.False(value.IsValid);
+        Assert.Contains(value.Conflicts, c => c.Contains("G-TEST") && c.Contains("EGPH") && c.Contains("EGGD"));
+    }
+
+    /// <summary>
+    /// The same preview, catching a rule that has nothing to do with geography. Copying a day onto
+    /// the day AFTER a long one can leave a pilot short of rest - and because a copy carries its
+    /// departure times across unchanged, the player has no way to see that coming from the grid.
+    /// </summary>
+    [Fact]
+    public async Task PreviewSchedule_ACopiedDayThatLeavesTooLittleRest_IsReportedWithTheHours()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        // Monday is an early duty (02:00 - 07:05). Tuesday is a late one, ending 22:35. Copying
+        // Monday onto Wednesday puts a 02:00 start three and a half hours after Tuesday signs off.
+        var week = new[]
+        {
+            new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("02:00:00", outbound.Id), new DutyLegRequest("06:00:00", inbound.Id) }),
+            new DutyDayRequest(2, aircraftId, new[] { new DutyLegRequest("12:00:00", outbound.Id), new DutyLegRequest("21:30:00", inbound.Id) }),
+            new DutyDayRequest(3, aircraftId, new[] { new DutyLegRequest("02:00:00", outbound.Id), new DutyLegRequest("06:00:00", inbound.Id) }),
+        };
+
+        var result = await PilotEndpoints.PreviewScheduleAsync(
+            pilot.Id, new SaveScheduleRequest(week), ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        var value = OkValueOf<SchedulePreviewDto>(result);
+        Assert.False(value.IsValid);
+        Assert.Contains(value.Conflicts, c => c.Contains("rest") && c.Contains("Tuesday") && c.Contains("Wednesday"));
+    }
+
+    /// <summary>What the preview says and what the save does have to be the same answer - it is the
+    /// save path's own evaluation with the writing left off, and this is the test that keeps it that
+    /// way if either ever grows a shortcut.</summary>
+    [Fact]
+    public async Task PreviewSchedule_AgreesWithWhatSaveActuallyDoes()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var catalog = EconomyConfigCatalog.Default();
+        var pilot = await HirePilotAsync(ctx, catalog);
+        var (outbound, inbound) = await SeedRoundTripRoutesAsync(ctx);
+        var aircraftId = await FleetAircraftIdAsync(ctx);
+        await ReleaseReservationAsync(ctx, aircraftId);
+
+        var broken = new SaveScheduleRequest(new[]
+        {
+            new DutyDayRequest(1, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }),
+            new DutyDayRequest(2, aircraftId, new[] { new DutyLegRequest("08:00:00", inbound.Id) }),
+            new DutyDayRequest(3, aircraftId, new[] { new DutyLegRequest("06:00:00", outbound.Id) }),
+        });
+
+        var preview = OkValueOf<SchedulePreviewDto>(await PilotEndpoints.PreviewScheduleAsync(
+            pilot.Id, broken, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None));
+        var save = await PilotEndpoints.SaveScheduleAsync(pilot.Id, broken, ctx.Db, ctx.CurrentUser, catalog, CancellationToken.None);
+
+        Assert.False(preview.IsValid);
+        Assert.Equal(StatusCodes.Status400BadRequest, StatusCodeOf(save));
+        Assert.Equal(OkValueOf<ConflictDto>(save).Conflicts, preview.Conflicts);
+    }
+
     private static async Task<Pilot> SeedExtraPilotAsync(RouteTestContext ctx, string name)
     {
         var pilot = new Pilot
@@ -1484,6 +1763,8 @@ public class PilotEndpointsTests
     private sealed record DutyLegDto(Guid Id, string DepartureTimeUtc, Guid RouteId, string? DepartureIcao, string? ArrivalIcao, string? FlightNumber, int? BlockMinutes);
 
     private sealed record ConflictDto(string Error, List<string> Conflicts);
+
+    private sealed record SchedulePreviewDto(bool IsValid, List<string> Conflicts, List<string> Advisories);
 
     private sealed record SavedScheduleDto(Guid PilotId, List<DutyDayDto> DutyDays, bool AutoSuspendOnMaintenance, List<string> Advisories);
 

@@ -75,12 +75,16 @@ public sealed record ContinuityGap(
 /// <see cref="PilotScheduleEntryInput.PilotId"/> for the rest/duty checks (pilot-scoped).
 /// </para>
 /// <para>
-/// <b>The week wraps - but only when the caller asks for that.</b> The week repeats indefinitely -
-/// that is what makes a standing schedule continuous - which means Saturday's last leg on an
-/// aircraft must connect back to Sunday's first leg
-/// on that same aircraft, and a pilot's last duty day must get its rest before its first duty day
-/// comes back around - both checks treat the week as a 10,080-minute cycle rather than a flat
-/// Sunday-to-Saturday line, using <see cref="WeekMinutes"/>. <see cref="requireWeekClosure"/>
+/// <b>The week is a cycle, and no day is its first.</b> The week repeats indefinitely - that is
+/// what makes a standing schedule continuous - so every consecutive pair of legs on an aircraft has
+/// to connect, all the way round, and a pilot's every duty day has to get its rest before the next
+/// one. Both checks treat the week as a 10,080-minute cycle rather than a flat Sunday-to-Saturday
+/// line, using <see cref="WeekMinutes"/>. Where the cycle is ordered FROM is
+/// <see cref="WeekCycle.OriginMinute"/>'s answer, not the calendar's: ordering by .NET's
+/// <see cref="DayOfWeek"/> (Sunday 0) would make a Sunday leg the pattern's first and anchor it to
+/// the airframe's live position instead of to Saturday's arrival, which is exactly the defect of
+/// 2026-08-20 (see that method's own remarks). Saturday to Sunday and Sunday to Monday are two
+/// ordinary consecutive pairs and nothing more. <see cref="requireWeekClosure"/>
 /// controls whether the closing (last -&gt; first) pair is actually checked: PUT /schedule passes
 /// true, because a saved week must genuinely repeat; the options endpoint passes false, because a
 /// week under construction is legitimately open - it has not been closed yet, and closing it is not
@@ -91,14 +95,16 @@ public sealed record ContinuityGap(
 /// builder unusable while a player is still filling it in (clarified 2026-08-08).
 /// </para>
 /// <para>
-/// <b>While a week is being BUILT, its first leg has to depart from where the aircraft actually is.</b>
-/// Geographic continuity between consecutive legs (above) says nothing about where an aircraft's very
-/// first scheduled leg of the week departs from, so <see cref="ValidateAircraftChains"/> anchors the
-/// chronologically earliest entry per aircraft to <see cref="FleetAircraft.LocationIcao"/>. For the
-/// first duty day an aircraft flies this week that anchor is the aircraft's own recorded location; for
-/// every day after that, it is wherever the previous day's chain left the aircraft, which the ordinary
-/// pairwise continuity check already guarantees - so this needs no day-by-day special-casing, only
-/// the one entry with nothing before it.
+/// <b>While a week is being BUILT, the leg the aircraft ENTERS the cycle on has to depart from where
+/// the aircraft actually is.</b>
+/// Geographic continuity between consecutive legs (above) says nothing about where an aircraft's
+/// chain is entered, so <see cref="ValidateAircraftChains"/> anchors that one entry per aircraft to
+/// <see cref="FleetAircraft.LocationIcao"/>. Which entry that is comes from
+/// <see cref="WeekCycle.OriginMinute"/> - the leg departing from where the airframe is standing, or,
+/// failing that, the leg after the chain's own break. Every OTHER entry's starting point is wherever
+/// the previous leg left the aircraft, which the ordinary pairwise continuity check already
+/// guarantees - so this needs no day-by-day special-casing, only the one entry with nothing usable
+/// before it.
 /// </para>
 /// <para>
 /// <b>It is a build-time check, not a permanent property of a saved pattern</b> (user's decision,
@@ -153,7 +159,22 @@ public static class PilotScheduleValidator
         // player already had one in both directions - what was actually missing was a scheduled
         // repositioning leg, not the route).
         IReadOnlyCollection<(string DepartureIcao, string ArrivalIcao)> existingRoutePairs,
-        bool requireWeekClosure = true)
+        bool requireWeekClosure = true,
+        // Where each aircraft's cycle is OPEN, when the caller already knows and needs every call to
+        // agree - keyed by FleetAircraftId, absolute minute of week. Left null (the normal case) this
+        // is derived per call by WeekCycle.OriginMinute from the entries in hand.
+        //
+        // GetLegOptionsAsync is why it exists. It runs this validator three times over three
+        // overlapping slices - what's committed before the slot, that plus the candidate, and the
+        // whole draft plus the candidate - and DIFFERENCES the results to tell a refusal from a
+        // consequence. Deriving the origin separately each time lets the candidate itself move the
+        // loop's opening, and then the three passes are no longer talking about the same week: a
+        // Monday leg added to a week that already flew Tuesday to Friday out of the same base became
+        // the earliest departure from the aircraft's own airport, so the chain was read as starting
+        // there and the leg was refused for not connecting to Tuesday - a leg that is perfectly
+        // legal. The opening belongs to what is already committed; the candidate is inserted into it,
+        // never allowed to redefine it.
+        IReadOnlyDictionary<Guid, int>? cycleOriginMinutesByAircraft = null)
     {
         var conflicts = new List<string>();
 
@@ -260,7 +281,7 @@ public static class PilotScheduleValidator
 
         var continuityGaps = new List<ContinuityGap>();
         var advisories = new List<string>();
-        ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, continuityGaps, advisories, requireWeekClosure);
+        ValidateAircraftChains(entries, routesById, fleetById, blockMinutesByLeg, config, existingRoutePairs, conflicts, continuityGaps, advisories, requireWeekClosure, cycleOriginMinutesByAircraft);
         ValidatePilotDutyAndRest(entries, blockMinutesByLeg, config, conflicts, requireWeekClosure);
 
         // Advisories ride along with a valid result too - they are not refusals, so they must never
@@ -322,28 +343,45 @@ public static class PilotScheduleValidator
         List<string> conflicts,
         List<ContinuityGap> continuityGaps,
         List<string> advisories,
-        bool requireWeekClosure)
+        bool requireWeekClosure,
+        IReadOnlyDictionary<Guid, int>? cycleOriginMinutesByAircraft)
     {
         foreach (var group in entries.GroupBy(e => e.FleetAircraftId))
         {
             var aircraft = fleetById[group.Key];
+
+            // Where this airframe joins its own loop - see WeekCycle.OriginMinute. Ordering from
+            // there, rather than from Sunday midnight, is what makes Saturday -> Sunday an ordinary
+            // interior pair instead of the one pair a week under construction skips. An aircraft
+            // mid-sector has no knowable position, so it gets no location rule (see this class's own
+            // remarks). A caller that needs several passes to agree supplies the opening instead of
+            // letting each pass find its own - see Validate's own parameter doc.
+            var origin = cycleOriginMinutesByAircraft is not null && cycleOriginMinutesByAircraft.TryGetValue(group.Key, out var suppliedOrigin)
+                ? suppliedOrigin
+                : WeekCycle.OriginMinute(
+                    aircraft.Status == FleetAircraftStatus.InFlight ? null : aircraft.LocationIcao,
+                    group
+                        .Select(e => new CycleLeg(e.DayOfWeek, e.DepartureTimeUtc, routesById[e.RouteId].DepartureIcao, routesById[e.RouteId].ArrivalIcao))
+                        .ToList());
+
             var ordered = group
                 .Select(e => new
                 {
                     Entry = e,
-                    Departure = AbsoluteWeekMinute(e.DayOfWeek, e.DepartureTimeUtc),
+                    // Minutes round the cycle from the origin, NOT a minute-of-week - so the gap
+                    // arithmetic below stays monotonic no matter which day the loop is entered on.
+                    Departure = WeekCycle.MinutesFrom(origin, AbsoluteWeekMinute(e.DayOfWeek, e.DepartureTimeUtc)),
                     Block = blockMinutesByLeg.TryGetValue((e.RouteId, e.FleetAircraftId), out var minutes) ? minutes : 0,
                 })
                 .OrderBy(x => x.Departure)
                 .ToList();
 
-            // The first leg of the pattern (chronologically earliest across the whole week, for
-            // THIS aircraft) is anchored to where the aircraft actually is - not a second
-            // mechanism, just the same continuity rule this loop already enforces between every
-            // other consecutive pair, anchored once at the start. Every subsequent day's starting
-            // point is whatever the previous day's chain left the aircraft at, which the pairwise
-            // checks below already guarantee - only the very first entry has no prior leg to
-            // inherit a location from.
+            // The entry this aircraft ENTERS the cycle on - ordered[0], by the rotation above - is
+            // anchored to where the aircraft actually is. Not a second mechanism, just the same
+            // continuity rule this loop already enforces between every other consecutive pair,
+            // anchored once at the one entry with nothing usable before it. Every other entry's
+            // starting point is wherever the previous leg left the aircraft, which the pairwise
+            // checks below already guarantee.
             //
             // Whether that anchor REFUSES or merely informs depends on what is being asked, and
             // this class's own doc explains why at length: building a week (requireWeekClosure
@@ -352,28 +390,25 @@ public static class PilotScheduleValidator
             // a pattern that repeats forever must not be governed by where the airframe happens to
             // be standing this minute. An aircraft mid-sector is skipped altogether - its recorded
             // location is knowably stale rather than wrong.
-            var firstRoute = routesById[ordered[0].Entry.RouteId];
-            if (aircraft.Status != FleetAircraftStatus.InFlight &&
-                !string.Equals(firstRoute.DepartureIcao, aircraft.LocationIcao, StringComparison.OrdinalIgnoreCase))
+            if (aircraft.Status != FleetAircraftStatus.InFlight)
             {
-                var slot = FormatSlot(ordered[0].Entry.DayOfWeek, ordered[0].Entry.DepartureTimeUtc);
                 if (requireWeekClosure)
                 {
-                    // Deliberately no day/time here, unlike the conflict below. The anchor entry is
-                    // the earliest on this AIRCRAFT across every pilot, so the slot it falls in can
-                    // belong to somebody else's duty day - and quoting a Monday 08:00 the reader
-                    // cannot find anywhere on their own screen is the exact species of unactionable
-                    // message this whole change exists to remove.
-                    //
-                    // What it SAYS is ScheduleStallDetector's decision, not this method's, and
-                    // deliberately so. Until 2026-08-14 the advisory here promised the pattern would
-                    // start "as soon as {aircraft} is back at {where the week starts}" - which is
-                    // simply untrue whenever the airframe is standing at some other airport the week
-                    // already visits: that airport's own leg flies, and the closed loop lines up from
-                    // there without the aircraft ever returning to the start. The detector has always
+                    // What this SAYS - and whether there is anything to say at all - is
+                    // ScheduleStallDetector's decision, not this method's, and deliberately so.
+                    // Until 2026-08-14 the advisory here promised the pattern would start "as soon
+                    // as {aircraft} is back at {where the week starts}" - which is simply untrue
+                    // whenever the airframe is standing at some other airport the week already
+                    // visits: that airport's own leg flies, and the closed loop lines up from there
+                    // without the aircraft ever returning to the start. The detector has always
                     // reasoned about this correctly for the Pilots page, and a player can see both
-                    // messages within a minute of each other, so this one now comes from the same
-                    // place rather than being a second copy free to drift.
+                    // messages within a minute of each other, so this one comes from the same place
+                    // rather than being a second copy free to drift. It is asked unconditionally
+                    // (it returns null when there is nothing worth saying) rather than only when the
+                    // rotated anchor happens to mismatch: the rotation deliberately picks a leg
+                    // departing from where the airframe is whenever one exists, so gating on that
+                    // would silence exactly the "it is not stuck, this is where it picks up" case
+                    // the detector was written to explain.
                     var advisory = ScheduleStallDetector.DescribeSavedPattern(
                         aircraft,
                         ordered
@@ -391,10 +426,15 @@ public static class PilotScheduleValidator
                 }
                 else
                 {
-                    conflicts.Add(
-                        $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern's first leg departs " +
-                        $"{firstRoute.DepartureIcao} ({slot}) - " +
-                        "the first leg of the week has to depart from where the aircraft actually is.");
+                    var firstRoute = routesById[ordered[0].Entry.RouteId];
+                    if (!string.Equals(firstRoute.DepartureIcao, aircraft.LocationIcao, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var slot = FormatSlot(ordered[0].Entry.DayOfWeek, ordered[0].Entry.DepartureTimeUtc);
+                        conflicts.Add(
+                            $"{aircraft.Registration} is at {aircraft.LocationIcao}, but this pattern's first leg departs " +
+                            $"{firstRoute.DepartureIcao} ({slot}) - " +
+                            "the first leg of the week has to depart from where the aircraft actually is.");
+                    }
                 }
             }
 
@@ -422,7 +462,11 @@ public static class PilotScheduleValidator
                     // The wrap case is the week repeating, so word it as such - slotting "the
                     // following week" into "its {when} leg" produced "but its the following week
                     // leg departs", which is the sort of thing a player reads twice and trusts less.
-                    var nextLeg = isWrap ? "its first leg next week" : "its next leg";
+                    // Deliberately not "its first leg next week" any more: which pair closes the loop
+                    // depends on where the aircraft enters it (see WeekCycle.OriginMinute), so the
+                    // closing pair is often not a Monday, and calling a Thursday leg "next week's
+                    // first" is a sentence the player cannot reconcile with their own grid.
+                    var nextLeg = isWrap ? "its next leg when this pattern comes round again" : "its next leg";
                     var gapDeparture = currentRoute.ArrivalIcao;
                     var gapArrival = nextRoute.DepartureIcao;
 
@@ -512,27 +556,49 @@ public static class PilotScheduleValidator
                 }
             }
 
+            // Which flown day follows which is a property of the cycle, so it does not depend on
+            // where the week is ordered from - Saturday is followed by Sunday whichever day sorts
+            // first. Every consecutive pair is measured here; which single one is EXEMPT while a
+            // week is under construction is decided below.
             var flownDays = byDay.Keys.OrderBy(d => (int)d).ToList();
+            var rests = new List<(DayOfWeek Day, DayOfWeek NextDay, int RestMinutes)>();
             for (var i = 0; i < flownDays.Count; i++)
             {
                 var day = flownDays[i];
                 var isWrap = i == flownDays.Count - 1;
-
-                // Same closure exemption as ValidateAircraftChains - the last flown day's rest
-                // before the FIRST flown day comes back around is a whole-week property. The gap
-                // between every other consecutive pair of flown days is still fully checked.
-                if (isWrap && !requireWeekClosure)
-                {
-                    continue;
-                }
-
                 var nextDay = flownDays[(i + 1) % flownDays.Count];
 
                 var dutyEnd = dutyEndByDay[day];
                 var nextFirst = byDay[nextDay][0];
                 var nextStart = AbsoluteWeekMinute(nextDay, nextFirst.DepartureTimeUtc) + (isWrap ? WeekMinutes : 0);
 
-                var restMinutes = nextStart - dutyEnd;
+                rests.Add((day, nextDay, nextStart - dutyEnd));
+            }
+
+            // Same closure exemption as ValidateAircraftChains: a week under construction is open
+            // somewhere, and the join across that opening is not this leg's to close. What changed
+            // on 2026-08-20 is WHICH join gets the exemption. It used to be whichever pair happened
+            // to close the Sunday-first ordering - so a player with legs on both Saturday and Sunday
+            // never had that pair's rest checked while building, and could be offered a leg the save
+            // would then refuse. In a cycle there is no such thing as the last pair, so the exemption
+            // goes to the LONGEST rest instead: that is the join most plausibly still unbuilt, and it
+            // is the only choice that cannot hide a genuine problem - if the longest gap is under the
+            // minimum then every other gap is too, and they are all still reported.
+            var exemptIndex = -1;
+            if (!requireWeekClosure && rests.Count > 0)
+            {
+                var longest = rests.Max(r => r.RestMinutes);
+                exemptIndex = rests.FindIndex(r => r.RestMinutes == longest);
+            }
+
+            for (var i = 0; i < rests.Count; i++)
+            {
+                if (i == exemptIndex)
+                {
+                    continue;
+                }
+
+                var (day, nextDay, restMinutes) = rests[i];
                 if (restMinutes < config.MinRestHoursBetweenDutyDays * 60)
                 {
                     conflicts.Add(

@@ -142,12 +142,65 @@ export interface OrphanedLeg {
   aircraftActuallyAt: string
 }
 
-/** "HH:mm:ss" plus a day-of-week, as one number the whole week can be sorted by - same construction
- *  as PilotScheduleValidator.AbsoluteWeekMinute on the backend (DayOfWeek's .NET numbering, 0 =
- *  Sunday, is shared end to end - see types/schedule.ts's own remark), so this orders identically to
- *  how the backend orders the same chain. */
+const WEEK_MINUTES = 7 * 24 * 60
+
+/** "HH:mm:ss" plus a day-of-week, as one number - same construction as `WeekCycle.AbsoluteMinute` on
+ *  the backend (DayOfWeek's .NET numbering, 0 = Sunday, is shared end to end - see
+ *  types/schedule.ts's own remark). A position in the week, NOT an ordering: see
+ *  {@link cycleOriginMinute} for why the two are different things. */
 function absoluteWeekMinute(day: DayOfWeek, departureTimeUtc: string): number {
   return day * 1440 + timeToMinutes(departureTimeUtc)
+}
+
+/** How far forward round the cycle `minute` is from `origin`, always in [0, WEEK_MINUTES) - mirrors
+ *  `WeekCycle.MinutesFrom`. */
+function minutesFromOrigin(origin: number, minute: number): number {
+  return (((minute - origin) % WEEK_MINUTES) + WEEK_MINUTES) % WEEK_MINUTES
+}
+
+/**
+ * Where an aircraft enters its own weekly loop - the client-side mirror of `WeekCycle.OriginMinute`,
+ * and it has to stay a mirror: this file walks the same chain the backend validates, and the two
+ * disagreeing about where the week starts is how the grid comes to show a consequence the server
+ * never reports (or vice versa).
+ *
+ * A saved schedule is a rolling cycle, so it has no first day. Ordering it from Sunday midnight,
+ * which is what .NET's DayOfWeek numbering does if you sort by it, invents one - and then the leg
+ * that gets anchored to where the airframe physically stands is whichever happens to fall on Sunday
+ * rather than the leg the aircraft can actually take. That is the 2026-08-20 defect: a pilot flying
+ * Monday to Saturday out of EGGD, aircraft parked at EGPH, had Sunday treated as the start of the
+ * pattern. Rules, in order, as the backend applies them: a leg departing from where the aircraft is
+ * AND preceded by a break in the chain; failing that, any leg departing from where it is.
+ *
+ * <b>With no known position, the week is NOT rotated at all</b> - deliberately narrower than the
+ * backend, because this helper answers a different question. The backend rotates to the chain's own
+ * break because it only needs to know which single pair a half-built week may leave open. Here,
+ * rotating to the break would make the break itself the trusted starting point and therefore report
+ * nothing at all - and the whole promise of {@link findLegsOrphanedByRemoval} is that with the
+ * position unknown it still catches every break further into the chain. No position means no basis
+ * for saying where the aircraft joins, so the calendar order stands and the walk stays conservative.
+ */
+function cycleOriginMinute(
+  ordered: readonly { day: DayOfWeek; leg: DraftLeg }[],
+  aircraftLocationIcao?: string,
+): number {
+  const first = ordered[0]
+  if (!first || !aircraftLocationIcao) return 0
+
+  const minuteOf = (entry: { day: DayOfWeek; leg: DraftLeg }) => absoluteWeekMinute(entry.day, entry.leg.departureTimeUtc)
+  const isBreak = (index: number) => {
+    const previous = ordered[(index - 1 + ordered.length) % ordered.length]
+    const current = ordered[index]
+    return Boolean(previous && current) && !icaoEquals(previous!.leg.arrivalIcao, current!.leg.departureIcao)
+  }
+  const departsFromAircraft = (index: number) => {
+    const current = ordered[index]
+    return Boolean(current) && icaoEquals(current!.leg.departureIcao, aircraftLocationIcao)
+  }
+
+  for (let i = 0; i < ordered.length; i += 1) if (departsFromAircraft(i) && isBreak(i)) return minuteOf(ordered[i]!)
+  for (let i = 0; i < ordered.length; i += 1) if (departsFromAircraft(i)) return minuteOf(ordered[i]!)
+  return minuteOf(first)
 }
 
 /** ICAO comparison the same way the backend does it (OrdinalIgnoreCase) - every ICAO in this app is
@@ -219,6 +272,17 @@ export function findLegsOrphanedByRemoval(week: DraftWeek, day: DayOfWeek, legId
   }
   remaining.sort((a, b) => absoluteWeekMinute(a.day, a.leg.departureTimeUtc) - absoluteWeekMinute(b.day, b.leg.departureTimeUtc))
 
+  // Re-order the week to start where the aircraft actually joins the loop rather than at Sunday
+  // midnight - see cycleOriginMinute. Without this, a week that includes a Sunday is walked from
+  // Sunday whatever the airframe is doing, and every leg from there to wherever the aircraft really
+  // is reads as orphaned.
+  const origin = cycleOriginMinute(remaining, aircraftLocationIcao)
+  remaining.sort(
+    (a, b) =>
+      minutesFromOrigin(origin, absoluteWeekMinute(a.day, a.leg.departureTimeUtc)) -
+      minutesFromOrigin(origin, absoluteWeekMinute(b.day, b.leg.departureTimeUtc)),
+  )
+
   const orphaned: OrphanedLeg[] = []
   let position = aircraftLocationIcao ?? remaining[0]?.leg.departureIcao ?? null
 
@@ -264,6 +328,46 @@ export function removeLegAndOrphans(week: DraftWeek, day: DayOfWeek, legId: stri
     }
   }
 
+  return next
+}
+
+/**
+ * Copies one duty day onto one or more other days - the whole day, not a leg at a time: the same
+ * aircraft, the same routes, the same departure times.
+ *
+ * <b>The aircraft comes with the copy, because a duty day has exactly one.</b> That is the
+ * scheduler's central invariant (see PilotScheduleValidator.ValidateDutyDayAircraftConsistency), so
+ * a "copy the legs but keep the target's own aircraft" variant is not a feature this could offer -
+ * it would produce a day whose legs were resolved against a different airframe's block times.
+ *
+ * <b>Replacement is total and deliberate.</b> A target day that already has legs loses all of them.
+ * That is only safe because the caller is required to have shown the player exactly which days lose
+ * how many legs first (see CopyDayDialog) - the same "say what will happen and let them choose" rule
+ * OrphanedLegsDialog follows. Nothing here is saved: the result is a draft, so Discard changes still
+ * puts it back.
+ *
+ * <b>It does not check legality, and must not.</b> A pasted day is frequently illegal - Monday's
+ * chain out of EGGD only works on Wednesday if the aircraft is at EGGD on Wednesday morning, which
+ * depends entirely on what Tuesday did. Working that out is the backend's job and only the backend's
+ * (POST /schedule/preview runs the save path's own validator); a copy of those rules living here
+ * would be a second answer free to drift from the real one.
+ */
+export function copyDayTo(week: DraftWeek, sourceDay: DayOfWeek, targetDays: readonly DayOfWeek[]): DraftWeek {
+  const source = week[sourceDay]
+  if (!source || source.legs.length === 0) return week
+
+  const next = { ...week }
+  for (const targetDay of targetDays) {
+    if (targetDay === sourceDay) continue
+    next[targetDay] = {
+      dayOfWeek: targetDay,
+      fleetAircraftId: source.fleetAircraftId,
+      registration: source.registration,
+      // Fresh ids: React keys, drag handles and the orphan walk all identify a leg by id, and two
+      // days sharing one would make the grid treat them as the same block.
+      legs: source.legs.map((leg) => ({ ...leg, id: nextDraftId(), isNew: true })),
+    }
+  }
   return next
 }
 

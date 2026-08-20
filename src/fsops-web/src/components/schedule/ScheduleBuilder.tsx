@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { CalendarClock, Info, Loader2, RotateCcw, Save, Sparkles } from 'lucide-react'
 
 import { ConflictList } from './ConflictList'
+import { CopyDayDialog } from './CopyDayDialog'
 import {
   addLegToDay,
   draftWeekToInput,
@@ -31,7 +32,7 @@ import { useFleetLite, useSchedule, fetchAircraftOptions, fetchLegOptions } from
 import { useRoutes } from '@/hooks/useRoutes'
 import { useSettings } from '@/hooks/useSettings'
 import type { PilotSummary } from '@/types/pilot'
-import type { DayOfWeek } from '@/types/schedule'
+import { DAY_LABELS, type DayOfWeek } from '@/types/schedule'
 
 interface ScheduleBuilderProps {
   pilot: PilotSummary
@@ -136,6 +137,8 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
    *  stale explanation of a week that no longer exists is worse than none. */
   const [suggestionReason, setSuggestionReason] = useState<StarterScheduleReason | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null)
+  /** The day whose "copy to other days" dialog is open, or null. */
+  const [copyingDay, setCopyingDay] = useState<DayOfWeek | null>(null)
   const initializedForPilot = useRef<string | null>(null)
 
   // Initialise (or re-initialise, on pilot switch) the editable draft once the schedule has
@@ -241,6 +244,18 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
 
   function cancelPendingRemoval() {
     setPendingRemoval(null)
+  }
+
+  /** The player has already been shown, day by day, what this replaces and what it breaks (see
+   *  CopyDayDialog) - so applying it here is completing the thing they just agreed to, and it lands
+   *  in the draft, where Discard changes still undoes it. */
+  function handleCopyDayConfirm(next: DraftWeek) {
+    const copiedFrom = copyingDay
+    setCopyingDay(null)
+    updateWeek(next)
+    if (copiedFrom !== null) {
+      toast.success(`Copied ${DAY_LABELS[copiedFrom]} - review and save when ready.`)
+    }
   }
 
   function handleDiscard() {
@@ -411,6 +426,7 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
           onChangeAircraftClick={openChangeAircraftDialog}
           onMoveLeg={handleConfirmRetime}
           onSelectLeg={openEditDialog}
+          onCopyDayClick={setCopyingDay}
         />
         <FleetAvailabilityPanel week={week} fleet={fleetQuery.fleet} />
       </div>
@@ -429,6 +445,14 @@ export function ScheduleBuilder({ pilot, onSaved }: ScheduleBuilderProps) {
         onConfirmAdd={handleConfirmAdd}
         onConfirmRetime={handleConfirmRetime}
         onRemove={handleRemove}
+      />
+
+      <CopyDayDialog
+        sourceDay={copyingDay}
+        week={week}
+        pilotId={pilot.id}
+        onClose={() => setCopyingDay(null)}
+        onConfirm={handleCopyDayConfirm}
       />
 
       <OrphanedLegsDialog pending={pendingRemoval} onCancel={cancelPendingRemoval} onConfirm={confirmPendingRemoval} />
