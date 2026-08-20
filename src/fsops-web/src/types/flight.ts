@@ -1,3 +1,5 @@
+import type { FlightContractInfo } from '@/types/contract'
+
 export type FlightPhase =
   | 'Preflight'
   | 'TaxiOut'
@@ -35,8 +37,20 @@ export type FlightEventType = 'PhaseChange' | 'Touchdown' | 'PositionSnapshot' |
 export interface Flight {
   id: string
   airlineId: string
-  routeId: string
-  fleetAircraftId: string
+  /**
+   * Null for a contract sector, which has no route and no fleet aircraft - it is somebody else's
+   * aeroplane. Exactly one of (routeId AND fleetAircraftId) or contractLegId is ever set; see
+   * `Flight.RouteId` and `FlightWriteInvariant` on the backend.
+   *
+   * These were declared non-nullable for a while after the columns became nullable, which is the
+   * same class of defect as a status union that is wrong in both directions: TypeScript promising
+   * something the API no longer guarantees, so every consumer compiles while being wrong. Anything
+   * reading them has to handle null rather than be made to compile.
+   */
+  routeId: string | null
+  fleetAircraftId: string | null
+  /** Set only for a contract sector, and the reliable way to tell one apart. */
+  contractLegId: string | null
   pilotId: string
   status: FlightStatus
   plannedDepartureUtc: string
@@ -140,6 +154,9 @@ export interface FlightDetail {
   flight: Flight
   events: FlightEvent[]
   ledgerTransactions: FlightLedgerLine[]
+  /** The contract marker, or null for an ordinary airline sector. A contract sector has no route and
+   *  no registration, so without this its report card would render as a blank header. */
+  contract: FlightContractInfo | null
   /** The fleet aircraft's CURRENT persisted fuel (FleetAircraft.FuelOnBoardKg) - reads as "fuel
    *  remaining after this flight" for the common case of viewing the report card right after
    *  landing, but drifts once a later flight has flown this aircraft. Null if the aircraft record
@@ -161,7 +178,12 @@ export interface FlightDetail {
 export interface LogbookSector {
   flightId: string
   status: FlightStatus
-  routeId: string
+  /** Null for a contract sector - its airports come from the contract leg instead, and the server has
+   *  already resolved them into `departureIcao`/`arrivalIcao` below. */
+  routeId: string | null
+  /** Null for an ordinary airline sector. Present means this was flown for another operator - the way
+   *  to tell the two apart without inferring it from a missing `routeId`. */
+  contract: FlightContractInfo | null
   departureIcao: string
   arrivalIcao: string
   flightNumber: string | null
@@ -276,6 +298,9 @@ export interface ActiveFlightResponse {
   flight: Flight
   needsResolution: boolean
   live: LiveFlightSnapshot | null
+  /** Null for an ordinary airline sector. Set when the flight in the air is a contract leg, which
+   *  has no route to name it with - without this the live view has no airports to show. */
+  contract: FlightContractInfo | null
 }
 
 /** SimTelemetryService.BroadcastAsync payload - the `telemetry` hub event, ~2 Hz. */

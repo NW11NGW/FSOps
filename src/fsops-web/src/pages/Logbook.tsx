@@ -73,7 +73,8 @@ export function Logbook() {
   }
 
   const airlineIcaoCode = airlineSummary.data?.airline.icaoCode ?? null
-  const openRoute = openSector ? routesById[openSector.routeId] : undefined
+  // A contract sector has no route; its airports already came down resolved on the logbook row.
+  const openRoute = openSector?.routeId ? routesById[openSector.routeId] : undefined
 
   if (airlineSummary.status === 'error' || (airlineSummary.status === 'ready' && !airlineSummary.data)) {
     return (

@@ -18,6 +18,7 @@ function sector(overrides: Partial<LogbookSector> = {}): LogbookSector {
     flightId: 'f1',
     status: 'Completed',
     routeId: 'r1',
+    contract: null,
     departureIcao: 'EGGD',
     arrivalIcao: 'EGPH',
     flightNumber: '101',

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { PlaneTakeoff, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
@@ -32,7 +32,7 @@ import { useRoutes } from '@/hooks/useRoutes'
 import { useSimStatus } from '@/hooks/useSimStatus'
 import { ApiError, post } from '@/lib/api'
 import { sampleGreatCirclePath } from '@/lib/geo'
-import type { Flight, StartFlightResponse } from '@/types/flight'
+import type { Flight, FlightDetail, StartFlightResponse } from '@/types/flight'
 import type { LiveContext } from '@/types/live-context'
 import type { RouteSummary } from '@/types/route'
 
@@ -69,6 +69,20 @@ export function Fly() {
   })
 
   const routesById = useMemo(() => Object.fromEntries(routesQuery.routes.map((route) => [route.id, route])), [routesQuery.routes])
+
+  /**
+   * The route a flight was flown on, or undefined when it has none.
+   *
+   * A contract sector genuinely has no route - it is somebody else's aeroplane, going somewhere the
+   * airline does not serve - so `routeId` is null and there is nothing to look up. That is a normal
+   * state, not a missing record, and every route lookup on this page goes through here so it can
+   * never be indexed with a null.
+   */
+  const routeFor = useCallback(
+    (routeId: string | null | undefined): RouteSummary | undefined =>
+      routeId ? (routesById[routeId] as RouteSummary | undefined) : undefined,
+    [routesById],
+  )
 
   // GET /flights/options' aircraftOptions doesn't carry icaoType/family (see types/flight.ts) -
   // joined in here from the buy/lease catalogue so the SimBrief hand-off and the sim-aircraft
@@ -175,7 +189,16 @@ export function Fly() {
 
   const simStatus = useSimStatus(activeFlight.status === 'none')
 
-  const activeRoute = activeFlight.data ? (routesById[activeFlight.data.flight.routeId] as RouteSummary | undefined) : undefined
+  const activeRoute = routeFor(activeFlight.data?.flight.routeId)
+  // The job a contract leg belongs to, when the flight in the air is one. Supplied by
+  // GET /flights/active, because a contract sector has no route to name itself with.
+  const activeContract = activeFlight.data?.contract ?? null
+
+  // Where the flight in the air is actually going, whichever kind it is. An airline sector gets this
+  // from its route; a contract leg has no route and gets it from the contract block instead. Resolved
+  // once, here, so the live map, the coordinate fetch and the header all agree.
+  const activeDepartureIcao = activeRoute?.departureIcao ?? activeContract?.departureIcao ?? null
+  const activeArrivalIcao = activeRoute?.arrivalIcao ?? activeContract?.arrivalIcao ?? null
 
   const neededIcaos = useMemo(() => {
     const set = new Set<string>()
@@ -183,12 +206,10 @@ export function Fly() {
       set.add(selectedRow.departureIcao)
       set.add(selectedRow.arrivalIcao)
     }
-    if (activeRoute) {
-      set.add(activeRoute.departureIcao)
-      set.add(activeRoute.arrivalIcao)
-    }
+    if (activeDepartureIcao) set.add(activeDepartureIcao)
+    if (activeArrivalIcao) set.add(activeArrivalIcao)
     return Array.from(set)
-  }, [selectedRow, activeRoute])
+  }, [selectedRow, activeDepartureIcao, activeArrivalIcao])
 
   const coordsByIcao = useAirportCoordinates(neededIcaos)
 
@@ -197,18 +218,54 @@ export function Fly() {
     ? { icao: selectedRow.departureIcao, latitude: departureAirport.latitude, longitude: departureAirport.longitude }
     : null
 
-  const liveDepartureAirport = activeRoute ? coordsByIcao[activeRoute.departureIcao] : undefined
-  const liveArrivalAirport = activeRoute ? coordsByIcao[activeRoute.arrivalIcao] : undefined
-  const liveDeparture = activeRoute && liveDepartureAirport
-    ? { icao: activeRoute.departureIcao, latitude: liveDepartureAirport.latitude, longitude: liveDepartureAirport.longitude }
+  const liveDepartureAirport = activeDepartureIcao ? coordsByIcao[activeDepartureIcao] : undefined
+  const liveArrivalAirport = activeArrivalIcao ? coordsByIcao[activeArrivalIcao] : undefined
+  const liveDeparture = activeDepartureIcao && liveDepartureAirport
+    ? { icao: activeDepartureIcao, latitude: liveDepartureAirport.latitude, longitude: liveDepartureAirport.longitude }
     : null
-  const liveArrival = activeRoute && liveArrivalAirport
-    ? { icao: activeRoute.arrivalIcao, latitude: liveArrivalAirport.latitude, longitude: liveArrivalAirport.longitude }
+  const liveArrival = activeArrivalIcao && liveArrivalAirport
+    ? { icao: activeArrivalIcao, latitude: liveArrivalAirport.latitude, longitude: liveArrivalAirport.longitude }
     : null
   const livePath = liveDeparture && liveArrival ? sampleGreatCirclePath(liveDeparture.latitude, liveDeparture.longitude, liveArrival.latitude, liveArrival.longitude) : []
 
   const completedDetail = useFlightDetail(justCompletedFlightId)
   const historyDetail = useFlightDetail(historyFlight?.id ?? null)
+
+  /**
+   * The header a report card puts at the top of a finished flight.
+   *
+   * Two sources, because there are two kinds of sector. An airline flight names its route; a contract
+   * leg has none, and takes its airports from the `contract` block instead - which is exactly why the
+   * server sends one. Returning null would leave the card headed "Flight report" with no airports at
+   * all, which is the blank-panel outcome rather than an honest one.
+   */
+  const reportRouteFor = useCallback(
+    (detail: FlightDetail) => {
+      const route = routeFor(detail.flight.routeId)
+      if (route) {
+        return {
+          departureIcao: route.departureIcao,
+          departureName: route.departureName,
+          arrivalIcao: route.arrivalIcao,
+          arrivalName: route.arrivalName,
+          flightNumber: route.flightNumber,
+        }
+      }
+      const contract = detail.contract
+      if (contract?.departureIcao && contract.arrivalIcao) {
+        return {
+          departureIcao: contract.departureIcao,
+          departureName: null,
+          arrivalIcao: contract.arrivalIcao,
+          arrivalName: null,
+          // A contract sector carries no airline flight number - it is not the airline's flight.
+          flightNumber: null,
+        }
+      }
+      return null
+    },
+    [routeFor],
+  )
 
   async function handleStartFlight() {
     if (!selectedRow) return
@@ -294,23 +351,13 @@ export function Fly() {
         {completedDetail.status === 'ready' && completedDetail.data && (
           <ReportCard
             detail={completedDetail.data}
-            route={
-              routesById[completedDetail.data.flight.routeId]
-                ? {
-                    departureIcao: (routesById[completedDetail.data.flight.routeId] as RouteSummary).departureIcao,
-                    departureName: (routesById[completedDetail.data.flight.routeId] as RouteSummary).departureName,
-                    arrivalIcao: (routesById[completedDetail.data.flight.routeId] as RouteSummary).arrivalIcao,
-                    arrivalName: (routesById[completedDetail.data.flight.routeId] as RouteSummary).arrivalName,
-                    flightNumber: (routesById[completedDetail.data.flight.routeId] as RouteSummary).flightNumber,
-                  }
-                : null
-            }
+            route={reportRouteFor(completedDetail.data)}
             airlineIcaoCode={airlineIcaoCode}
             track={
               <FlightTrackCard
                 flightId={completedDetail.data.flight.id}
-                departureIcao={(routesById[completedDetail.data.flight.routeId] as RouteSummary | undefined)?.departureIcao ?? null}
-                arrivalIcao={(routesById[completedDetail.data.flight.routeId] as RouteSummary | undefined)?.arrivalIcao ?? null}
+                departureIcao={reportRouteFor(completedDetail.data)?.departureIcao ?? null}
+                arrivalIcao={reportRouteFor(completedDetail.data)?.arrivalIcao ?? null}
               />
             }
           />
@@ -350,11 +397,23 @@ export function Fly() {
   // 3. A flight is in progress.
   if (activeFlight.status === 'active' && activeFlight.data) {
     const { flight, needsResolution } = activeFlight.data
-    const routeLabel = activeRoute ? `${activeRoute.departureIcao} → ${activeRoute.arrivalIcao}` : 'Flight in progress'
+    // Names the sector whichever kind it is. Only genuinely unknown when neither a route nor a
+    // contract could be resolved, which is a broken record rather than a normal state.
+    const routeLabel =
+      activeDepartureIcao && activeArrivalIcao
+        ? `${activeDepartureIcao} → ${activeArrivalIcao}`
+        : 'Flight in progress'
 
     return (
       <div>
-        <PageHeader title="Fly" description="Track an active flight in MSFS in real time." />
+        <PageHeader
+          title="Fly"
+          description={
+            activeContract
+              ? `Contract leg ${activeContract.legSequence} of ${activeContract.legCount} for ${activeContract.operatorName}.`
+              : 'Track an active flight in MSFS in real time.'
+          }
+        />
         {needsResolution ? (
           <NeedsResolutionPanel
             onResume={activeFlight.refetch}
@@ -449,23 +508,13 @@ export function Fly() {
           {historyDetail.status === 'ready' && historyDetail.data && historyFlight && (
             <ReportCard
               detail={historyDetail.data}
-              route={
-                routesById[historyFlight.routeId]
-                  ? {
-                      departureIcao: (routesById[historyFlight.routeId] as RouteSummary).departureIcao,
-                      departureName: (routesById[historyFlight.routeId] as RouteSummary).departureName,
-                      arrivalIcao: (routesById[historyFlight.routeId] as RouteSummary).arrivalIcao,
-                      arrivalName: (routesById[historyFlight.routeId] as RouteSummary).arrivalName,
-                      flightNumber: (routesById[historyFlight.routeId] as RouteSummary).flightNumber,
-                    }
-                  : null
-              }
+              route={reportRouteFor(historyDetail.data)}
               airlineIcaoCode={airlineIcaoCode}
               track={
                 <FlightTrackCard
                   flightId={historyFlight.id}
-                  departureIcao={(routesById[historyFlight.routeId] as RouteSummary | undefined)?.departureIcao ?? null}
-                  arrivalIcao={(routesById[historyFlight.routeId] as RouteSummary | undefined)?.arrivalIcao ?? null}
+                  departureIcao={reportRouteFor(historyDetail.data)?.departureIcao ?? null}
+                  arrivalIcao={reportRouteFor(historyDetail.data)?.arrivalIcao ?? null}
                 />
               }
             />

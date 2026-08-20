@@ -426,11 +426,51 @@
   // multi-leg ocean crossing. Making them equal, or narrowing the distances, produces a board where
   // every job is the same size - which is the same failure as a generator that always offers four
   // legs.
+  //
+  // completionBonusFloorPerBlockHour is a FLOOR on pay per block hour for multi-leg chains. The
+  // COMPLETION BONUS - one lump paid for finishing every leg, on top of the per-leg shares - tops a
+  // chain up to this floor, scaled by (1 - 1/legCount). A job already paying above the floor gets
+  // NOTHING.
+  //
+  //   What it repairs, measured across 500 boards. Per-leg pay ALONE made the longest chains the
+  //   worst-paid work on the board per hour. A light single earned a median 1,704 per block hour on a
+  //   one-leg job and 457 on a nine-plus-leg crossing - the same aeroplane, a 3.7x hourly penalty for
+  //   flying the most distinctive job in the app. That is structural rather than a bad constant:
+  //   baseFee is paid once, so it is worth 1,500 an hour on a forty-minute hop and 30 an hour spread
+  //   across thirty hours, leaving long chains paid at the marginal per-leg rate and nothing else.
+  //
+  //   Note what feePerLeg above does and does not do. It genuinely makes five 300 nm sectors pay more
+  //   IN TOTAL than one 1,500 nm sector. It does NOT close the per-hour gap, and this file used to
+  //   claim it did - a comment that confidently describes a solved problem is how the problem
+  //   survives review. The completion bonus is what actually addresses it.
+  //
+  //   Why a FLOOR rather than a payment, which is the part worth not undoing. The fault was narrow:
+  //   only the light-single end was broken. Two-to-three-leg turboprop and jet work was ALREADY
+  //   earning more per hour (3,919) than single-leg work (3,428). The first version of this paid
+  //   every chain a lump scaled by block hours and by aircraft category, which fixed the light
+  //   singles and simultaneously tilted the whole board about 1.8x toward chains - curing the
+  //   categories that were never ill and giving the largest doses to the biggest aeroplanes. A floor
+  //   only reaches the jobs that fall under it.
+  //
+  //   Deliberately NOT scaled by aircraft category. A widebody's floor would then sit above what
+  //   widebody jobs already pay, and the same over-correction would return in a smaller coat.
+  //
+  //   The (1 - 1/legCount) factor is deliberate: a single-leg job gets exactly zero, however badly it
+  //   pays. The bonus is for finishing a CHAIN.
+  //
+  //   Set it to 0 and the 457 comes back. Raise it far and long chains become the BEST-paid thing on
+  //   the board, which is the opposite error and no better - it would tell the player to fly nothing
+  //   else.
+  //
+  //   The bonus is LOST by abandoning (the user's decision) - that is the point of it, since it gives
+  //   a half-finished crossing something real to lose. It is not part of any leg's share, so it never
+  //   enters the abandon charge: walking away forfeits the bonus, it does not add to the bill.
   "contracts": {
     "boardSize": 8,
     "boardRefreshHours": 24,
     "deadlineDays": 28,
     "abandonChargeFraction": 1.0,
+    "completionBonusFloorPerBlockHour": 1850,
     "baseFee": 900,
     "feePerNm": 3.10,
     "feePerLeg": 850,

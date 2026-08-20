@@ -59,6 +59,64 @@ public static class ContractPayCalculator
     }
 
     /// <summary>
+    /// The lump paid for finishing a whole chain, on top of the per-leg shares.
+    ///
+    /// <para><b>Why it exists.</b> Per-leg pay alone made the longest jobs the worst-paid per hour.
+    /// Measured across 500 boards, a light single earned a median 1,704 per block hour on a one-leg
+    /// job and 444 on a nine-plus-leg chain - so the board was quietly telling the player not to fly
+    /// the multi-leg crossing that is the whole reason contract flying exists. That is structural:
+    /// <see cref="ContractConfig.BaseFee"/> is paid once, so it is worth 1,500 an hour on a
+    /// forty-minute hop and 30 an hour spread across thirty hours.</para>
+    ///
+    /// <para><b>The shape: a floor on pay per block hour, reached only by jobs that fall under it.</b>
+    /// The bonus tops a chain up to <see cref="ContractConfig.CompletionBonusFloorPerBlockHour"/> and
+    /// is <b>zero for any job already earning more than that</b> - so it repairs the jobs that were
+    /// broken and leaves alone the ones that never were.</para>
+    ///
+    /// <para><b>That precision matters, and an earlier version of this got it wrong.</b> The first
+    /// attempt paid every job a lump scaled by block hours and by aircraft category. It fixed the
+    /// light singles and simultaneously tilted the whole board about 1.8x toward chains, because it
+    /// cured categories that were never ill and gave the largest doses to the biggest aeroplanes.
+    /// Measurement is what showed the fault was narrow: two-to-three-leg turboprop and jet work was
+    /// already earning 3,919 per hour against 3,428 for single-leg jobs - healthy - while light
+    /// singles ran 1,704 down to 457. A light single is the only thing that flies a nine-leg chain,
+    /// and therefore the only thing that spreads a fixed base fee across thirty hours.</para>
+    ///
+    /// <para>The floor is deliberately <b>not</b> scaled by aircraft category. Scaling it would set a
+    /// widebody's floor above what widebody jobs already pay and start topping those up too, which is
+    /// the same mistake in a smaller coat.</para>
+    ///
+    /// <para><c>1 - 1/legCount</c> keeps it <b>exactly zero for a single-leg job</b> and lets it grow
+    /// with the chain. A bonus every job received would fix the arithmetic and change no incentive at
+    /// all.</para>
+    ///
+    /// <para>Deliberately NOT distributed across the legs: it is paid only on the last one, and
+    /// abandoning forfeits it. See <see cref="Entities.Contract.CompletionBonus"/>.</para>
+    /// </summary>
+    /// <param name="fee">The job's own fee - what the legs sum to. The bonus is the shortfall against
+    /// the floor, so it cannot be computed without it.</param>
+    public static decimal CalculateCompletionBonus(
+        ContractConfig config, decimal fee, int totalPlannedBlockMinutes, int legCount)
+    {
+        if (legCount <= 1 || totalPlannedBlockMinutes <= 0)
+        {
+            return 0m;
+        }
+
+        var blockHours = (decimal)totalPlannedBlockMinutes / 60m;
+        var shortfall = (config.CompletionBonusFloorPerBlockHour * blockHours) - fee;
+        if (shortfall <= 0m)
+        {
+            // Already paying at or above the floor. Nothing was wrong with this job, so nothing is
+            // added to it.
+            return 0m;
+        }
+
+        var chainFactor = 1m - (1m / legCount);
+        return Math.Round(Math.Max(0m, shortfall * chainFactor), 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>
     /// Splits the fee across the legs, <b>weighted by planned block time rather than by leg count</b>.
     ///
     /// <para><b>Why block time.</b> A five-leg Atlantic crossing where leg four is the ocean and the

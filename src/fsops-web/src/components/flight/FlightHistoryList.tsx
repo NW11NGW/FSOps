@@ -96,7 +96,9 @@ export function FlightHistoryList({ flights, status, routesById, airlineIcaoCode
             </TableHeader>
             <TableBody>
               {recent.map((flight) => {
-                const route = routesById[flight.routeId]
+                // Null for a contract sector, which has no route at all - a normal state, not a
+                // missing record, so it must never be used as an index.
+                const route = flight.routeId ? routesById[flight.routeId] : undefined
                 const callsign = route ? formatCallsign(airlineIcaoCode, route.flightNumber) : null
                 const landing = flight.landingFpmFirst !== null ? assessLanding(flight.landingFpmFirst) : null
                 const blockMinutes = flight.outUtc && flight.inUtc ? (Date.parse(flight.inUtc) - Date.parse(flight.outUtc)) / 60000 : null

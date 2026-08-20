@@ -12,6 +12,7 @@ import { applyAccentColour } from '@/lib/theme'
 // none of that has to download before the app shell can even paint.
 const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const Fly = lazy(() => import('@/pages/Fly').then((m) => ({ default: m.Fly })))
+const Contracts = lazy(() => import('@/pages/Contracts').then((m) => ({ default: m.Contracts })))
 const RoutesPage = lazy(() => import('@/pages/Routes').then((m) => ({ default: m.RoutesPage })))
 const Fleet = lazy(() => import('@/pages/Fleet').then((m) => ({ default: m.Fleet })))
 const Pilots = lazy(() => import('@/pages/Pilots').then((m) => ({ default: m.Pilots })))
@@ -71,6 +72,7 @@ function App() {
           <Route element={<AppShell />}>
             <Route index element={<Dashboard />} />
             <Route path="fly" element={<Fly />} />
+            <Route path="contracts" element={<Contracts />} />
             <Route path="routes" element={<RoutesPage />} />
             <Route path="fleet" element={<Fleet />} />
             <Route path="pilots" element={<Pilots />} />

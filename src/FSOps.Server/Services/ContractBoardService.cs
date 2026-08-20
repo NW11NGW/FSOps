@@ -71,19 +71,35 @@ public sealed class ContractBoardService
 
         await ExpireOverdueAcceptedAsync(airline, config, now, ct);
 
-        var existing = await _db.Contracts
-            .Where(c => c.AirlineId == airline.Id && c.BoardBucket == bucket && c.Status == ContractStatus.Offered)
+        // EVERYTHING this period's board produced, whatever has since become of it.
+        //
+        // Reading only the OFFERED rows here was wrong in two ways, and the distinction that fixes
+        // both is between *how many jobs this board managed to produce* - a fact about generation,
+        // fixed the moment the bucket is written - and *how many are still unclaimed*, which is a
+        // fact about the player. Accepting a job changes the second and not the first.
+        //
+        //  - It made the limitation message fire on a perfectly full board: accept one of eight and
+        //    the board reported "only 7 of 8 jobs could be offered" and sent the player to Settings
+        //    to tick more aircraft, of which they already had thirty-one. Nothing was limited; they
+        //    had simply taken a job, which is the entire point of the board.
+        //  - It made "has this bucket been generated yet" answerable as *no* once the player accepted
+        //    every offer, which would send it back through the generator for a bucket it had already
+        //    written.
+        var generatedThisBucket = await _db.Contracts
+            .Where(c => c.AirlineId == airline.Id && c.BoardBucket == bucket)
             .Include(c => c.Legs)
             .ToListAsync(ct);
 
+        var existing = generatedThisBucket.Where(c => c.Status == ContractStatus.Offered).ToList();
+
         ContractBoardLimitation limitation;
 
-        if (existing.Count > 0)
+        if (generatedThisBucket.Count > 0)
         {
             // Already generated for this period. Return what was written rather than regenerating -
             // the generator would produce the same jobs, but the persisted rows carry the identities
             // the player may already have accepted against.
-            limitation = await DescribeExistingAsync(airline, ownerUserId, config, existing.Count, ct);
+            limitation = await DescribeExistingAsync(airline, ownerUserId, config, generatedThisBucket.Count, ct);
         }
         else
         {
@@ -270,6 +286,7 @@ public sealed class ContractBoardService
                 PayloadKg = generated.PayloadKg,
                 PaxCount = generated.PaxCount,
                 Fee = generated.Fee,
+                CompletionBonus = generated.CompletionBonus,
                 TotalDistanceNm = generated.TotalDistanceNm,
                 TotalPlannedBlockMinutes = generated.TotalPlannedBlockMinutes,
                 OfferedUtc = generated.OfferedUtc,
@@ -309,6 +326,11 @@ public sealed class ContractBoardService
     /// Regenerating just to read the limitation would be wasteful, and the two inputs it depends on -
     /// how many aircraft are available and how many airports the airline touches - are cheap to
     /// re-read and are what the player would act on anyway.
+    ///
+    /// <para>The sentences themselves come from <see cref="ContractGenerator.Describe"/> rather than
+    /// being written again here. They were written twice, and the copy that used to live in this
+    /// method had already drifted from the original in two ways - see that method for what was lost.
+    /// A board describes itself the same way whether it was generated a moment ago or a day ago.</para>
     /// </summary>
     private async Task<ContractBoardLimitation> DescribeExistingAsync(
         Airline airline, Guid ownerUserId, ContractConfig config, int generated, CancellationToken ct)
@@ -316,17 +338,7 @@ public sealed class ContractBoardService
         var aircraftCount = (await ResolveAvailableAircraftAsync(ownerUserId, ct)).Count;
         var originCount = (await ResolveOriginsAsync(airline, ct)).Count;
 
-        return new ContractBoardLimitation(
-            aircraftCount,
-            originCount,
-            config.BoardSize,
-            generated,
-            generated >= config.BoardSize
-                ? null
-                : $"Only {generated} of {config.BoardSize} jobs could be offered. {aircraftCount} aircraft " +
-                  "are available for contract work, and every leg of every job has to be within range of the " +
-                  "aircraft it names - so a short list, or an airline that only touches a few airports, makes " +
-                  "for a thinner board. Ticking more aircraft in Settings is the quickest fix.");
+        return ContractGenerator.Describe(aircraftCount, originCount, config.BoardSize, generated);
     }
 
     private static ContractAirport ToContractAirport(Airport a) => new(

@@ -19,6 +19,7 @@ function flight(overrides: Partial<Flight> = {}): Flight {
     airlineId: 'airline-1',
     routeId: 'route-1',
     fleetAircraftId: 'ac-1',
+    contractLegId: null,
     pilotId: 'pilot-1',
     status: 'Completed',
     plannedDepartureUtc: '2026-08-11T09:00:00Z',
@@ -80,6 +81,7 @@ function detail(overrides: Partial<FlightDetail> = {}): FlightDetail {
       ledgerLine({ id: 'l2', category: 'Fuel', amount: -3500, description: 'Fuel: 2,100 kg burned' }),
     ],
     aircraftFuelOnBoardKg: overrides.aircraftFuelOnBoardKg === undefined ? 4200 : overrides.aircraftFuelOnBoardKg,
+    contract: overrides.contract ?? null,
   }
 }
 

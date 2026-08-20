@@ -61,6 +61,26 @@ public sealed class ContractConfig
     /// </summary>
     public decimal AbandonChargeFraction { get; init; } = 1.0m;
 
+    /// <summary>
+    /// The <b>floor on pay per block hour</b> that the completion bonus tops a multi-leg chain up to.
+    /// A job already earning more than this gets <b>nothing</b>. See
+    /// <see cref="FSOps.Core.Contracts.ContractPayCalculator.CalculateCompletionBonus"/>.
+    ///
+    /// <para><b>What it repairs.</b> Per-leg pay alone made the longest chains the worst-paid work on
+    /// the board per hour - a light single earned a median 1,704 per block hour on a one-leg job and
+    /// 457 on a nine-plus-leg crossing, the same aeroplane. Set this to zero and that returns.</para>
+    ///
+    /// <para><b>A floor rather than a payment, because the fault was narrow.</b> Measured across 500
+    /// boards, only the light-single end was broken; two-to-three-leg turboprop and jet work was
+    /// already earning more per hour than single-leg work. Paying every chain a bonus - the first
+    /// version of this - cured the healthy categories too and tilted the whole board about 1.8x
+    /// toward chains, which is a monoculture in a new direction rather than the absence of one.</para>
+    ///
+    /// <para>Deliberately <b>not</b> scaled by aircraft category: a widebody's floor would then sit
+    /// above what widebody jobs already pay, and the same over-correction would return.</para>
+    /// </summary>
+    public decimal CompletionBonusFloorPerBlockHour { get; init; } = 1_850m;
+
     // ---- Fee shape - see ContractPayCalculator.CalculateFee ----
 
     /// <summary>What any job is worth before distance, legs or load are counted. Keeps a short hop from paying nothing.</summary>

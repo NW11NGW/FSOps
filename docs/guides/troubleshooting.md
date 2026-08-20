@@ -635,6 +635,43 @@ If a schedule that's already running gets into the second state, the **Pilots** 
 
 **Solution:** Neither is a fault, and neither needs fixing. If you want the extra sector anyway, add it by hand and add the leg that brings the aircraft home — the picker will tell you immediately if that doesn't work.
 
+## The contracts board is empty, or thinner than it should be
+
+The board **tells you why** in a banner at the top, and the reason is always one of three. Read the banner rather than guessing — it links straight to the setting that fixes it.
+
+- **"Your airline does not fly anywhere yet."** Contracts start from airports your airline already touches, and a brand-new airline touches only its home base. Add a route, or move an aircraft somewhere, and jobs start appearing.
+- **"No aircraft are marked as available for contract work."** Contracts only ever name aircraft you can actually load in the simulator. Open **Settings → Aircraft in your simulator**, pick your MSFS 2024 edition, and tick anything else you own.
+- **"Only N of 8 jobs could be offered."** Every leg of every job has to be within range of the aircraft it names, so a short list of available aircraft — or an airline reaching only one or two airports — leaves the generator with little to work with. Ticking more aircraft is the quickest fix.
+
+If the board is **full but you have taken a job from it**, that is not a limitation and no banner appears. Accepted jobs move to *Your jobs* at the top of the page and stay there through every refresh.
+
+**The board does not reroll when you reload it.** It is generated once per period from a fixed seed, so reloading returns exactly the same jobs. The next turnover time is shown above the offers.
+
+## A contract leg says "Flown · not paid"
+
+The leg counted and the job moved on to the next one, but no fee was posted for it. There are two ways this happens, and both are deliberate:
+
+- **You completed the flight with estimates** instead of flying it in the simulator. FSOps has no telemetry proving that sector happened, and a contract sector has no costs to offset a payout, so paying for it would make "start a leg, complete it manually, repeat" a button that prints money.
+- **The sector was invalidated** by slew or a position jump, which voids payment for any sector, contract or not.
+
+The leg is still marked flown on purpose — otherwise you could never finish the contract and would eventually be charged for abandoning it, which would punish you twice for one refusal. Handing the job back afterwards costs less, too, because the charge is only for the legs still outstanding.
+
+## I was charged for handing a contract back
+
+You are charged for **the legs you did not fly** — the operator has to recover an aeroplane you left part-way. What the legs you *did* fly earned stays yours.
+
+**Handing a job back before flying any of it is free**, at any setting: the aircraft never moved, so there is nothing to recover. If you were charged, at least one leg had been flown.
+
+The confirmation names the exact charge before you press it, and the same figure and the same sentence appear on the ledger line afterwards. If those two ever disagree, that is a bug worth reporting.
+
+## I finished a contract and got a payment I wasn't expecting
+
+That is the **completion bonus** — a lump paid for finishing every leg of a chain, on top of what the legs themselves paid. It is shown on the board before you accept, and again on the job while you are flying it, so it should not be a surprise; it appears on the last leg's report card as its own ledger line.
+
+A single-leg job has no bonus. It grows with the length of the chain, because a long crossing spread over several evenings is the thing it exists to make worth flying.
+
+**You lose it by handing the job back**, and it is not part of the abandon charge either way — walking away forfeits the bonus, it does not add to what you are charged.
+
 ## Where to find log files
 
 FSOps writes log output to `%LOCALAPPDATA%\FSOps\logs\` — the same data directory the database lives in (see [Where the database lives](#where-the-database-lives)), not a folder relative to wherever you happen to run FSOps from. Each run writes to a dated log file there — check the most recent one for errors around the time your issue occurred.

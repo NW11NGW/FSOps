@@ -99,7 +99,7 @@ public class ContractEndpointsTests
         var board = await service.GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
         var taken = board.Offered.First();
 
-        await ContractEndpoints.AcceptAsync(taken.Id, ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        await ContractEndpoints.AcceptAsync(taken.Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
 
         clock.UtcNow = Now.AddDays(3);
         ctx.Db.ChangeTracker.Clear();
@@ -135,13 +135,177 @@ public class ContractEndpointsTests
         await ctx.Db.SaveChangesAsync();
 
         var result = await ContractEndpoints.BoardAsync(
-            ctx.Db, ctx.CurrentUser, CreateBoardService(ctx, Now), CancellationToken.None);
+            ctx.Db, ctx.CurrentUser, CreateBoardService(ctx, Now), EconomyConfigCatalog.Default(), CancellationToken.None);
 
         var body = OkValueOf<BoardProbe>(result);
         Assert.Empty(body.Offered);
         Assert.NotNull(body.Limitation.Message);
         Assert.Contains("Settings", body.Limitation.Message);
         Assert.Equal(0, body.Limitation.AvailableAircraftCount);
+    }
+
+    /// <summary>
+    /// <b>Accepting a job is not a limitation.</b> The board generated everything it asked for; the
+    /// player took one of them, which is the entire point of a board. Reporting that as a thin board -
+    /// and telling them to go and tick more aircraft in Settings, which was the advice it gave - is
+    /// wrong about the cause and wrong about the fix.
+    ///
+    /// <para>The distinction is between how many jobs the board <i>produced</i>, which is fixed once
+    /// the bucket is written, and how many are still <i>unclaimed</i>, which is a fact about the
+    /// player. The message is about the first and was being computed from the second.</para>
+    /// </summary>
+    [Fact]
+    public async Task AcceptingAJob_DoesNotChangeWhatTheBoardSaysAboutItself()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedWorldAsync(ctx);
+
+        var clock = new FakeClock(Now);
+        var board = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        var generatedBefore = board.Limitation.Generated;
+        var messageBefore = board.Limitation.Message;
+        var offeredBefore = board.Offered.Count;
+        Assert.NotEmpty(board.Offered);
+
+        await ContractEndpoints.AcceptAsync(
+            board.Offered.First().Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
+
+        ctx.Db.ChangeTracker.Clear();
+        var after = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        // One fewer on the board, one in hand.
+        Assert.Equal(offeredBefore - 1, after.Offered.Count);
+        Assert.Single(after.Accepted);
+
+        // But how many jobs this board PRODUCED has not changed, because it cannot: that was settled
+        // when the bucket was written. Taking one is not the board failing to offer one.
+        Assert.Equal(generatedBefore, after.Limitation.Generated);
+        Assert.Equal(messageBefore, after.Limitation.Message);
+    }
+
+    /// <summary>
+    /// The specific shape of the bug, isolated: on a board that produced everything it was asked for,
+    /// accepting a job must leave nothing to explain. Skipped rather than failed when the fixture
+    /// world happens not to fill the board, because then it is testing something it cannot see.
+    /// </summary>
+    [Fact]
+    public async Task OnAFullBoard_AcceptingAJob_LeavesNothingToExplain()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedWorldAsync(ctx);
+
+        var clock = new FakeClock(Now);
+        var board = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        if (board.Limitation.Generated < board.Limitation.Requested)
+        {
+            // Not a full board in this fixture world - the sibling test above covers the invariant
+            // that actually matters here, without depending on the generator filling every slot.
+            return;
+        }
+
+        Assert.Null(board.Limitation.Message);
+
+        await ContractEndpoints.AcceptAsync(
+            board.Offered.First().Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
+
+        ctx.Db.ChangeTracker.Clear();
+        var after = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        Assert.Null(after.Limitation.Message);
+        Assert.Equal(after.Limitation.Requested, after.Limitation.Generated);
+    }
+
+    /// <summary>
+    /// The two most actionable limitation messages - "you do not fly anywhere yet" and "no aircraft
+    /// are ticked" - must survive a re-read of an already-generated board. They previously did not:
+    /// the describe-again path had its own copy of the prose with those branches missing, so a player
+    /// with nothing ticked was told the board was merely thin instead of being told where to fix it.
+    /// </summary>
+    [Fact]
+    public async Task WithNoAircraftAvailable_TheSpecificMessageSurvivesASecondReadOfTheSameBoard()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedWorldAsync(ctx);
+
+        ctx.Db.UserSettings.Add(new UserSettings
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ctx.CurrentUser.UserId,
+            SimEdition = SimEdition.Standard,
+            SimAircraftOverridesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                on = Array.Empty<string>(),
+                off = ContractAircraftCatalogue.All.Select(a => a.TypeDesignator).ToArray(),
+            }),
+        });
+        await ctx.Db.SaveChangesAsync();
+
+        var clock = new FakeClock(Now);
+        var first = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+        Assert.NotNull(first.Limitation.Message);
+        Assert.Contains("No aircraft are marked as available", first.Limitation.Message);
+
+        ctx.Db.ChangeTracker.Clear();
+        var second = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        Assert.Equal(first.Limitation.Message, second.Limitation.Message);
+    }
+
+    /// <summary>
+    /// The other half of the fix, and the more important half. It would be easy to silence the
+    /// message above by making it never fire, and that would be worse than the bug it replaced: the
+    /// honest version of this sentence is the only thing standing between a genuinely thin board and
+    /// a player concluding the feature is broken.
+    /// </summary>
+    [Fact]
+    public async Task AGenuinelyConstrainedBoard_StillExplainsItself_EvenAfterAJobIsAccepted()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        await SeedWorldAsync(ctx);
+
+        // One aircraft available, from one origin: a real constraint, not a bookkeeping artefact.
+        var kept = ContractAircraftCatalogue.All.First().TypeDesignator;
+        ctx.Db.UserSettings.Add(new UserSettings
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ctx.CurrentUser.UserId,
+            SimEdition = SimEdition.Standard,
+            SimAircraftOverridesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                on = new[] { kept },
+                off = ContractAircraftCatalogue.All
+                    .Select(a => a.TypeDesignator)
+                    .Where(d => d != kept)
+                    .ToArray(),
+            }),
+        });
+        await ctx.Db.SaveChangesAsync();
+
+        var clock = new FakeClock(Now);
+        var board = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        Assert.True(
+            board.Limitation.Generated < board.Limitation.Requested,
+            $"Expected a constrained board, but it produced {board.Limitation.Generated} of {board.Limitation.Requested}.");
+        Assert.NotNull(board.Limitation.Message);
+
+        var messageBefore = board.Limitation.Message;
+
+        if (board.Offered.Count > 0)
+        {
+            await ContractEndpoints.AcceptAsync(
+                board.Offered.First().Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
+            ctx.Db.ChangeTracker.Clear();
+        }
+
+        var after = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
+
+        // Still explained, and explained the SAME way - accepting a job changed nothing about why
+        // this board was thin, so it must not change what the player is told about it.
+        Assert.NotNull(after.Limitation.Message);
+        Assert.Equal(messageBefore, after.Limitation.Message);
     }
 
     // ---------- Accepting ----------
@@ -156,7 +320,7 @@ public class ContractEndpointsTests
         var offer = board.Offered.First();
         var advertisedDeadline = offer.DeadlineUtc;
 
-        var result = await ContractEndpoints.AcceptAsync(offer.Id, ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var result = await ContractEndpoints.AcceptAsync(offer.Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
 
         var accepted = await ctx.Db.Contracts.AsNoTracking().SingleAsync(c => c.Id == offer.Id);
@@ -178,9 +342,9 @@ public class ContractEndpointsTests
         var board = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
         var offer = board.Offered.First();
 
-        await ContractEndpoints.AcceptAsync(offer.Id, ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        await ContractEndpoints.AcceptAsync(offer.Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
         clock.UtcNow = Now.AddHours(2);
-        var second = await ContractEndpoints.AcceptAsync(offer.Id, ctx.Db, ctx.CurrentUser, clock, CancellationToken.None);
+        var second = await ContractEndpoints.AcceptAsync(offer.Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(second));
         var accepted = await ctx.Db.Contracts.AsNoTracking().SingleAsync(c => c.Id == offer.Id);
@@ -300,6 +464,221 @@ public class ContractEndpointsTests
     }
 
     /// <summary>
+    /// <b>The charge the player was shown is the charge they pay.</b> The confirmation has to name a
+    /// figure before it is agreed to, and that figure is scaled by
+    /// <see cref="ContractConfig.AbandonChargeFraction"/> - server-side economy config the client
+    /// cannot read. So the quote comes down on the contract DTO, and this asserts the quote against
+    /// <b>what actually reached the ledger</b> rather than both against a constant: a constant would
+    /// go on passing if the two implementations drifted apart together, which is precisely the
+    /// disagreement being guarded against.
+    ///
+    /// <para>Run at a deliberately non-default fraction. At the shipped 1.0 the charge coincides with
+    /// the outstanding fee, so a client that ignored the quote entirely and showed
+    /// <c>outstandingFee</c> would look correct - and every test would agree with it. Half a fraction
+    /// separates "read the quote" from "guessed, and happened to be right".</para>
+    /// </summary>
+    [Fact]
+    public async Task TheAbandonChargeQuotedOnTheContract_IsExactlyWhatAbandoningPostsToTheLedger()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var contract = await SeedAcceptedContractAsync(ctx, 4);
+
+        // Two of four flown, so there is a real stranded aeroplane and a real outstanding balance.
+        var legs = await ctx.Db.ContractLegs.Where(l => l.ContractId == contract.Id).OrderBy(l => l.Sequence).ToListAsync();
+        foreach (var flown in legs.Take(2))
+        {
+            flown.FlightId = Guid.NewGuid();
+            flown.FlownUtc = Now;
+        }
+        await ctx.Db.SaveChangesAsync();
+
+        // Only the fraction matters here - CalculateAbandonCharge reads nothing else from the config,
+        // and the per-leg fee shares were stamped onto the legs when the contract was seeded.
+        var config = new ContractConfig { AbandonChargeFraction = 0.5m };
+
+        // What the board would put in front of the player.
+        ctx.Db.ChangeTracker.Clear();
+        var forQuote = await ctx.Db.Contracts.Include(c => c.Legs).SingleAsync(c => c.Id == contract.Id);
+        var quoted = ContractEndpoints.ToDto(
+            forQuote,
+            config,
+            await ContractSectorLookup.PostedFeeByLegIdAsync(ctx.Db, forQuote.Legs, CancellationToken.None),
+            includeLegs: true);
+        var quote = ProbeOf<AbandonQuoteProbe>(quoted);
+
+        // The quote is not merely the outstanding fee - it is that fee through the fraction. If these
+        // were equal the assertion below would prove nothing about which one the DTO reported.
+        Assert.True(quote.OutstandingFee > 0);
+        Assert.NotEqual(quote.OutstandingFee, quote.AbandonCharge);
+
+        // Now actually hand it back, at the same fraction.
+        ctx.Db.ChangeTracker.Clear();
+        var reloaded = await ctx.Db.Contracts.Include(c => c.Legs).SingleAsync(c => c.Id == contract.Id);
+        var posted = await ContractEconomicsPoster.PostAbandonAsync(
+            ctx.Db, reloaded, config, Now, "You handed this job back.", CancellationToken.None);
+        await ctx.Db.SaveChangesAsync();
+
+        // The ledger is the arbiter - not the return value, and not a constant.
+        var ledgerLines = await ctx.Db.LedgerTransactions
+            .Where(t => t.Category == LedgerCategory.ContractFee && t.Amount < 0)
+            .ToListAsync();
+        var charged = -ledgerLines.Sum(t => t.Amount);
+
+        Assert.Equal(quote.AbandonCharge, charged);
+        Assert.Equal(quote.AbandonCharge, posted.Charge);
+
+        // And the sentence too: the dialog renders this verbatim, so a divergence here would have the
+        // confirmation explaining the charge differently from the ledger line describing it.
+        Assert.Equal(quote.AbandonReason, posted.Reason);
+        Assert.Contains(posted.Reason, ledgerLines.Single().Description);
+    }
+
+    /// <summary>
+    /// <b>"Earned so far" means banked, and is checked against the ledger rather than against a
+    /// constant.</b>
+    ///
+    /// <para>It used to sum the stamped fee shares of legs marked flown, and claimed in its own
+    /// comment to agree with the ledger. It did not: a leg completed with estimates counts as flown
+    /// and pays nothing, so the board reported money against a cash balance that had not moved. A
+    /// leg invalidated by slew or a position jump does the same thing.</para>
+    ///
+    /// <para>Asserting against the posted rows rather than a fixed number is the point - a constant
+    /// would go on passing if both sides drifted together, which is exactly how the two came
+    /// apart.</para>
+    /// </summary>
+    [Fact]
+    public async Task EarnedSoFar_IsWhatTheLedgerActuallyPaid_NotWhatTheFlownLegsWereWorth()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var contract = await SeedAcceptedContractAsync(ctx, 3);
+        var legs = await ctx.Db.ContractLegs.Where(l => l.ContractId == contract.Id).OrderBy(l => l.Sequence).ToListAsync();
+
+        // Leg 1: flown AND paid, the ordinary case.
+        var paidFlightId = Guid.NewGuid();
+        legs[0].FlightId = paidFlightId;
+        legs[0].FlownUtc = Now;
+        ctx.Db.LedgerTransactions.Add(new LedgerTransaction
+        {
+            Id = Guid.NewGuid(),
+            AirlineId = ctx.Airline.Id,
+            Utc = Now,
+            Category = LedgerCategory.ContractFee,
+            Amount = legs[0].FeeShare,
+            FlightId = paidFlightId,
+            Description = "Contract fee: leg 1",
+        });
+
+        // Leg 2: flown and NOT paid - completed with estimates, or invalidated. Marked flown, no row.
+        legs[1].FlightId = Guid.NewGuid();
+        legs[1].FlownUtc = Now;
+
+        await ctx.Db.SaveChangesAsync();
+        ctx.Db.ChangeTracker.Clear();
+
+        var reloaded = await ctx.Db.Contracts.Include(c => c.Legs).SingleAsync(c => c.Id == contract.Id);
+        var postedFees = await ContractSectorLookup.PostedFeeByLegIdAsync(ctx.Db, reloaded.Legs, CancellationToken.None);
+        var dto = ContractEndpoints.ToDto(reloaded, new ContractConfig(), postedFees, includeLegs: true);
+        var probe = ProbeOf<EarnedProbe>(dto);
+
+        // The arbiter: what this contract's flights actually posted.
+        var legFlightIds = reloaded.Legs.Where(l => l.FlightId is not null).Select(l => l.FlightId!.Value).ToList();
+        var bankedPerLedger = (await ctx.Db.LedgerTransactions
+                .Where(t => t.Category == LedgerCategory.ContractFee && t.Amount > 0
+                            && t.FlightId != null && legFlightIds.Contains(t.FlightId.Value))
+                .ToListAsync())
+            .Sum(t => t.Amount);
+
+        Assert.Equal(bankedPerLedger, probe.EarnedSoFar);
+
+        // Both legs count as flown, but only one of them paid - so the old "sum the shares" answer
+        // would have been strictly larger. If these were equal this test would prove nothing.
+        Assert.Equal(2, probe.FlownLegCount);
+        var worthOfFlownLegs = legs[0].FeeShare + legs[1].FeeShare;
+        Assert.True(
+            probe.EarnedSoFar < worthOfFlownLegs,
+            $"earnedSoFar ({probe.EarnedSoFar}) should be less than the flown legs' worth ({worthOfFlownLegs}).");
+
+        // And the per-leg fact that lets a screen say WHY: worth something, paid nothing.
+        var unpaid = probe.Legs.Single(l => l.Sequence == 2);
+        Assert.True(unpaid.Flown);
+        Assert.Equal(0m, unpaid.FeePaid);
+        Assert.True(unpaid.FeeShare > 0);
+
+        // A leg never flown reports null rather than zero - "not yet" is not "paid nothing".
+        Assert.Null(probe.Legs.Single(l => l.Sequence == 3).FeePaid);
+    }
+
+    /// <summary>
+    /// The zero-charge cases carry a sentence of their own rather than an empty one. Handing back a
+    /// job whose first leg was never flown is free - the aeroplane never moved - and the board has to
+    /// be able to say so before the player commits, not merely charge them nothing afterwards.
+    /// </summary>
+    [Fact]
+    public async Task AJobWithNoLegFlown_QuotesAFreeHandBackWithAReason()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var contract = await SeedAcceptedContractAsync(ctx, 3);
+
+        var untouched = await ctx.Db.Contracts.Include(c => c.Legs).SingleAsync(c => c.Id == contract.Id);
+        var dto = ContractEndpoints.ToDto(
+            untouched,
+            EconomyConfigCatalog.Default().Get(ctx.Airline.Playstyle).Contracts,
+            await ContractSectorLookup.PostedFeeByLegIdAsync(ctx.Db, untouched.Legs, CancellationToken.None),
+            includeLegs: true);
+        var quote = ProbeOf<AbandonQuoteProbe>(dto);
+
+        Assert.Equal(0m, quote.AbandonCharge);
+        Assert.False(string.IsNullOrWhiteSpace(quote.AbandonReason));
+        Assert.Contains("costs nothing", quote.AbandonReason);
+    }
+
+    /// <summary>
+    /// <b>The completion bonus is forfeited by abandoning, and never added to the bill.</b>
+    ///
+    /// <para>Two distinct things could go wrong and both would be silent. The bonus could leak into
+    /// the abandon charge, so walking away cost more than the legs left were worth - the charge is
+    /// computed from unflown per-leg <c>FeeShare</c> values and the bonus is deliberately not one of
+    /// them, but "deliberately not" is worth an assertion rather than a comment. Or it could be paid
+    /// anyway on a job that was never finished, which would make abandoning free money.</para>
+    /// </summary>
+    [Fact]
+    public async Task AbandoningForfeitsTheCompletionBonus_AndTheBonusNeverEntersTheCharge()
+    {
+        using var ctx = await RouteTestContext.CreateAsync();
+        var contract = await SeedAcceptedContractAsync(ctx, 4);
+
+        // Give this job a bonus worth noticing, so a leak would be unmissable.
+        var tracked = await ctx.Db.Contracts.SingleAsync(c => c.Id == contract.Id);
+        tracked.CompletionBonus = 50_000m;
+        var legs = await ctx.Db.ContractLegs.Where(l => l.ContractId == contract.Id).OrderBy(l => l.Sequence).ToListAsync();
+        legs[0].FlightId = Guid.NewGuid();
+        legs[0].FlownUtc = Now;
+        await ctx.Db.SaveChangesAsync();
+
+        var unflownValue = legs.Skip(1).Sum(l => l.FeeShare);
+
+        ctx.Db.ChangeTracker.Clear();
+        var result = await ContractEndpoints.AbandonAsync(
+            contract.Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), new FakeClock(Now), CancellationToken.None);
+
+        var body = OkValueOf<AbandonProbe>(result);
+
+        // The charge is the unflown legs and nothing else - the 50,000 is nowhere in it.
+        Assert.Equal(unflownValue, body.Charge);
+        Assert.True(body.Charge < 50_000m);
+
+        // And the bonus was not paid: the only ContractFee row is the negative charge.
+        var contractRows = await ctx.Db.LedgerTransactions
+            .Where(t => t.Category == LedgerCategory.ContractFee)
+            .ToListAsync();
+        Assert.DoesNotContain(contractRows, t => t.Amount == 50_000m);
+        Assert.All(contractRows, t => Assert.True(t.Amount < 0, $"Unexpected credit of {t.Amount} on an abandoned job."));
+
+        var closed = await ctx.Db.Contracts.AsNoTracking().SingleAsync(c => c.Id == contract.Id);
+        Assert.Equal(ContractStatus.Abandoned, closed.Status);
+    }
+
+    /// <summary>
     /// A leg in the air is not something to resolve behind the player's back: abandoning underneath a
     /// tracked flight would leave it pointing at a closed contract.
     /// </summary>
@@ -369,6 +748,26 @@ public class ContractEndpointsTests
     private sealed record LimitationProbe(int AvailableAircraftCount, int OriginCount, int Requested, int Generated, string? Message);
 
     private sealed record AbandonProbe(object Contract, decimal Charge, int UnflownLegCount, int UnflownBlockMinutes, string Reason);
+
+    /// <summary>The abandon quote as it appears on a contract DTO - what the confirmation reads.</summary>
+    private sealed record AbandonQuoteProbe(decimal AbandonCharge, string AbandonReason, decimal OutstandingFee, decimal EarnedSoFar);
+
+    private sealed record EarnedProbe(decimal EarnedSoFar, int FlownLegCount, List<LegProbe> Legs);
+
+    /// <param name="FeePaid">Null when the leg has not flown - deliberately distinct from a paid zero.</param>
+    private sealed record LegProbe(int Sequence, bool Flown, decimal FeeShare, decimal? FeePaid);
+
+    /// <summary>
+    /// Round-trips a DTO object through JSON exactly as the API would, so a probe reads the wire shape
+    /// rather than the anonymous type - a field renamed in serialisation would otherwise pass here and
+    /// fail in the browser.
+    /// </summary>
+    private static T ProbeOf<T>(object dto)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        return System.Text.Json.JsonSerializer.Deserialize<T>(
+            json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
 
     private static Task<IResult> StartLegAsync(RouteTestContext ctx, Guid contractId)
     {

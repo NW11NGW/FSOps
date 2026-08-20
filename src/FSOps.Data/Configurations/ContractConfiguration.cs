@@ -16,6 +16,7 @@ public class ContractConfiguration : IEntityTypeConfiguration<Contract>
         builder.Property(c => c.Status).HasConversion<string>();
 
         builder.Property(c => c.Fee).HasPrecision(18, 2);
+        builder.Property(c => c.CompletionBonus).HasPrecision(18, 2);
 
         builder.HasIndex(c => c.AirlineId);
 

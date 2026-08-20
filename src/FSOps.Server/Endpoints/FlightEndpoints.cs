@@ -654,11 +654,36 @@ public static class FlightEndpoints
         }
 
         var snapshot = lifecycle.GetActiveSnapshot(flight.Id);
+
+        // A contract leg in the air has no route and no fleet aircraft, so without this the Fly screen
+        // has nothing to name it with - it would render "Flight in progress" over a blank pair of
+        // airports at the exact moment the player is looking at it hardest. Same lookup the report
+        // card and the logbook already use; the omission here was simply the one place nobody had
+        // needed it yet.
+        var contractSectors = await ContractSectorLookup.ByLegIdAsync(db, ContractSectorLookup.LegIdsOf([flight]), ct);
+        var contract = flight.ContractLegId is { } activeLegId ? contractSectors.GetValueOrDefault(activeLegId) : null;
+
         return Results.Ok(new
         {
             flight = ToFlightDto(flight),
             needsResolution = flight.Status == FlightStatus.Interrupted,
             live = snapshot,
+            contract = contract is null
+                ? null
+                : new
+                {
+                    contractId = contract.ContractId,
+                    kind = contract.Kind.ToString(),
+                    status = contract.ContractStatus.ToString(),
+                    operatorName = contract.OperatorName,
+                    aircraftTypeDesignator = contract.AircraftTypeDesignator,
+                    aircraftName = contract.AircraftName,
+                    legSequence = contract.Sequence,
+                    legCount = contract.LegCount,
+                    departureIcao = contract.DepartureIcao,
+                    arrivalIcao = contract.ArrivalIcao,
+                    feeShare = contract.FeeShare,
+                },
         });
     }
 

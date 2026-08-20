@@ -73,6 +73,28 @@ public class Contract
     /// </summary>
     public decimal Fee { get; set; }
 
+    /// <summary>
+    /// A single lump paid <b>only when every leg has been flown</b>, on top of the per-leg shares.
+    /// Zero for a single-leg job, and it grows with the length of the chain.
+    ///
+    /// <para><b>It exists because per-leg pay alone quietly told the player not to fly the one thing
+    /// this feature is for.</b> Measured across 500 boards: a light single earned a median 1,704 per
+    /// block hour on a one-leg job and <b>444</b> on a nine-plus-leg chain - the same aeroplane, a
+    /// 3.8x hourly penalty for flying the longest, hardest, most distinctive job on the board. The
+    /// cause is structural rather than a bad constant: <see cref="ContractConfig.BaseFee"/> is paid
+    /// once, so it dominates a forty-minute hop and is negligible spread across thirty hours, leaving
+    /// a long chain paid at the marginal per-leg rate and nothing else.</para>
+    ///
+    /// <para><b>Stamped at generation, like the fee and the deadline</b>, so the terms cannot move
+    /// under the player after they accept.</para>
+    ///
+    /// <para><b>Lost by abandoning</b> (user's decision), which is the point of it: it gives a
+    /// half-finished crossing something real to lose. It is deliberately <i>not</i> part of any leg's
+    /// <see cref="ContractLeg.FeeShare"/>, so it never enters the abandon charge - walking away
+    /// forfeits the bonus, it does not add to the bill.</para>
+    /// </summary>
+    public decimal CompletionBonus { get; set; }
+
     public double TotalDistanceNm { get; set; }
 
     public int TotalPlannedBlockMinutes { get; set; }

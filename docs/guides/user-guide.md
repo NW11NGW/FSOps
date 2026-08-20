@@ -38,6 +38,13 @@ This guide covers how to use FSOps, feature by feature. Everything described bel
   - [The flown track](#the-flown-track)
   - [Flight integrity](#flight-integrity)
 - [The flight logbook](#the-flight-logbook)
+- [Contract flying](#contract-flying)
+  - [The three kinds of job](#the-three-kinds-of-job)
+  - [Reading the board](#reading-the-board)
+  - [Taking a job and flying it](#taking-a-job-and-flying-it)
+  - [How contract pay works](#how-contract-pay-works)
+  - [Handing a job back](#handing-a-job-back)
+  - [Why your board might look thin](#why-your-board-might-look-thin)
 - [The economy simulation](#the-economy-simulation)
   - [Your airline's reputation](#your-airlines-reputation)
 - [The monthly billing cycle](#the-monthly-billing-cycle)
@@ -127,7 +134,7 @@ You can also set this from the setup wizard's "Online flying" step when you firs
 
 ### Aircraft in your simulator
 
-Which aircraft you can actually load in MSFS 2024. Nothing here changes how your airline works today — it is groundwork for contract flying, where a job arrives from another operator with an aircraft attached. A job in an aircraft you do not own is worse than no job at all, so FSOps wants to know what is in your hangar before it starts writing them.
+Which aircraft you can actually load in MSFS 2024. This is what [contract flying](#contract-flying) draws on: a job arrives from another operator with an aircraft attached, and a job in an aircraft you do not own is worse than no job at all — so FSOps wants to know what is in your hangar before it writes any. Nothing here changes how your own airline works; it does not restrict what you may buy or lease.
 
 This is a **separate list from the aircraft catalogue you buy and lease from**. That one is airliners only, because the demand, fare and fee models all assume an airliner. This one reaches from a Cessna 152 up to an A380, because a contract supplies the aircraft and you just fly it. Ticking a Cessna here never makes a Cessna purchasable for your airline.
 
@@ -513,6 +520,99 @@ Each row carries the things you actually look up afterwards:
 Clicking any row opens that flight's full [report card](#reading-the-post-flight-report-card), flown track included.
 
 The Fly screen keeps a short **Recent flights** list of your last ten sectors for convenience, with a link straight through to here.
+
+**Contract sectors are in here too**, marked with the operator's name and which leg of the job it was instead of a callsign — because a job flown for somebody else is still flying you did, but it was not your airline's flight. See [contract flying](#contract-flying).
+
+## Contract flying
+
+The **Contracts** page (main navigation, just below Fly) is a board of jobs other businesses are offering. You fly them **personally, in their aircraft, for a flat fee** — and you pay none of the running costs. Fuel, landing fees, handling and maintenance all belong to the operator. That is the whole arrangement, and it is why the fee is the entire effect a contract sector has on your balance.
+
+Contracts exist for **variety of flying**, not as a money-maker and not as a way to fly aircraft you do not own. Your airline flies airliners between the airports you chose; contracts are how you end up taking a Beaver up the coast, or moving somebody's Cessna across an ocean a few legs at a time.
+
+A few things that are always true:
+
+- **A contract is your own flying.** Virtual pilots never fly them.
+- **Jobs start where your airline already reaches** — an airport you touch — but they can *end* anywhere. That asymmetry is what makes a transatlantic ferry possible while keeping the board grounded in the network you actually built.
+- **Nothing interrupts you.** Jobs appear on a board you choose to look at. They never arrive as a pop-up.
+- **A contract never touches your fleet or your reputation.** No airframe hours, no wear, no fuel, no maintenance — it is not your aeroplane. And flying somebody else's aircraft says nothing about your own airline's service, so your reputation does not move either way.
+
+### The three kinds of job
+
+**Ferry.** Move an operator's aircraft from A to a distant B. There is no payload — the aeroplane *is* the cargo. This is the one worth going out of your way for: a ferry can be a forty-minute hop next door, or it can be many legs over many evenings, with the aircraft sitting exactly where you left it in between. Every leg is checked against that aircraft's range when the job is written, so a light single crossing an ocean simply becomes a lot of short legs — the epic shape falls out of the arithmetic rather than being a special case.
+
+**Cargo.** Freight between two points. What is in the hold decides which airframe can take it, and the board tells you what you are carrying.
+
+**Charter.** A one-off passenger job, often somewhere your own network does not reach.
+
+### Reading the board
+
+Each job shows the same facts, so you can compare them honestly:
+
+- **Kind and scale.** A coloured badge for ferry, cargo or charter, and a plain-English size — *Short hop*, *Day's work*, *Multi-day* or *Expedition*. The size is worked out from how many legs it has and how long it takes, and the real numbers sit next to it so you never have to trust the word.
+- **The whole route**, first departure to final arrival — not just the first sector.
+- **Legs, distance, block time and the aircraft** the job names.
+- **What you are carrying**, in the operator's own words.
+- **The fee**, and the **deadline**.
+- **The chain of stops**, for anything longer than a single sector. Every intermediate airport is listed in the order you fly it, with that leg's distance, block time and share of the fee. You always know exactly what you are agreeing to before you agree to it.
+
+The board **refreshes on a schedule** — the time is shown above the offers. Jobs you did not take expire quietly when it turns over, at no cost. Reloading the page does not reroll it: the same board answers the same way all period, so it is something to browse rather than a lever to pull.
+
+### Taking a job and flying it
+
+**Accept** moves a job off the board and into **Your jobs** at the top of the page, where it stays through every refresh until you finish it, hand it back, or its deadline passes. The deadline you were shown before accepting is the deadline that applies — it is stamped when the job is written and never recalculated, so it cannot move under you.
+
+**Legs are flown in order.** The button on an accepted job names the next one — *"Fly leg 3: BIRK → BGBW"* — because the aeroplane is physically where the last leg left it. Pressing it starts a real, tracked flight and hands you over to the **Fly** screen, exactly like any other sector: same live view, same phase timeline, same landing grading, same report card. The usual rule applies that you can only have one flight in the air at a time.
+
+Between legs, nothing expires and nothing decays. Close the app, fly something else, come back next week — leg four is still waiting.
+
+### How contract pay works
+
+Contract pay has two parts, and they behave differently.
+
+**You are paid per leg, as you fly it.** Each leg carries its own share of the fee, stamped when the job was written and shown on the board, and it is paid when that leg lands. Those payments are yours the moment they land — nothing later takes them back.
+
+**And there is a bonus for finishing the whole chain.** A single lump, paid when the last leg lands, on top of everything the legs paid. It is shown on the board **before you accept** and again on the job while you are flying it, so it is never a surprise, and it appears as its own line on the final leg's report card.
+
+A single-leg job has no bonus, and it grows with the length of the chain. It exists because per-leg pay alone quietly made the long multi-leg ferry — the most distinctive flying in the app — the *worst*-paid job on the board per hour: a fixed part of every fee is paid once, so it is generous spread over a forty-minute hop and negligible spread over thirty hours. The bonus lifts a long crossing back to roughly what a short hop in the same aeroplane earns per hour. Jobs that were already paying well do not receive one.
+
+**You lose the bonus by handing the job back**, and that is deliberate — it gives a half-finished crossing something real to lose. It is *not* added to what you are charged; you simply do not earn it.
+
+Two more consequences worth knowing:
+
+- **Completing a leg manually pays nothing for that leg.** If you end a flight with *complete with estimates* rather than actually flying it in the simulator, the leg counts as flown and the job moves on to the next one — but no fee is posted for it. The same is true of a sector invalidated by slew or a position jump. The job continues; that leg just does not pay.
+- **Longer legs are worth more.** The fee is split across the legs by planned block time rather than evenly, so a five-leg crossing where leg four is the ocean does not treat that ocean as one fifth of the work.
+
+An accepted job shows **Earned so far** and **Still to earn** as you work through it.
+
+> **Known wrinkle.** *Earned so far* counts every leg marked flown, including one completed with estimates that paid nothing. If you finish legs manually, that figure can read higher than what actually reached your balance — the ledger on the Finances page is the authority.
+
+Contract money is posted under a single **Contract fee** category, positive for a leg flown and negative for an abandon charge, so *"what has contract flying earned me"* stays one figure on the Finances page.
+
+### Handing a job back
+
+Life happens, and a half-finished ferry across Greenland is a real commitment. **Hand back** on an accepted job closes it, and asks you once — with the charge and the reason on the confirmation — before it does anything.
+
+- **Before you have flown a single leg it is free.** The aircraft is still exactly where its operator left it, so there is nothing to recover and nothing to charge for. Accepting a job is never a decision you cannot back out of.
+- **Once you have flown at least one leg, you are charged for the legs you did not fly.** Fly three of five and stop, and you keep what those three earned and pay for the remaining two. The reason is not punitive: somebody now has to go and collect an aeroplane you left halfway.
+- **And you give up the completion bonus**, if the job had one. The dialog names it separately from the charge, because it is not part of it — you lose it rather than being billed for it.
+
+Net, you are usually still ahead for the flying you actually did — abandoning most of the way through a job lands near break-even rather than being a trap. Stopping after the first leg genuinely costs money, and it should, because that is where the aeroplane ends up in the worst possible place.
+
+**A deadline that passes with legs outstanding closes the job the same way**, with the same charge. You are never ambushed by it: the date is visible before you accept, and it is weeks rather than days.
+
+You cannot hand a job back while one of its legs is in the air — finish or abandon that flight first.
+
+### Why your board might look thin
+
+Contracts are only ever written for aircraft **you can actually load in MSFS 2024**, which is what Settings → [Aircraft in your simulator](#aircraft-in-your-simulator) is for. A job naming an aeroplane you do not own would be worse than no job at all.
+
+If the board has fewer jobs than it should, it **tells you why** in a banner at the top, with a link straight to Settings. There are three honest reasons:
+
+- **Your airline does not fly anywhere yet.** Jobs start from airports you already touch, so add a route — or move an aircraft somewhere — and jobs will start appearing.
+- **No aircraft are ticked as available.** The board fills from that list and nothing else, so tell FSOps which edition of the simulator you have and tick anything else you own.
+- **A short list makes for a thin board.** Every leg of every job has to be within range of the aircraft it names, so a small set of available aircraft — or an airline that only touches one or two airports — gives the generator less to work with. Ticking more aircraft is the quickest fix.
+
+New airlines see this most: an airline flying from a single home base has exactly one place a contract can start from, which limits both the number of jobs and how far they can reach. Building out your route network widens the board as a side effect.
 
 ## The economy simulation
 

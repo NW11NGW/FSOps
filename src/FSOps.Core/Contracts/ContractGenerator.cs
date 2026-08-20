@@ -44,6 +44,8 @@ public sealed record GeneratedContract(
     int PayloadKg,
     int PaxCount,
     decimal Fee,
+    /// <summary>Paid only on finishing every leg, and zero for a single-leg job. See Contract.CompletionBonus.</summary>
+    decimal CompletionBonus,
     double TotalDistanceNm,
     int TotalPlannedBlockMinutes,
     DateTimeOffset OfferedUtc,
@@ -266,6 +268,8 @@ public static class ContractGenerator
             var fee = ContractPayCalculator.CalculateFee(
                 config, kind, aircraft, totalDistanceNm, legs.Count, payloadKg, paxCount);
             var shares = ContractPayCalculator.AllocateFeeShares(fee, legs.Select(l => l.PlannedBlockMinutes).ToList());
+            var completionBonus = ContractPayCalculator.CalculateCompletionBonus(
+                config, fee, totalBlockMinutes, legs.Count);
 
             return new GeneratedContract(
                 slot,
@@ -276,6 +280,7 @@ public static class ContractGenerator
                 payloadKg,
                 paxCount,
                 fee,
+                completionBonus,
                 totalDistanceNm,
                 totalBlockMinutes,
                 offeredUtc,
@@ -328,6 +333,14 @@ public static class ContractGenerator
     /// Which aeroplanes make sense for a kind. A charter needs seats; cargo needs somewhere to put
     /// the freight. A ferry can be anything, because moving an aeroplane is a job regardless of what
     /// it normally carries - and that is exactly what makes "transatlantic in a Cessna" reachable.
+    ///
+    /// <para><b>Airliner jobs are deliberately NOT held back, and that was decided on measurement.</b>
+    /// A rarity rule was built here and then removed. It was written to protect the board from an
+    /// apparent eight-times pay cliff above business jets - which turned out to be an artefact of
+    /// characterising a distribution from a single eight-job board. Across 500 boards the medians are
+    /// a continuous ladder (roughly 1,700 for a light single up to 8,800 for a widebody, about 5x end
+    /// to end, with every rung occupied), so there was no cliff to protect against and the rule was
+    /// solving an imaginary problem. Recoverable from history if the picture ever changes.</para>
     /// </summary>
     private static ContractAircraft? PickAircraft(IReadOnlyList<ContractAircraft> flyable, ContractKind kind, ref ContractRandom rng)
     {
@@ -404,7 +417,19 @@ public static class ContractGenerator
         "aircraft spares", "electronics", "laboratory samples", "oilfield equipment", "fresh seafood",
     ];
 
-    private static ContractBoardLimitation Describe(int aircraftCount, int originCount, int requested, int generated)
+    /// <summary>
+    /// Why a board is thinner than it should be, in terms the player can act on.
+    ///
+    /// <para><b>Public because it must be the only copy of these sentences.</b> A second
+    /// implementation grew in <c>ContractBoardService</c> for the case where the board had already
+    /// been generated and only needed describing again - and the two drifted, as duplicated prose
+    /// always does. The copy there lost the singular ("1 aircraft <i>are</i> available") and, far
+    /// worse, lost the <c>originCount == 0</c> and <c>aircraftCount == 0</c> branches entirely, so
+    /// the two most actionable messages in the feature were replaced by the generic one on every read
+    /// after the first. A player with nothing ticked was told their board was merely thin instead of
+    /// being told where the tick boxes are.</para>
+    /// </summary>
+    public static ContractBoardLimitation Describe(int aircraftCount, int originCount, int requested, int generated)
     {
         string? message = null;
 

@@ -8,6 +8,7 @@ import {
   Users,
   Wallet,
   BarChart3,
+  ClipboardList,
   NotebookPen,
   Settings,
   ChevronsLeft,
@@ -26,6 +27,9 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/fly', label: 'Fly', icon: PlaneTakeoff },
+  // Directly beneath Fly: still the player's own flying, but a board of standing commitments they
+  // come back to between sessions rather than something chosen at the moment of departure.
+  { to: '/contracts', label: 'Contracts', icon: ClipboardList },
   { to: '/routes', label: 'Routes', icon: Route },
   { to: '/fleet', label: 'Fleet', icon: Plane },
   { to: '/pilots', label: 'Pilots', icon: Users },

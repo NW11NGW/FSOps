@@ -303,7 +303,112 @@ public class ContractPayCalculatorTests
             new ContractConfig(), new[] { 60 }, shares.Skip(1).ToList(), new[] { 60 });
 
         Assert.Equal(1.0m, new ContractConfig().AbandonChargeFraction);
+
         Assert.Equal(2_500m, half.Charge);
         Assert.Equal(5_000m, shipped.Charge);
+    }
+
+    // ---------- The completion bonus ----------
+
+    /// <summary>
+    /// <b>A single-leg job gets exactly nothing.</b> This is the property the whole bonus rests on: a
+    /// lump every job received would fix the arithmetic and change no incentive at all, because it
+    /// would move every job on the board by the same proportion.
+    /// </summary>
+    [Fact]
+    public void CompletionBonus_IsZeroForASingleLegJob()
+    {
+        // A one-leg job earning far below the floor still gets nothing: the bonus is for finishing a
+        // CHAIN, and a single sector is not one.
+        Assert.Equal(0m, ContractPayCalculator.CalculateCompletionBonus(Config, fee: 100m, 240, 1));
+        // And defensively, for the impossible cases rather than dividing by something odd.
+        Assert.Equal(0m, ContractPayCalculator.CalculateCompletionBonus(Config, fee: 100m, 240, 0));
+        Assert.Equal(0m, ContractPayCalculator.CalculateCompletionBonus(Config, fee: 100m, 0, 6));
+    }
+
+    /// <summary>
+    /// <b>A job already paying above the floor gets nothing.</b> This is the property that keeps the
+    /// bonus aimed at the fault it was built for. An earlier version paid every chain and tilted the
+    /// whole board toward multi-leg work, curing categories that were never ill.
+    /// </summary>
+    [Fact]
+    public void CompletionBonus_IsZeroForAJobAlreadyPayingAboveTheFloor()
+    {
+        // 10 block hours at a floor of 1,850 means anything at or above 18,500 is fine as it is.
+        Assert.Equal(0m, ContractPayCalculator.CalculateCompletionBonus(Config, fee: 18_500m, 600, 5));
+        Assert.Equal(0m, ContractPayCalculator.CalculateCompletionBonus(Config, fee: 40_000m, 600, 5));
+        Assert.True(ContractPayCalculator.CalculateCompletionBonus(Config, fee: 18_499m, 600, 5) > 0m);
+    }
+
+    /// <summary>
+    /// It tops a job up TOWARD the floor, and the shortfall is what it is made of - so the worse a
+    /// chain was paying, the more it receives.
+    /// </summary>
+    [Fact]
+    public void CompletionBonus_ClosesTheShortfallAgainstTheFloor()
+    {
+        // 20 block hours, floor 1,850 -> a job at the floor would pay 37,000.
+        // A 10,000 fee is 27,000 short; a 30,000 fee is 7,000 short.
+        var badlyPaid = ContractPayCalculator.CalculateCompletionBonus(Config, fee: 10_000m, 1_200, 5);
+        var nearlyFine = ContractPayCalculator.CalculateCompletionBonus(Config, fee: 30_000m, 1_200, 5);
+
+        Assert.True(badlyPaid > nearlyFine);
+        // Exact, in the house style: shortfall * (1 - 1/5).
+        Assert.Equal(21_600m, badlyPaid);
+        Assert.Equal(5_600m, nearlyFine);
+    }
+
+    /// <summary>
+    /// It grows with the chain: the same shortfall spread over more legs is worth more, because it is
+    /// more commitment across more evenings.
+    /// </summary>
+    [Fact]
+    public void CompletionBonus_GrowsWithTheLengthOfTheChain()
+    {
+        var two = ContractPayCalculator.CalculateCompletionBonus(Config, fee: 10_000m, 1_200, 2);
+        var five = ContractPayCalculator.CalculateCompletionBonus(Config, fee: 10_000m, 1_200, 5);
+        var eleven = ContractPayCalculator.CalculateCompletionBonus(Config, fee: 10_000m, 1_200, 11);
+
+        Assert.True(two < five, $"2 legs paid {two}, 5 legs paid {five}.");
+        Assert.True(five < eleven, $"5 legs paid {five}, 11 legs paid {eleven}.");
+
+        // 20 block hours, floor 1,850, fee 10,000 -> shortfall 27,000.
+        Assert.Equal(13_500m, two);        // x (1 - 1/2)
+        Assert.Equal(21_600m, five);       // x (1 - 1/5)
+        Assert.Equal(24_545.45m, eleven);  // x (1 - 1/11)
+    }
+
+    /// <summary>
+    /// Turning the floor off restores the behaviour the bonus was added to fix, so the knob in
+    /// economy-config.json is demonstrably the one that controls this.
+    /// </summary>
+    [Fact]
+    public void CompletionBonusFloor_ControlsIt()
+    {
+        var off = ContractPayCalculator.CalculateCompletionBonus(
+            new ContractConfig { CompletionBonusFloorPerBlockHour = 0m }, fee: 10_000m, 1_200, 6);
+        var shipped = ContractPayCalculator.CalculateCompletionBonus(Config, fee: 10_000m, 1_200, 6);
+
+        Assert.Equal(0m, off);
+        Assert.True(shipped > 0m);
+    }
+
+    /// <summary>
+    /// <b>The bonus is not part of the fee, and so cannot reach the per-leg shares.</b> That is what
+    /// keeps it out of the abandon charge, which is computed from unflown shares - if it leaked in,
+    /// walking away would cost more than the legs left were worth.
+    /// </summary>
+    [Fact]
+    public void CompletionBonus_IsSeparateFromTheFeeAndFromEveryLegShare()
+    {
+        var fee = ContractPayCalculator.CalculateFee(
+            Config, ContractKind.Ferry, Aircraft(ContractAircraftCategory.LightSingle),
+            totalDistanceNm: 2_400, legCount: 10, payloadKg: 0, paxCount: 0);
+        var bonus = ContractPayCalculator.CalculateCompletionBonus(Config, fee, 1_800, 10);
+        var shares = ContractPayCalculator.AllocateFeeShares(fee, Enumerable.Repeat(180, 10).ToList());
+
+        Assert.True(bonus > 0m, "A long light-single chain is exactly the case the bonus exists for.");
+        // The shares sum to the fee exactly - there is no room in them for the bonus.
+        Assert.Equal(fee, shares.Sum());
     }
 }

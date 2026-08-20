@@ -102,4 +102,54 @@ public static class ContractSectorLookup
     /// <summary>The contract-leg ids among a page of flights, ready to hand to <see cref="ByLegIdAsync"/>.</summary>
     public static List<Guid> LegIdsOf(IEnumerable<Flight> flights) =>
         flights.Where(f => f.ContractLegId is not null).Select(f => f.ContractLegId!.Value).Distinct().ToList();
+
+    /// <summary>
+    /// What each leg has <b>actually been paid</b>, keyed by <see cref="ContractLeg.Id"/>, summed from
+    /// the posted <see cref="LedgerCategory.ContractFee"/> rows.
+    ///
+    /// <para><b>The ledger is the only source of truth for money here, and it has to be.</b> A leg's
+    /// stamped <see cref="ContractLeg.FeeShare"/> is what it <i>would</i> pay, not what it did:
+    /// completing a leg with estimates marks it flown and pays nothing, and so does a sector
+    /// invalidated by slew or a position jump. Summing the shares of flown legs therefore reported
+    /// money the player never received - a screen reading "Earned so far $2,009.53" over a cash
+    /// balance that had not moved.</para>
+    ///
+    /// <para>Only credits are counted. The abandon charge shares the same category but is raised
+    /// against the airline with no <see cref="LedgerTransaction.FlightId"/>, so it cannot be picked up
+    /// here anyway - the flight-id filter is what keeps "what this job has paid me" from quietly
+    /// netting off "what handing it back cost me".</para>
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<Guid, decimal>> PostedFeeByLegIdAsync(
+        FsOpsDbContext db, IEnumerable<ContractLeg> legs, CancellationToken ct)
+    {
+        // Only legs that produced a flight can have been paid for anything.
+        var flownLegs = legs.Where(l => l.FlightId is not null).ToList();
+        if (flownLegs.Count == 0)
+        {
+            return new Dictionary<Guid, decimal>();
+        }
+
+        var flightIds = flownLegs.Select(l => l.FlightId!.Value).Distinct().ToList();
+
+        // Materialised before summing: the SQLite provider cannot translate SumAsync over decimal.
+        var rows = await db.LedgerTransactions
+            .Where(t => t.Category == LedgerCategory.ContractFee
+                        && t.Amount > 0
+                        && t.FlightId != null
+                        && flightIds.Contains(t.FlightId.Value))
+            .ToListAsync(ct);
+
+        var paidByFlightId = rows
+            .GroupBy(t => t.FlightId!.Value)
+            .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
+
+        var result = new Dictionary<Guid, decimal>();
+        foreach (var leg in flownLegs)
+        {
+            // Zero is a real answer, and the one that matters: a leg that flew and paid nothing.
+            result[leg.Id] = paidByFlightId.GetValueOrDefault(leg.FlightId!.Value, 0m);
+        }
+
+        return result;
+    }
 }

@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown, MapPin, RadioTower } from 'lucide-react'
 
+import { kindStyle } from '@/components/contracts/contractKind'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useSettings } from '@/hooks/useSettings'
@@ -114,6 +115,9 @@ export function LogbookTable({ sectors, sortKey, sortDirection, onSort, onOpen, 
         {sectors.map((sector) => {
           const callsign = formatCallsign(airlineIcaoCode, sector.flightNumber)
           const landing = sector.landingFpmFirst !== null ? assessLanding(sector.landingFpmFirst) : null
+          const contract = sector.contract ?? null
+          const contractStyle = contract ? kindStyle(contract.kind) : null
+          const ContractIcon = contractStyle?.icon
 
           return (
             <TableRow
@@ -149,7 +153,17 @@ export function LogbookTable({ sectors, sortKey, sortDirection, onSort, onOpen, 
                     <RadioTower className="size-3 shrink-0 text-success" aria-label="Flown online" />
                   )}
                 </div>
-                {callsign && <span className="text-xs text-muted-foreground">{callsign}</span>}
+                {/* A sector flown for another operator says so instead of showing a callsign it never
+                 *  had. The logbook is a record of flying done, and this was flying done - but it was
+                 *  not the airline's flight, and the row must not imply that it was. */}
+                {contract ? (
+                  <span className={cn('flex items-center gap-1 text-xs', contractStyle?.text)}>
+                    {ContractIcon && <ContractIcon className="size-3 shrink-0" />}
+                    {contract.operatorName} · leg {contract.legSequence}/{contract.legCount}
+                  </span>
+                ) : (
+                  callsign && <span className="text-xs text-muted-foreground">{callsign}</span>
+                )}
               </TableCell>
 
               <TableCell className="text-xs">

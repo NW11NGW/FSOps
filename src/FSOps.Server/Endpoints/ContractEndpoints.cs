@@ -37,7 +37,8 @@ public static class ContractEndpoints
     /// refreshes, and - when it is thinner than it should be - why.
     /// </summary>
     internal static async Task<IResult> BoardAsync(
-        FsOpsDbContext db, ICurrentUser currentUser, ContractBoardService boardService, CancellationToken ct)
+        FsOpsDbContext db, ICurrentUser currentUser, ContractBoardService boardService,
+        EconomyConfigCatalog economyConfigCatalog, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -46,13 +47,19 @@ public static class ContractEndpoints
         }
 
         var state = await boardService.GetBoardAsync(airline, currentUser.UserId, ct);
+        var config = economyConfigCatalog.Get(airline.Playstyle).Contracts;
+
+        // One query for the whole board rather than one per contract. Offers have no flown legs, so
+        // in practice this only ever resolves the accepted jobs' legs.
+        var postedFees = await ContractSectorLookup.PostedFeeByLegIdAsync(
+            db, state.Offered.Concat(state.Accepted).SelectMany(c => c.Legs), ct);
 
         return Results.Ok(new
         {
             bucket = state.Bucket,
             refreshesUtc = state.RefreshesUtc,
-            offered = state.Offered.Select(c => ToDto(c, includeLegs: true)).ToList(),
-            accepted = state.Accepted.Select(c => ToDto(c, includeLegs: true)).ToList(),
+            offered = state.Offered.Select(c => ToDto(c, config, postedFees, includeLegs: true)).ToList(),
+            accepted = state.Accepted.Select(c => ToDto(c, config, postedFees, includeLegs: true)).ToList(),
             limitation = new
             {
                 availableAircraftCount = state.Limitation.AvailableAircraftCount,
@@ -67,10 +74,27 @@ public static class ContractEndpoints
     }
 
     internal static async Task<IResult> GetAsync(
-        Guid id, FsOpsDbContext db, ICurrentUser currentUser, CancellationToken ct)
+        Guid id, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog,
+        CancellationToken ct)
     {
-        var contract = await LoadOwnedAsync(db, currentUser, id, ct);
-        return contract is null ? Results.NotFound() : Results.Ok(ToDto(contract, includeLegs: true));
+        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
+        if (airline is null)
+        {
+            return Results.NotFound();
+        }
+
+        var contract = await db.Contracts
+            .Include(c => c.Legs)
+            .FirstOrDefaultAsync(c => c.Id == id && c.AirlineId == airline.Id, ct);
+
+        if (contract is null)
+        {
+            return Results.NotFound();
+        }
+
+        var postedFees = await ContractSectorLookup.PostedFeeByLegIdAsync(db, contract.Legs, ct);
+        return Results.Ok(ToDto(
+            contract, economyConfigCatalog.Get(airline.Playstyle).Contracts, postedFees, includeLegs: true));
     }
 
     /// <summary>
@@ -79,7 +103,8 @@ public static class ContractEndpoints
     /// shown.
     /// </summary>
     internal static async Task<IResult> AcceptAsync(
-        Guid id, FsOpsDbContext db, ICurrentUser currentUser, IClock clock, CancellationToken ct)
+        Guid id, FsOpsDbContext db, ICurrentUser currentUser, EconomyConfigCatalog economyConfigCatalog,
+        IClock clock, CancellationToken ct)
     {
         var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
         if (airline is null)
@@ -96,10 +121,13 @@ public static class ContractEndpoints
             return Results.NotFound(new { error = "That contract could not be found." });
         }
 
+        var config = economyConfigCatalog.Get(airline.Playstyle).Contracts;
+        var postedFees = await ContractSectorLookup.PostedFeeByLegIdAsync(db, contract.Legs, ct);
+
         if (contract.Status == ContractStatus.Accepted)
         {
             // Not an error - a double click, or a stale board. Return the contract as it stands.
-            return Results.Ok(ToDto(contract, includeLegs: true));
+            return Results.Ok(ToDto(contract, config, postedFees, includeLegs: true));
         }
 
         if (contract.Status != ContractStatus.Offered)
@@ -122,7 +150,7 @@ public static class ContractEndpoints
         contract.AcceptedUtc = now;
         await db.SaveChangesAsync(ct);
 
-        return Results.Ok(ToDto(contract, includeLegs: true));
+        return Results.Ok(ToDto(contract, config, postedFees, includeLegs: true));
     }
 
     /// <summary>
@@ -178,9 +206,14 @@ public static class ContractEndpoints
 
         await db.SaveChangesAsync(ct);
 
+        // Read AFTER the abandon is saved, so the returned contract reflects the world as it now is.
+        // The abandon charge itself carries no FlightId and so cannot appear in this sum - what the
+        // job paid and what walking away from it cost stay two separate figures.
+        var postedFees = await ContractSectorLookup.PostedFeeByLegIdAsync(db, contract.Legs, ct);
+
         return Results.Ok(new
         {
-            contract = ToDto(contract, includeLegs: true),
+            contract = ToDto(contract, config, postedFees, includeLegs: true),
             charge = charge.Charge,
             unflownLegCount = charge.UnflownLegCount,
             unflownBlockMinutes = charge.UnflownBlockMinutes,
@@ -315,30 +348,28 @@ public static class ContractEndpoints
         });
     }
 
-    private static async Task<Contract?> LoadOwnedAsync(
-        FsOpsDbContext db, ICurrentUser currentUser, Guid contractId, CancellationToken ct)
-    {
-        var airline = await db.Airlines.FirstOrDefaultAsync(a => a.OwnerUserId == currentUser.UserId, ct);
-        if (airline is null)
-        {
-            return null;
-        }
-
-        return await db.Contracts
-            .Include(c => c.Legs)
-            .FirstOrDefaultAsync(c => c.Id == contractId && c.AirlineId == airline.Id, ct);
-    }
-
     /// <summary>
     /// One contract as the board renders it. Everything a player needs to decide is here, including
     /// the whole chain of stops - the user's own decision was that a contract LISTS its stops, so
     /// they always know exactly what they are accepting before they accept it.
     /// </summary>
-    internal static object ToDto(Contract contract, bool includeLegs)
+    /// <param name="postedFeeByLegId">
+    /// What each leg has actually been paid, from <see cref="ContractSectorLookup.PostedFeeByLegIdAsync"/>.
+    /// Required rather than optional: <c>earnedSoFar</c> is a money figure and this app has one source
+    /// of truth for money, which is the ledger.
+    /// </param>
+    internal static object ToDto(
+        Contract contract, ContractConfig config, IReadOnlyDictionary<Guid, decimal> postedFeeByLegId, bool includeLegs)
     {
         var aircraft = ContractAircraftCatalogue.Find(contract.AircraftTypeDesignator);
         var legs = contract.Legs.OrderBy(l => l.Sequence).ToList();
         var flownLegs = legs.Count(l => l.FlightId is not null);
+
+        // What handing this back would cost, quoted through the SAME call that posts it (see
+        // ContractEconomicsPoster.QuoteAbandon). The confirmation has to name the charge before the
+        // player agrees to it, and the fraction it is scaled by is server-side config the client
+        // cannot read - so the figure has to come from here rather than be inferred there.
+        var abandon = ContractEconomicsPoster.QuoteAbandon(legs, config);
 
         return new
         {
@@ -363,15 +394,42 @@ public static class ContractEndpoints
             paxCount = contract.PaxCount,
 
             fee = contract.Fee,
+
+            // Paid only on finishing every leg, and forfeited by handing the job back. On the board
+            // BEFORE the player accepts, because a bonus nobody knows about cannot influence the
+            // decision it exists to influence. Zero for a single-leg job.
+            completionBonus = contract.CompletionBonus,
+            // What the whole job is worth if it is seen through - the figure a player actually
+            // compares between offers. Named separately rather than folded into `fee`, because `fee`
+            // is what the legs sum to and the two must not be confused.
+            totalIfCompleted = contract.Fee + contract.CompletionBonus,
+
             totalDistanceNm = Math.Round(contract.TotalDistanceNm, 1),
             totalPlannedBlockMinutes = contract.TotalPlannedBlockMinutes,
 
             legCount = legs.Count,
             flownLegCount = flownLegs,
-            // What the player has actually banked so far, and what is still to come. Both from the
-            // stamped per-leg shares, so they always agree with the ledger.
-            earnedSoFar = legs.Where(l => l.FlightId is not null).Sum(l => l.FeeShare),
+
+            // What the player has actually BANKED - summed from the posted ledger rows, not from the
+            // stamped shares of legs that happen to be marked flown.
+            //
+            // Those are different numbers, and the difference is not hypothetical: completing a leg
+            // with estimates marks it flown and pays nothing, and so does a sector invalidated by slew
+            // or a position jump. The old version summed the shares and claimed in its own comment to
+            // agree with the ledger; it did not, and the board showed "Earned so far" figures against
+            // a cash balance that had not moved. Money comes from the ledger in this app, always.
+            earnedSoFar = legs.Where(l => l.FlightId is not null)
+                .Sum(l => postedFeeByLegId.GetValueOrDefault(l.Id, 0m)),
+
+            // Still the stamped shares, and correctly so - this is what the REMAINING legs are worth,
+            // which is a fact about the future rather than a claim about money already moved.
             outstandingFee = legs.Where(l => l.FlightId is null).Sum(l => l.FeeShare),
+
+            // Both straight from the calculator, so the dialog quotes exactly what the ledger will
+            // show. Zero is a real answer and carries its own sentence: handing back a job whose first
+            // leg was never flown costs nothing, and the reason says so.
+            abandonCharge = abandon.Charge,
+            abandonReason = abandon.Reason,
 
             offeredUtc = contract.OfferedUtc,
             deadlineUtc = contract.DeadlineUtc,
@@ -394,7 +452,13 @@ public static class ContractEndpoints
                     arrivalIcao = l.ArrivalIcao,
                     distanceNm = Math.Round(l.DistanceNm, 1),
                     plannedBlockMinutes = l.PlannedBlockMinutes,
+                    // What this leg is WORTH, stamped at generation.
                     feeShare = l.FeeShare,
+                    // What it actually PAID. Equal to feeShare for a leg flown in the simulator; zero
+                    // for one completed with estimates or invalidated by slew or a position jump,
+                    // both of which count as flown and pay nothing. Null when the leg has not been
+                    // flown at all - which is a third state, not a payment of zero.
+                    feePaid = l.FlightId is null ? (decimal?)null : postedFeeByLegId.GetValueOrDefault(l.Id, 0m),
                     flown = l.FlightId is not null,
                     flightId = l.FlightId,
                     flownUtc = l.FlownUtc,

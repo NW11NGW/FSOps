@@ -93,6 +93,33 @@ public static class ContractEconomicsPoster
         {
             contract.Status = ContractStatus.Completed;
             contract.ClosedUtc = utc;
+
+            // The completion bonus: one lump for finishing the whole chain, and the reason a long
+            // crossing is worth flying at all. Per-leg pay alone made the longest jobs the worst paid
+            // per hour - see Contract.CompletionBonus.
+            //
+            // Posted against THIS flight, so it appears on the last leg's report card rather than
+            // arriving as an unexplained credit in the ledger. Gated on `payable` for the same reason
+            // the leg fee is: a chain whose final leg was slewed has not been flown, and paying a
+            // bonus for it would make the last leg the one worth cheating on.
+            if (payable && contract.CompletionBonus > 0)
+            {
+                db.LedgerTransactions.Add(new LedgerTransaction
+                {
+                    Id = Guid.NewGuid(),
+                    AirlineId = flight.AirlineId,
+                    Utc = utc,
+                    Category = LedgerCategory.ContractFee,
+                    Amount = contract.CompletionBonus,
+                    FlightId = flight.Id,
+                    Description =
+                        $"Contract completed: {contract.OperatorName} - bonus for finishing all " +
+                        $"{await LegCountAsync(db, contract.Id, ct)} legs",
+                });
+
+                flight.Revenue += contract.CompletionBonus;
+                fee += contract.CompletionBonus;
+            }
         }
 
         flight.RevenuePosted = true;
@@ -115,14 +142,7 @@ public static class ContractEconomicsPoster
         CancellationToken ct)
     {
         var legs = await db.ContractLegs.Where(l => l.ContractId == contract.Id).ToListAsync(ct);
-        var flown = legs.Where(l => l.FlightId is not null).ToList();
-        var unflown = legs.Where(l => l.FlightId is null).ToList();
-
-        var charge = ContractPayCalculator.CalculateAbandonCharge(
-            config,
-            flown.Select(l => l.PlannedBlockMinutes).ToList(),
-            unflown.Select(l => l.FeeShare).ToList(),
-            unflown.Select(l => l.PlannedBlockMinutes).ToList());
+        var charge = QuoteAbandon(legs, config);
 
         if (charge.Charge > 0)
         {
@@ -146,6 +166,42 @@ public static class ContractEconomicsPoster
         contract.ClosedReason = reason;
 
         return charge;
+    }
+
+    /// <summary>
+    /// What abandoning this contract would cost right now, and the sentence explaining it.
+    ///
+    /// <para><b>This is the same call <see cref="PostAbandonAsync"/> makes, deliberately shared rather
+    /// than reimplemented.</b> The board has to show the player the charge <i>before</i> they confirm
+    /// it, and the only safe way to do that is for the quote and the posting to be one piece of code:
+    /// the charge is <see cref="ContractConfig.AbandonChargeFraction"/> applied to the unflown shares,
+    /// and that fraction is server-side economy config the client cannot see. A client that worked the
+    /// figure out for itself would be right only for as long as nobody tuned that number, and would
+    /// then start quietly describing something other than what happens - which is the failure this
+    /// project keeps paying for. Quoting through here means the dialog and the ledger agree by
+    /// construction rather than by coincidence.</para>
+    ///
+    /// <para>Pure with respect to the database: it reads the legs it is given and nothing else, so a
+    /// caller that already has them loaded (every contract DTO does) spends no query on it.</para>
+    ///
+    /// <para><b>The figure cannot move underneath the player, and so nothing guards it.</b> It depends
+    /// only on which legs have been flown, and a leg cannot be flown while the confirmation is open -
+    /// starting one is refused outright while another flight is in progress, and abandoning is refused
+    /// while a leg is airborne. There is deliberately no stale-quote check here: this app has already
+    /// shipped a guard that compared an exact figure against something that moved with the clock and
+    /// was therefore unsatisfiable, and adding one where nothing can change would rebuild that trap.</para>
+    /// </summary>
+    public static ContractAbandonCharge QuoteAbandon(IEnumerable<ContractLeg> legs, ContractConfig config)
+    {
+        var all = legs as IReadOnlyCollection<ContractLeg> ?? legs.ToList();
+        var flown = all.Where(l => l.FlightId is not null).ToList();
+        var unflown = all.Where(l => l.FlightId is null).ToList();
+
+        return ContractPayCalculator.CalculateAbandonCharge(
+            config,
+            flown.Select(l => l.PlannedBlockMinutes).ToList(),
+            unflown.Select(l => l.FeeShare).ToList(),
+            unflown.Select(l => l.PlannedBlockMinutes).ToList());
     }
 
     private static Task<int> LegCountAsync(FsOpsDbContext db, Guid contractId, CancellationToken ct) =>

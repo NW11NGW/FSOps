@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { AlertTriangle, ArrowRight, Banknote, Clock3, Fuel, Gauge, Info, Minus, Plus, RadioTower, RotateCw, Target } from 'lucide-react'
 
+import { kindStyle } from '@/components/contracts/contractKind'
 import { LandingGauge } from '@/components/flight/LandingGauge'
 import { PhaseTimeline } from '@/components/flight/PhaseTimeline'
 import { StatTile } from '@/components/shared/StatTile'
@@ -122,6 +123,13 @@ export function ReportCard({ detail, route, airlineIcaoCode, track, className }:
   const subtitle = route ? [route.departureName, route.arrivalName].filter(Boolean).join(' → ') : null
   const callsign = route ? formatCallsign(airlineIcaoCode, route.flightNumber) : null
 
+  // Null for an ordinary airline sector. When set, this sector was flown for somebody else, in their
+  // aeroplane, and the card has to say so - otherwise a flight with no registration, no passengers of
+  // the airline's and a single fee line reads as a broken record rather than a different kind of job.
+  const contract = detail.contract ?? null
+  const contractStyle = contract ? kindStyle(contract.kind) : null
+  const ContractIcon = contractStyle?.icon
+
   return (
     <div className={cn('space-y-4', className)}>
       <Card>
@@ -132,6 +140,12 @@ export function ReportCard({ detail, route, airlineIcaoCode, track, className }:
               {callsign && (
                 <Badge variant="outline" className="font-mono">
                   {callsign}
+                </Badge>
+              )}
+              {contract && contractStyle && ContractIcon && (
+                <Badge className={cn('border-transparent', contractStyle.chip)}>
+                  <ContractIcon className="size-3" />
+                  {contractStyle.label} contract
                 </Badge>
               )}
               {flight.vatsimOnline === true && (
@@ -177,6 +191,40 @@ export function ReportCard({ detail, route, airlineIcaoCode, track, className }:
           </div>
         </CardContent>
       </Card>
+
+      {contract && contractStyle && ContractIcon && (
+        <Card className="border-l-4 border-l-accent">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ContractIcon className={cn('size-4', contractStyle.text)} />
+              Flown for {contract.operatorName}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Leg</p>
+                <p className="mt-0.5 tabular-nums">
+                  {contract.legSequence} of {contract.legCount}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Aircraft</p>
+                <p className="mt-0.5">{contract.aircraftName ?? contract.aircraftTypeDesignator ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">This leg pays</p>
+                <p className="mt-0.5 tabular-nums text-success">{fmt.money(contract.feeShare)}</p>
+              </div>
+            </div>
+            <p className="text-muted-foreground">
+              This was somebody else&rsquo;s aeroplane. Fuel, landing fees, handling and maintenance all belong to
+              the operator — the fee below is the whole of this sector&rsquo;s effect on your balance. It does not
+              move your airline&rsquo;s reputation, and it costs your fleet nothing.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {track}
 
@@ -254,14 +302,28 @@ export function ReportCard({ detail, route, airlineIcaoCode, track, className }:
             Fuel
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
-          <StatTile label="Burned this flight" icon={Fuel} value={fmt.weight(flight.fuelUsedKg)} />
-          <StatTile label="Fuel cost this flight" icon={Banknote} value={fmt.money(Math.abs(fuelCostThisFlight))} />
-          <StatTile
-            label="Remaining on the aircraft"
-            icon={Gauge}
-            value={detail.aircraftFuelOnBoardKg !== null ? fmt.weight(detail.aircraftFuelOnBoardKg) : '—'}
-          />
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
+            <StatTile label="Burned this flight" icon={Fuel} value={fmt.weight(flight.fuelUsedKg)} />
+            {/* A contract sector is never billed for fuel, so a money tile here would read "$0.00" and
+             *  imply the fuel was free rather than somebody else's. Say which. */}
+            <StatTile
+              label="Fuel cost this flight"
+              icon={Banknote}
+              value={contract ? 'Operator’s' : fmt.money(Math.abs(fuelCostThisFlight))}
+            />
+            <StatTile
+              label="Remaining on the aircraft"
+              icon={Gauge}
+              value={detail.aircraftFuelOnBoardKg !== null ? fmt.weight(detail.aircraftFuelOnBoardKg) : '—'}
+            />
+          </div>
+          {contract && (
+            <p className="text-xs text-muted-foreground">
+              FSOps does not track fuel on an operator&rsquo;s aircraft — it is not your asset, so there is no
+              figure to carry forward.
+            </p>
+          )}
         </CardContent>
       </Card>
 
