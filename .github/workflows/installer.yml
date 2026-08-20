@@ -4,9 +4,17 @@ name: Installer
 # installer, so it is several times slower than the test run - putting it on every push would make
 # the fast feedback slow for no benefit. It runs only when something it actually covers changes.
 #
-# This is NOT a release workflow. It builds an installer, proves it works, and throws it away.
-# Nothing is tagged, no release is created, and no artefact leaves the runner. Publishing releases
+# This is NOT a release workflow. It builds an installer, installs it, proves it works, uninstalls
+# it, and checks the user's data survived. Nothing is tagged and no release is created; publishing
 # waits on a real end-to-end test in the simulator, which no CI can perform.
+#
+# It DOES keep the installer, as a workflow artifact (see "Keep the installer for testing" below) -
+# private to the repository and expiring on its own. This comment used to say no artefact left the
+# runner, which stopped being true when the upload step was added and then quietly misinformed
+# anyone who read the header instead of the steps. It cost a wrong answer to the user, who knew
+# perfectly well they had downloaded installers from here before.
+#
+# Run it against any branch with: gh workflow run installer.yml --ref <branch>
 on:
   push:
     branches: [main]
