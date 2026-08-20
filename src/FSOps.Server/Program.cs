@@ -136,6 +136,11 @@ builder.Services.AddSingleton<StartupReconciliationState>();
 builder.Services.AddSingleton<InstalledAircraftScanner>();
 builder.Services.AddScoped<SimAircraftService>();
 
+// Contract flying. Scoped for the same reason SimAircraftService is: it reads and writes through the
+// request's DbContext. It holds no state of its own - the board is a pure function of the world seed,
+// the airline and the time bucket, so there is nothing to cache and nothing to keep warm.
+builder.Services.AddScoped<ContractBoardService>();
+
 // VATSIM's public data feed, fetched server-side only - the SPA never calls it directly, because
 // the UI has no business making third-party requests of its own. A singleton so one cached fetch
 // is shared by every client rather than one
@@ -277,6 +282,7 @@ apiV1.MapPlanningEndpoints();
 apiV1.MapSettingsEndpoints();
 apiV1.MapSimEndpoints();
 apiV1.MapSimAircraftEndpoints();
+apiV1.MapContractEndpoints();
 apiV1.MapFlightEndpoints();
 apiV1.MapFleetEndpoints();
 apiV1.MapFleetDisposalEndpoints();

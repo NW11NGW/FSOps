@@ -118,6 +118,11 @@ export type LedgerCategory =
   // are meant to be the same list, and a union that quietly diverges is how a genuinely-missing
   // category ends up rendering as a raw string one day.
   | 'AircraftRepositioning'
+  // Contract flying. Unlike AircraftRepositioning above, this one genuinely IS posted against a
+  // flight - it is the fee for a leg the player flew personally for another operator, and it is the
+  // ONLY line a contract sector ever posts. The abandon charge shares the category but is
+  // airline-level, with no FlightId, so it never appears on a report card.
+  | 'ContractFee'
 
 /** One posted LedgerTransaction for a flight - the itemised financial outcome the report card
  *  shows, straight from the append-only ledger rather than a recomputation. */

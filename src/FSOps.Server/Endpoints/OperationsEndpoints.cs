@@ -46,11 +46,23 @@ public static class OperationsEndpoints
             if (snapshot is not null)
             {
                 var route = await db.Routes.FirstOrDefaultAsync(r => r.Id == activeFlight.RouteId, ct);
-                var fleetAircraft = await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == activeFlight.FleetAircraftId, ct);
+                var fleetAircraft = activeFlight.FleetAircraftId is { } activeAircraftId
+                    ? await db.FleetAircraft.FirstOrDefaultAsync(f => f.Id == activeAircraftId, ct)
+                    : null;
                 var aircraftType = fleetAircraft is not null
                     ? await db.AircraftTypes.FirstOrDefaultAsync(t => t.Id == fleetAircraft.AircraftTypeId, ct)
                     : null;
                 var pilot = await db.Pilots.FirstOrDefaultAsync(p => p.Id == activeFlight.PilotId, ct);
+
+                // A contract sector is airborne on this map like anything else - the player really is
+                // flying it right now - so its endpoints and its aeroplane come from the contract leg
+                // rather than from a route and a registration it does not have. A live aircraft with
+                // no origin and no destination would read as a tracking fault.
+                var contractSectors = await ContractSectorLookup.ByLegIdAsync(
+                    db, ContractSectorLookup.LegIdsOf([activeFlight]), ct);
+                var contract = activeFlight.ContractLegId is { } activeLegId
+                    ? contractSectors.GetValueOrDefault(activeLegId)
+                    : null;
 
                 aircraftList.Add(new
                 {
@@ -58,11 +70,12 @@ public static class OperationsEndpoints
                     flightId = activeFlight.Id,
                     pilotName = pilot?.Name ?? "You",
                     registration = fleetAircraft?.Registration,
-                    aircraftType = aircraftType?.Name,
+                    aircraftType = aircraftType?.Name ?? contract?.AircraftName,
                     routeId = activeFlight.RouteId,
                     flightNumber = route?.FlightNumber,
-                    departureIcao = route?.DepartureIcao,
-                    arrivalIcao = route?.ArrivalIcao,
+                    departureIcao = route?.DepartureIcao ?? contract?.DepartureIcao,
+                    arrivalIcao = route?.ArrivalIcao ?? contract?.ArrivalIcao,
+                    contractOperatorName = contract?.OperatorName,
                     latitudeDeg = snapshot.LatitudeDeg,
                     longitudeDeg = snapshot.LongitudeDeg,
                     // Real telemetry, not interpolated - see LiveFlightSnapshot.TrueHeadingDeg (true,

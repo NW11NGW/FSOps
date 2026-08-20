@@ -6,7 +6,30 @@ public class Flight
 
     public Guid AirlineId { get; set; }
 
-    public Guid RouteId { get; set; }
+    /// <summary>
+    /// The airline's own route this sector flew - <b>null for a contract flight</b>, which is
+    /// somebody else's aeroplane going somewhere for somebody else's reasons and has no route at all.
+    /// See <see cref="ContractLegId"/> for the invariant that ties this to
+    /// <see cref="FleetAircraftId"/>.
+    ///
+    /// <para><b>Why these are nullable rather than a sentinel, and why that was the whole
+    /// decision.</b> Keeping them non-nullable and writing <c>Guid.Empty</c> for a contract flight
+    /// would have been far cheaper - no table rebuild, no migration against the one table that cannot
+    /// be reconstructed by playing. It was rejected because roughly thirty places read these two
+    /// columns, and under a sentinel <b>every one of them compiles and every one of them is wrong in
+    /// a way nothing reports</b>. <c>FinanceEndpoints.RoutesAsync</c> groups flights by RouteId, so
+    /// contract sectors would have quietly formed a phantom route with no departure and no arrival,
+    /// on the one page whose entire job is being accurate. <c>StatsEndpoints</c> would have divided by
+    /// a fleet aircraft that does not exist.</para>
+    ///
+    /// <para>This project has paid for that exact failure shape more than once - GUIDs stored
+    /// upper-case so every lookup silently missed, scaffolded migration defaults that parsed as no
+    /// enum member at all. Each was invisible, each looked correct, each was found by a user rather
+    /// than by a build. Nullable makes the compiler enumerate the blast radius and refuse to build
+    /// until every site has an answer. The migration is the price of the compiler doing the search
+    /// instead of a person.</para>
+    /// </summary>
+    public Guid? RouteId { get; set; }
 
     /// <summary>
     /// For a virtual-pilot flight, the <see cref="PilotScheduleEntry"/> that produced this
@@ -17,7 +40,37 @@ public class Flight
     /// </summary>
     public Guid? ScheduleId { get; set; }
 
-    public Guid FleetAircraftId { get; set; }
+    /// <summary>
+    /// The airline's own aircraft that flew this sector - <b>null for a contract flight</b>, where
+    /// the aeroplane belongs to the operator who offered the job. See <see cref="RouteId"/> for why
+    /// this is nullable rather than a sentinel value.
+    ///
+    /// <para><b>A contract flight must never touch the player's fleet</b> - not its hours, not its
+    /// condition, not its location, not its maintenance - and this null is what makes that structural
+    /// rather than disciplined. Everything that would touch a fleet aircraft on completion
+    /// (<c>MaintenancePoster.PostFlightHours</c>, airframe hours, <c>LocationIcao</c>,
+    /// <c>FleetAircraftStatus</c>, <c>FuelOnBoardKg</c>) lives inside a branch a contract flight never
+    /// enters. There is no code path from a contract flight to a <see cref="FleetAircraft"/> row, so
+    /// the guarantee does not depend on anyone remembering it.</para>
+    /// </summary>
+    public Guid? FleetAircraftId { get; set; }
+
+    /// <summary>
+    /// The <see cref="ContractLeg"/> this sector flew, for a contract flight. Null for an ordinary
+    /// airline sector.
+    ///
+    /// <para><b>The invariant, enforced by <c>FlightWriteInvariant</c> and asserted by its tests:
+    /// exactly one of (<see cref="RouteId"/> AND <see cref="FleetAircraftId"/>) or
+    /// <see cref="ContractLegId"/> is set. Never both, never neither.</b> A flight with both would be
+    /// claiming to be two different things and every consumer would pick a different one; a flight
+    /// with neither is a sector with no origin, no destination and no aeroplane, which nothing
+    /// downstream can render, price or explain.</para>
+    ///
+    /// <para>Deliberately not a foreign key with cascade behaviour, for the same reason
+    /// <see cref="ScheduleId"/> is not: a completed flight is historical fact and must keep showing
+    /// which contract it was flown for.</para>
+    /// </summary>
+    public Guid? ContractLegId { get; set; }
 
     public Guid PilotId { get; set; }
 

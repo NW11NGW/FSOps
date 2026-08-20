@@ -361,12 +361,19 @@ public static class VatsimEndpoints
             return Results.Ok(new VatsimHistoryResponse(cidConfigured, Array.Empty<VatsimHistoryEntry>()));
         }
 
-        var routeIds = flights.Select(f => f.RouteId).Distinct().ToList();
+        var routeIds = flights.Where(f => f.RouteId is not null).Select(f => f.RouteId!.Value).Distinct().ToList();
         var routesById = await db.Routes.Where(r => routeIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
+
+        // A contract sector is flown in the simulator exactly like any other and can be corroborated
+        // online exactly like any other, so it belongs in this history - but it has no route, and
+        // leaving its endpoints blank would read as a sector whose record had been lost. Its airports
+        // come from the contract leg instead.
+        var contractSectors = await ContractSectorLookup.ByLegIdAsync(db, ContractSectorLookup.LegIdsOf(flights), ct);
 
         var entries = flights.Select(f =>
         {
-            routesById.TryGetValue(f.RouteId, out var route);
+            var route = f.RouteId is { } routeId ? routesById.GetValueOrDefault(routeId) : null;
+            var contract = f.ContractLegId is { } legId ? contractSectors.GetValueOrDefault(legId) : null;
             var controllers = string.IsNullOrWhiteSpace(f.VatsimControllersWorked)
                 ? Array.Empty<string>()
                 : f.VatsimControllersWorked.Split(", ", StringSplitOptions.RemoveEmptyEntries);
@@ -374,8 +381,8 @@ public static class VatsimEndpoints
             return new VatsimHistoryEntry(
                 f.Id,
                 f.RouteId,
-                route?.DepartureIcao,
-                route?.ArrivalIcao,
+                route?.DepartureIcao ?? contract?.DepartureIcao,
+                route?.ArrivalIcao ?? contract?.ArrivalIcao,
                 route?.FlightNumber,
                 f.InUtc ?? f.CreatedUtc,
                 f.VatsimOnline == true,
@@ -550,7 +557,9 @@ public sealed record VatsimHistoryResponse(bool CidConfigured, IReadOnlyList<Vat
 /// checked outcome, never an unchecked one presented as "not online".</summary>
 public sealed record VatsimHistoryEntry(
     Guid FlightId,
-    Guid RouteId,
+
+    /// <summary>Null for a contract sector, which has no route of the airline's own - see Flight.RouteId.</summary>
+    Guid? RouteId,
     string? DepartureIcao,
     string? ArrivalIcao,
     string? FlightNumber,
