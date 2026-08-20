@@ -64,9 +64,14 @@ jobs:
         working-directory: src/fsops-web
         run: npm ci
 
+      # `tsc -b`, NOT `tsc --noEmit`. The root tsconfig is solution-style (project references), and
+      # --noEmit does not build referenced projects - it exits 0 on a codebase full of type errors.
+      # Proven directly: a deliberate `const x: number = 'nope';` gives --noEmit exit 0 and -b exit 2.
+      # This step was --noEmit for months, so it was a green check that could not fail, which is worse
+      # than no check at all because it buys confidence it never earned.
       - name: Type-check web
         working-directory: src/fsops-web
-        run: npx tsc --noEmit
+        run: npx tsc -b
 
       # --deny-warnings for the same reason the .NET build uses -warnaserror, and it is not
       # optional: oxlint exits 0 with warnings on stdout, so a plain `npm run lint` step here would
