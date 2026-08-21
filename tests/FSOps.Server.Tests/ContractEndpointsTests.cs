@@ -263,9 +263,18 @@ public class ContractEndpointsTests
     public async Task AGenuinelyConstrainedBoard_StillExplainsItself_EvenAfterAJobIsAccepted()
     {
         using var ctx = await RouteTestContext.CreateAsync();
-        await SeedWorldAsync(ctx);
 
-        // One aircraft available, from one origin: a real constraint, not a bookkeeping artefact.
+        // SeedWorldAsync is deliberately NOT called: the constraint has to come from the WORLD being
+        // small, so the generator physically cannot fill eight slots.
+        //
+        // This test used to seed the full sixteen-airport world and rely on a single ticked-on
+        // aircraft to make the board thin. That premise was simply wrong - one aeroplane can fly
+        // eight different jobs, so limiting the fleet does not limit the COUNT. What actually decided
+        // the outcome was the board seed, which mixes in Airline.Id, and that is a fresh Guid on every
+        // run: the board was re-rolled each time and "is it constrained?" became a per-run gamble.
+        // Measured at roughly 1 failure in 12 - green three times in CI, then red, having changed
+        // nothing. Leaving the base world (a handful of airports) makes the shortfall structural, so
+        // the assertion below is true by construction rather than by luck.
         var kept = ContractAircraftCatalogue.All.First().TypeDesignator;
         ctx.Db.UserSettings.Add(new UserSettings
         {
@@ -293,12 +302,15 @@ public class ContractEndpointsTests
 
         var messageBefore = board.Limitation.Message;
 
-        if (board.Offered.Count > 0)
-        {
-            await ContractEndpoints.AcceptAsync(
-                board.Offered.First().Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
-            ctx.Db.ChangeTracker.Clear();
-        }
+        // Accepting is REQUIRED, not conditional. This whole test is about the explanation surviving
+        // an accept, so a run with nothing to accept proves nothing at all - and the guard that used
+        // to be here would have let exactly that pass silently. It also pins the other half of the
+        // constraint: the board has to be thin, but not empty, or there is no job to take.
+        Assert.NotEmpty(board.Offered);
+
+        await ContractEndpoints.AcceptAsync(
+            board.Offered.First().Id, ctx.Db, ctx.CurrentUser, EconomyConfigCatalog.Default(), clock, CancellationToken.None);
+        ctx.Db.ChangeTracker.Clear();
 
         var after = await CreateBoardService(ctx, clock).GetBoardAsync(ctx.Airline, ctx.CurrentUser.UserId, CancellationToken.None);
 

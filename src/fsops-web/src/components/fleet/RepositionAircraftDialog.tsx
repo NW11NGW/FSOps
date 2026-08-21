@@ -161,7 +161,22 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
 
             <fieldset className="space-y-1.5">
               <legend className="pb-1.5 text-sm font-medium">Move it to</legend>
-              <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+              {/* The list scrolls, and a scrolling list has to LOOK like one. A destination landed
+                *  mid-row, sliced cleanly through its own text against a hard container edge, which
+                *  reads as a broken box rather than "there is more below" - and was reported as
+                *  exactly that.
+                *
+                *  The fix is the fade, not the height. Raising max-h was tried and reverted: it made
+                *  the dialog 61px taller, and with seven destinations that is 673px of dialog on a
+                *  720px window - trading a clipped row for one that runs off the bottom of the screen.
+                *  It also only ever moves the problem, since one more destination than the box was
+                *  sized for puts the cut straight back. The fade works at any number of rows.
+                *
+                *  `scrollbar-gutter: stable` earns its place separately: the track was crowding the
+                *  "N routes" count, and reserving it stops the list shifting sideways the moment a
+                *  scrollbar appears. */}
+              <div className="relative">
+                <div className="max-h-56 space-y-1.5 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
                 {options.destinations.map((destination) => {
                   const isSelected = destination.icao === selectedIcao
                   return (
@@ -193,6 +208,11 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
                     </button>
                   )
                 })}
+                </div>
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-md bg-gradient-to-t from-surface-elevated to-transparent"
+                />
               </div>
             </fieldset>
 
