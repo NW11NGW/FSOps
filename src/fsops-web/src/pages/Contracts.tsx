@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useContractBoard } from '@/hooks/useContractBoard'
 import { ApiError } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import type { Contract } from '@/types/contract'
 
 function describeError(err: unknown, fallback: string): string {
@@ -32,7 +33,8 @@ function describeError(err: unknown, fallback: string): string {
  * over to Fly, which is where every tracked flight belongs.</p>
  */
 export function Contracts() {
-  const { status, board, errorMessage, busy, refetch, accept, startLeg, abandon } = useContractBoard()
+  const { status, board, errorMessage, busy, refreshing, lastRefreshedAt, refetch, accept, startLeg, abandon } =
+    useContractBoard()
   const [abandoning, setAbandoning] = useState<Contract | null>(null)
   const navigate = useNavigate()
 
@@ -108,10 +110,31 @@ export function Contracts() {
         title="Contracts"
         description="Fly for other operators, in their aircraft, for a flat fee. They pay the bills; you're paid per leg you fly."
         actions={
-          <Button type="button" variant="outline" onClick={refetch} disabled={busy} className="gap-2">
-            <RefreshCw className="size-4" />
-            Refresh
-          </Button>
+          // Refreshing re-READS the board; it never re-rolls it (see useContractBoard.refetch). So
+          // the honest outcome is almost always "nothing has changed", and the button has to show
+          // that rather than appearing inert - reported as "refresh does not appear to do anything",
+          // which was fair: it did not disable, did not spin, and the deterministic board came back
+          // identical, so not one pixel moved.
+          <div className="flex items-center gap-3">
+            {/* Deliberately not "no new jobs": the bucket CAN roll between reads, and a message that
+              *  claims nothing changed while the board changed underneath it is worse than the
+              *  silence it replaced. "Checked just now" is true either way. */}
+            {lastRefreshedAt !== null && !refreshing && (
+              <span className="text-xs text-muted-foreground" role="status">
+                Checked just now
+              </span>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={refetch}
+              disabled={busy || refreshing}
+              className="gap-2"
+            >
+              <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} />
+              {refreshing ? 'Checking…' : 'Refresh'}
+            </Button>
+          </div>
         }
       />
 

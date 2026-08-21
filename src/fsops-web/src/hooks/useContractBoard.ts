@@ -12,6 +12,28 @@ export interface UseContractBoardResult {
   errorMessage: string | null
   /** True while an accept, a start or an abandon is in flight, so the whole board disables as one. */
   busy: boolean
+  /**
+   * True while a player-requested refresh is in flight.
+   *
+   * <p>Separate from {@link busy} because it means something different to the player: `busy` is "a
+   * change is being made", this is "I am checking". Without it the Refresh button was a control with
+   * no observable effect whatsoever - see {@link UseContractBoardResult.refetch}.</p>
+   */
+  refreshing: boolean
+  /** When the last player-requested refresh completed, as epoch ms - null until they ask for one.
+   *  Drives the "checked just now" confirmation; see {@link refetch} for why that confirmation has
+   *  to exist. */
+  lastRefreshedAt: number | null
+  /**
+   * Re-reads the board from the server.
+   *
+   * <p><b>This usually returns identical data, by design.</b> The board is generated deterministically
+   * per 24-hour bucket, so re-reading it before the bucket rolls gives back the same jobs - refreshing
+   * is not a re-roll, and must not become one, or the predictable world stops being predictable.</p>
+   *
+   * <p>That is exactly why the caller has to SHOW something: a button whose honest answer is "nothing
+   * has changed" still has to say so, or it reads as broken. It was reported as broken.</p>
+   */
   refetch: () => void
   accept: (contractId: string) => Promise<void>
   startLeg: (contractId: string) => Promise<ContractStartLegResult>
@@ -40,6 +62,8 @@ export function useContractBoard(): UseContractBoardResult {
   const [board, setBoard] = useState<ContractBoard | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null)
   const cancelledRef = useRef(false)
 
   const load = useCallback(async () => {
@@ -58,7 +82,14 @@ export function useContractBoard(): UseContractBoardResult {
 
   const refetch = useCallback(() => {
     setStatus((current) => (current === 'ready' ? current : 'loading'))
-    void load()
+    setRefreshing(true)
+    void load().finally(() => {
+      if (cancelledRef.current) return
+      setRefreshing(false)
+      // Stamped even when the board came back byte-identical - "I checked, and nothing had changed"
+      // is the answer in the overwhelming majority of cases, and it is still an answer.
+      setLastRefreshedAt(Date.now())
+    })
   }, [load])
 
   useEffect(() => {
@@ -107,5 +138,5 @@ export function useContractBoard(): UseContractBoardResult {
     [run],
   )
 
-  return { status, board, errorMessage, busy, refetch, accept, startLeg, abandon }
+  return { status, board, errorMessage, busy, refreshing, lastRefreshedAt, refetch, accept, startLeg, abandon }
 }
