@@ -161,22 +161,24 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
 
             <fieldset className="space-y-1.5">
               <legend className="pb-1.5 text-sm font-medium">Move it to</legend>
-              {/* The list scrolls, and a scrolling list has to LOOK like one. A destination landed
-                *  mid-row, sliced cleanly through its own text against a hard container edge, which
-                *  reads as a broken box rather than "there is more below" - and was reported as
-                *  exactly that.
+              {/* The box shows WHOLE ROWS ONLY. `max-h-56` was an arbitrary height that happened to
+                *  land 86% of the way down a row, so the last destination was sliced through its own
+                *  text - which reads as a broken box, and was reported as one twice.
                 *
-                *  The fix is the fade, not the height. Raising max-h was tried and reverted: it made
-                *  the dialog 61px taller, and with seven destinations that is 673px of dialog on a
-                *  720px window - trading a clipped row for one that runs off the bottom of the screen.
-                *  It also only ever moves the problem, since one more destination than the box was
-                *  sized for puts the cut straight back. The fade works at any number of rows.
+                *  Two earlier attempts are worth not repeating. Making the box taller only moved the
+                *  cut (one more destination than it was sized for puts it straight back) and pushed a
+                *  673px dialog onto a 720px window. A fade over the cut was worse in a subtler way: it
+                *  restyled the symptom so the slice looked deliberate, while the box still could not
+                *  fit its own data. The reporter was unmoved, correctly.
                 *
-                *  `scrollbar-gutter: stable` earns its place separately: the track was crowding the
-                *  "N routes" count, and reserving it stops the list shifting sideways the moment a
-                *  scrollbar appears. */}
-              <div className="relative">
-                <div className="max-h-56 space-y-1.5 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
+                *  The height is now DERIVED from the row height rather than guessed, so the two cannot
+                *  drift apart: --row-h is the single source of truth, rows are exactly that tall, and
+                *  the box is four of them plus the three 1.5-unit gaps between. Scroll snapping keeps
+                *  that true after scrolling as well - without it the box starts honest and cuts a row
+                *  the moment you move it. */}
+              <div
+                className="[--row-gap:0.375rem] [--row-h:3.25rem] max-h-[calc(4*var(--row-h)+3*var(--row-gap))] snap-y snap-mandatory space-y-1.5 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
+              >
                 {options.destinations.map((destination) => {
                   const isSelected = destination.icao === selectedIcao
                   return (
@@ -187,7 +189,10 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
                       aria-checked={isSelected}
                       onClick={() => setSelectedIcao(destination.icao)}
                       className={cn(
-                        'flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                        // h-[var(--row-h)] and snap-start are what make the box's derived height true;
+                        // see the container above. Without the fixed height a longer airport name
+                        // would grow one row and put the cut back.
+                        'flex h-[var(--row-h)] w-full snap-start items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors',
                         isSelected
                           ? 'border-accent bg-accent/10 text-foreground'
                           : 'border-border hover:bg-muted',
@@ -208,11 +213,6 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
                     </button>
                   )
                 })}
-                </div>
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-md bg-gradient-to-t from-surface-elevated to-transparent"
-                />
               </div>
             </fieldset>
 
