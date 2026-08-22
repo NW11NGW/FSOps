@@ -137,8 +137,16 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
           </div>
         )}
 
+        {/* min-w-0 below is load-bearing, not tidying. That div is a grid item of DialogContent, so
+          *  its min-width resolves to `auto` - meaning min-content - and the destination rows use
+          *  `truncate`, which sets white-space: nowrap. That makes their min-content width the FULL
+          *  untruncated airport name ("Charles de Gaulle International Airport - Paris
+          *  (Roissy-en-France, Val-d'Oise)"), so this column refused to shrink below it and every
+          *  panel inside the dialog hung off the right-hand edge. Measured at a 639px window: 446px
+          *  of dialog holding 563px of content. Truncation cannot rescue a box that is not allowed
+          *  to be narrow in the first place. */}
         {status === 'ready' && options && options.canReposition && (
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             {costChangedFrom !== null && (
               <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
                 <RefreshCw className="mt-0.5 size-4 shrink-0" />
@@ -159,7 +167,12 @@ export function RepositionAircraftDialog({ aircraft, onOpenChange, onSuccess }: 
               </span>
             </div>
 
-            <fieldset className="space-y-1.5">
+            {/* And min-w-0 again here for a second reason: a <fieldset> defaults to
+              *  min-width: min-content in every browser, which no amount of shrinking above it
+              *  overrides. Both this and the grid item above have to be freed - zeroing either one
+              *  alone changed nothing, which is what made this look like a mystery rather than a
+              *  one-line CSS default. */}
+            <fieldset className="min-w-0 space-y-1.5">
               <legend className="pb-1.5 text-sm font-medium">Move it to</legend>
               {/* The box shows WHOLE ROWS ONLY. `max-h-56` was an arbitrary height that happened to
                 *  land 86% of the way down a row, so the last destination was sliced through its own
